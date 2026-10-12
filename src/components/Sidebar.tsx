@@ -171,6 +171,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             )}
           </button>
 
+
           {user.role === 'master' && (
             <button
               onClick={() => handleTabClick('admin')}

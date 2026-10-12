@@ -17,6 +17,7 @@ export interface FileItemData {
   size: number;
   modified: string;
   mime_type?: string;
+  path?: string;
 }
 
 export interface StorageUsage {
@@ -40,4 +41,4 @@ export interface SystemConfig {
 }
 
 export type ViewMode = 'grid' | 'list';
-export type NavigationTab = 'my-drive' | 'shared' | 'admin';
+export type NavigationTab = 'my-drive' | 'shared' | 'admin' | 'cinema';

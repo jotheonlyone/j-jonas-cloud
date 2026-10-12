@@ -671,3 +671,42 @@ export async function respondToShare(shareId: string, status: 'accepted' | 'decl
   }
   return true;
 }
+
+export async function deleteFolderShare(shareId: string): Promise<boolean> {
+  try {
+    const shareDocRef = doc(db, 'shares', shareId);
+    await deleteDoc(shareDocRef);
+  } catch (err) {
+    console.warn('Firestore delete share error:', err);
+  }
+
+  const localShares = getLocalShares();
+  const index = localShares.findIndex(s => s.id === shareId);
+  if (index !== -1) {
+    localShares.splice(index, 1);
+    saveLocalShares(localShares);
+  }
+  return true;
+}
+
+export async function getSharesForFolder(folder_path: string, owner: string): Promise<FolderShare[]> {
+  const normOwner = owner.toLowerCase();
+  try {
+    const q = query(
+      collection(db, 'shares'),
+      where('owner', '==', normOwner),
+      where('folder_path', '==', folder_path)
+    );
+    const snap = await getDocs(q);
+    if (!snap.empty) {
+      return snap.docs.map(d => ({ ...d.data(), id: d.id } as FolderShare));
+    }
+  } catch (err) {
+    console.warn('Firestore get shares for folder error:', err);
+  }
+
+  return getLocalShares().filter(
+    s => s.owner.toLowerCase() === normOwner && s.folder_path === folder_path
+  );
+}
+

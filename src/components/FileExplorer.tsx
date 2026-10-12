@@ -26,6 +26,7 @@ interface FileExplorerProps {
   onDeleteItem: (item: FileItemData) => void;
   onRenameItem?: (item: FileItemData) => void;
   onShareFolder?: (item: FileItemData) => void;
+  onManageShares?: (item: FileItemData) => void;
   searchTerm?: string;
   isActionsDisabled?: boolean;
   rootLabel?: string;
@@ -47,6 +48,7 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
   onDeleteItem,
   onRenameItem,
   onShareFolder,
+  onManageShares,
   searchTerm = '',
   isActionsDisabled = false,
   rootLabel = 'Meine Ablage',
@@ -242,6 +244,7 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
                         onDelete={onDeleteItem}
                         onRename={onRenameItem}
                         onShare={onShareFolder}
+                        onManageShares={onManageShares}
                         isActionsDisabled={isActionsDisabled}
                       />
                     ))}
@@ -258,6 +261,7 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
                         onDelete={onDeleteItem}
                         onRename={onRenameItem}
                         onShare={onShareFolder}
+                        onManageShares={onManageShares}
                         isActionsDisabled={isActionsDisabled}
                       />
                     ))}

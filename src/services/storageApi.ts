@@ -88,13 +88,18 @@ export async function listFiles(owner: string, relativePath = ''): Promise<{ ite
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data)) {
-        const mapped: FileItemData[] = data.map((item: any) => ({
-          name: String(item.name),
-          type: item.type === 'folder' || item.is_dir ? 'folder' : 'file',
-          size: Number(item.size || 0),
-          modified: item.modified || item.updated_at || new Date().toISOString(),
-          mime_type: item.mime_type || item.content_type,
-        }));
+        const mapped: FileItemData[] = data.map((item: any) => {
+          const itemName = String(item.name);
+          const itemPath = item.path || (cleanPath ? `${cleanPath}/${itemName}` : itemName);
+          return {
+            name: itemName,
+            type: item.type === 'folder' || item.is_dir ? 'folder' : 'file',
+            size: Number(item.size || 0),
+            modified: item.modified || item.updated_at || new Date().toISOString(),
+            mime_type: item.mime_type || item.content_type,
+            path: itemPath,
+          };
+        });
 
         mapped.sort((a, b) => {
           if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
@@ -210,12 +215,22 @@ export async function createFolder(
 }
 
 /**
+ * GET /api/stream?path={item.path}
+ * Liefert die URL zum Streamen/Betrachten oder Vorschaubild der Datei
+ */
+export function getStreamUrl(itemPath: string): string {
+  const clean = itemPath.replace(/^\/+/, '');
+  return `/api/stream?path=${encodeURIComponent(clean)}`;
+}
+
+/**
  * GET /download?user=<owner>&file=<relative_path>
  * Direkter Download im Browser.
  */
 export function triggerDirectDownload(owner: string, filePath: string, filename: string): void {
   const cleanPath = filePath.trim().replace(/^\/+/, '');
-  const downloadUrl = `${STORAGE_BASE_URL}/download?user=${encodeURIComponent(owner)}&file=${encodeURIComponent(cleanPath)}`;
+  // Entweder über backend stream mit download-Attribut oder Server-Download-Endpunkt
+  const downloadUrl = `/api/stream?path=${encodeURIComponent(cleanPath)}`;
 
   const a = document.createElement('a');
   a.href = downloadUrl;

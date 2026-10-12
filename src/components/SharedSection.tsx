@@ -31,6 +31,8 @@ interface SharedSectionProps {
   viewMode: ViewMode;
   maintenanceMode: boolean;
   onOpenNewSharedModal: () => void;
+  onManageFolderShares?: (folderPath: string, folderName: string) => void;
+  onOpenFilePreview?: (item: FileItemData, allItems: FileItemData[]) => void;
 }
 
 export const SharedSection: React.FC<SharedSectionProps> = ({
@@ -42,6 +44,8 @@ export const SharedSection: React.FC<SharedSectionProps> = ({
   viewMode,
   maintenanceMode,
   onOpenNewSharedModal,
+  onManageFolderShares,
+  onOpenFilePreview,
 }) => {
   const { addToast } = useToast();
   const [activeFolderShare, setActiveFolderShare] = useState<FolderShare | null>(null);
@@ -209,11 +213,21 @@ export const SharedSection: React.FC<SharedSectionProps> = ({
               if (item.type === 'folder') {
                 const next = sharedSubPath ? `${sharedSubPath}/${item.name}` : item.name;
                 handleNavigateSubPath(next);
+              } else if (onOpenFilePreview) {
+                onOpenFilePreview(item, folderItems);
+              } else {
+                handleDownloadItem(item);
               }
             }}
             onDownloadFile={handleDownloadItem}
             onDeleteItem={handleDeleteItem}
             onRenameItem={handleRenameItem}
+            onManageShares={(item) => {
+              if (onManageFolderShares && activeFolderShare) {
+                const itemFullPath = sharedSubPath ? `${activeFolderShare.folder_path}/${sharedSubPath}/${item.name}` : `${activeFolderShare.folder_path}/${item.name}`;
+                onManageFolderShares(itemFullPath, item.name);
+              }
+            }}
             rootLabel={activeFolderShare.folder_name}
             isSharedContext={true}
             isActionsDisabled={maintenanceMode && user.role !== 'master'}
@@ -342,9 +356,25 @@ export const SharedSection: React.FC<SharedSectionProps> = ({
                     </p>
                   </div>
 
-                  <div className="mt-3 pt-2.5 border-t border-gray-100 dark:border-gray-800 flex items-center justify-between text-xs text-blue-600 dark:text-blue-400 font-semibold group-hover:translate-x-0.5 transition-transform">
-                    <span>Ordner öffnen</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
+                  <div className="mt-3 pt-2.5 border-t border-gray-100 dark:border-gray-800 flex items-center justify-between text-xs font-semibold">
+                    <span className="text-blue-600 dark:text-blue-400 group-hover:translate-x-0.5 transition-transform flex items-center gap-1">
+                      Ordner öffnen
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </span>
+
+                    {isOwner && onManageFolderShares && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onManageFolderShares(share.folder_path, share.folder_name);
+                        }}
+                        className="px-2 py-1 rounded-lg text-[11px] text-gray-500 hover:text-blue-600 dark:text-gray-400 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-700/60 transition-colors"
+                        title="Mitglieder und Freigaben verwalten"
+                      >
+                        Freigaben verwalten
+                      </button>
+                    )}
                   </div>
                 </div>
               );

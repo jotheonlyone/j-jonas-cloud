@@ -10,9 +10,10 @@ import {
   User as UserIcon,
   Menu,
   X,
-  Settings
+  Settings,
+  Film
 } from 'lucide-react';
-import type { UserAccount, ViewMode } from '../types';
+import type { UserAccount, ViewMode, NavigationTab } from '../types';
 import type { ServerStatus } from '../services/storageApi';
 
 interface HeaderProps {
@@ -29,6 +30,8 @@ interface HeaderProps {
   onOpenSettings: () => void;
   onToggleMobileMenu?: () => void;
   onLogoClick?: () => void;
+  currentTab?: NavigationTab;
+  onSelectTab?: (tab: NavigationTab) => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -45,6 +48,8 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenSettings,
   onToggleMobileMenu,
   onLogoClick,
+  currentTab,
+  onSelectTab,
 }) => {
   const [showProfileMenu, setShowProfileMenu] = useState(false);
 
@@ -185,6 +190,25 @@ export const Header: React.FC<HeaderProps> = ({
                   </div>
 
                   <div className="px-1.5 py-1.5 space-y-0.5">
+                    {/* Cinema / Video on Demand Button in Profile Dropdown */}
+                    {onSelectTab && (
+                      <button
+                        onClick={() => {
+                          setShowProfileMenu(false);
+                          onSelectTab('cinema');
+                        }}
+                        className="w-full flex items-center justify-between px-3 py-2 text-xs font-semibold text-gray-700 dark:text-gray-300 hover:bg-rose-50 dark:hover:bg-rose-950/30 hover:text-rose-600 dark:hover:text-rose-400 rounded-xl text-left transition-colors group"
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <Film className="w-4 h-4 text-rose-500 group-hover:scale-110 transition-transform" />
+                          <span>Cinema (Video on Demand)</span>
+                        </div>
+                        <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-600 dark:text-rose-400">
+                          VOD
+                        </span>
+                      </button>
+                    )}
+
                     <button
                       onClick={() => {
                         setShowProfileMenu(false);
