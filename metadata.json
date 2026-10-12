@@ -1,0 +1,6 @@
+{
+  "name": "J.Jonas Cloud",
+  "description": "Private Cloud-Speicherplattform mit moderner Google Drive-Optik, Rollen- und Quota-Verwaltung, geteilten Ordnern und FastAPI-Mini-PC-Anbindung.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
