@@ -197,13 +197,13 @@ export const Header: React.FC<HeaderProps> = ({
                           setShowProfileMenu(false);
                           onSelectTab('cinema');
                         }}
-                        className="w-full flex items-center justify-between px-3 py-2 text-xs font-semibold text-gray-700 dark:text-gray-300 hover:bg-rose-50 dark:hover:bg-rose-950/30 hover:text-rose-600 dark:hover:text-rose-400 rounded-xl text-left transition-colors group"
+                        className="w-full flex items-center justify-between px-3 py-2 text-xs font-semibold text-gray-700 dark:text-gray-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-[#E50914] dark:hover:text-[#E50914] rounded-xl text-left transition-colors group"
                       >
                         <div className="flex items-center gap-2.5">
-                          <Film className="w-4 h-4 text-rose-500 group-hover:scale-110 transition-transform" />
+                          <Film className="w-4 h-4 text-[#E50914] group-hover:scale-110 transition-transform" />
                           <span>Cinema (Video on Demand)</span>
                         </div>
-                        <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-600 dark:text-rose-400">
+                        <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-[#E50914]/10 text-[#E50914]">
                           VOD
                         </span>
                       </button>

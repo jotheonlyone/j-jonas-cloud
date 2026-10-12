@@ -38,6 +38,7 @@ import { NewFolderModal, NewSharedFolderModal } from './components/NewItemModal'
 import { ManageFolderSharesModal } from './components/ManageFolderSharesModal';
 import { MediaViewerModal, isVideoFile } from './components/MediaViewerModal';
 import { CinemaView } from './components/CinemaView';
+import { CinemaTvView } from './components/CinemaTvView';
 import { AccountSettingsModal } from './components/AccountSettingsModal';
 import { MaintenanceBanner } from './components/MaintenanceBanner';
 import { LegalLinks } from './components/LegalLinks';
@@ -75,6 +76,9 @@ function MainApp() {
   const getTabFromUrl = (): NavigationTab => {
     if (typeof window === 'undefined') return 'my-drive';
     const path = window.location.pathname.toLowerCase().replace(/\/+$/, '') || '/';
+    if (path === '/cinema/tv' || path === '/tv') {
+      return 'cinema-tv';
+    }
     if (path === '/cinema' || path === '/vod') {
       return 'cinema';
     }
@@ -90,7 +94,10 @@ function MainApp() {
     setCurrentTab(tab);
     if (typeof window !== 'undefined') {
       const currentUrlPath = window.location.pathname.toLowerCase().replace(/\/+$/, '') || '/';
-      const targetUrlPath = tab === 'cinema' ? '/cinema' : '/';
+      let targetUrlPath = '/';
+      if (tab === 'cinema-tv') targetUrlPath = '/cinema/tv';
+      else if (tab === 'cinema') targetUrlPath = '/cinema';
+
       if (currentUrlPath !== targetUrlPath) {
         if (replace) {
           window.history.replaceState({ tab }, '', targetUrlPath);
@@ -106,21 +113,25 @@ function MainApp() {
     const handlePopState = () => {
       const tab = getTabFromUrl();
       setCurrentTab(tab);
-      // Canonicalize /vod to /cinema in URL bar if user navigated to /vod
+      // Canonicalize /vod to /cinema, and /tv to /cinema/tv in address bar
       if (typeof window !== 'undefined') {
         const path = window.location.pathname.toLowerCase().replace(/\/+$/, '');
         if (path === '/vod') {
           window.history.replaceState({ tab: 'cinema' }, '', '/cinema');
+        } else if (path === '/tv') {
+          window.history.replaceState({ tab: 'cinema-tv' }, '', '/cinema/tv');
         }
       }
     };
 
     window.addEventListener('popstate', handlePopState);
-    // Initial check on mount: If path was /vod, rewrite to /cinema
+    // Initial check on mount: If path was /vod or /tv, rewrite to canonical path
     if (typeof window !== 'undefined') {
       const path = window.location.pathname.toLowerCase().replace(/\/+$/, '');
       if (path === '/vod') {
         window.history.replaceState({ tab: 'cinema' }, '', '/cinema');
+      } else if (path === '/tv') {
+        window.history.replaceState({ tab: 'cinema-tv' }, '', '/cinema/tv');
       }
     }
 
@@ -535,7 +546,7 @@ function MainApp() {
   }
 
   const isActionsDisabled = maintenanceMode && user.role !== 'master';
-  const isCinemaMode = currentTab === 'cinema';
+  const isCinemaMode = currentTab === 'cinema' || currentTab === 'cinema-tv';
 
   return (
     <div className={`h-full flex flex-col ${isCinemaMode ? 'bg-[#141414] text-white' : 'bg-[#f8fafd] dark:bg-gray-950 text-gray-900 dark:text-gray-100'} overflow-hidden font-sans`}>
@@ -552,8 +563,23 @@ function MainApp() {
         }}
       />
 
-      {/* FULL-SCREEN CINEMA MODE: Replaces entire standard Jonas Cloud interface */}
-      {isCinemaMode ? (
+      {/* FULL-SCREEN CINEMA / TV MODE: Replaces entire standard Jonas Cloud interface */}
+      {currentTab === 'cinema-tv' ? (
+        <div className="fixed inset-0 z-50 bg-[#141414] overflow-y-auto">
+          <CinemaTvView
+            user={user}
+            items={allCinemaVideos.length > 0 ? allCinemaVideos : items}
+            onBackToFiles={() => navigateToTab('my-drive')}
+            onPlayVideo={(item) => {
+              setViewerItem(item);
+              setViewerItemsList(allCinemaVideos.length > 0 ? allCinemaVideos : items);
+            }}
+            onDownloadVideo={handleDownloadItem}
+            onUploadClick={handleTriggerFileInput}
+            darkMode={darkMode}
+          />
+        </div>
+      ) : currentTab === 'cinema' ? (
         <div className="fixed inset-0 z-50 bg-[#141414] overflow-y-auto">
           <CinemaView
             user={user}

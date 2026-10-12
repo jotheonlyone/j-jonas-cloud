@@ -41,4 +41,4 @@ export interface SystemConfig {
 }
 
 export type ViewMode = 'grid' | 'list';
-export type NavigationTab = 'my-drive' | 'shared' | 'admin' | 'cinema';
+export type NavigationTab = 'my-drive' | 'shared' | 'admin' | 'cinema' | 'cinema-tv';
