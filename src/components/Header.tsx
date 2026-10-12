@@ -10,8 +10,7 @@ import {
   User as UserIcon,
   Menu,
   X,
-  Settings,
-  CircleDot
+  Settings
 } from 'lucide-react';
 import type { UserAccount, ViewMode } from '../types';
 import type { ServerStatus } from '../services/storageApi';
@@ -108,32 +107,6 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Right Controls */}
       <div className="flex items-center gap-2 sm:gap-3">
-        {/* Server Status Pill (Clickable to test/reload) */}
-        <button
-          type="button"
-          onClick={onRefreshServerStatus}
-          disabled={!onRefreshServerStatus}
-          title={
-            serverStatus?.isOnline
-              ? `Verbunden mit https://storage.j-jonas.com (${serverStatus.latencyMs} ms) – Klicken zum erneuten Prüfen`
-              : 'Verbindung zu https://storage.j-jonas.com unterbrochen – Klicken zum erneuten Prüfen'
-          }
-          className={`hidden lg:flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono font-medium border transition-all select-none hover:opacity-85 active:scale-95 cursor-pointer disabled:cursor-default ${
-            serverStatus?.isOnline
-              ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-200/80 dark:border-emerald-800/60'
-              : 'bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 border-red-200/80 dark:border-red-800/60'
-          }`}
-        >
-          <span
-            className={`w-2 h-2 rounded-full ${
-              serverStatus?.isOnline ? 'bg-emerald-500' : 'bg-red-500 animate-pulse'
-            }`}
-          />
-          <span className="text-[11px]">
-            {serverStatus?.isOnline ? 'storage.j-jonas.com' : 'Server offline'}
-          </span>
-        </button>
-
         {/* View Switcher (Grid / List) */}
         {user && (
           <div className="flex items-center bg-gray-200/60 dark:bg-gray-800 rounded-full p-0.5">
