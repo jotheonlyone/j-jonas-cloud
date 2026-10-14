@@ -10,6 +10,7 @@ import {
 import type { FileItemData, ViewMode } from '../types';
 import { Breadcrumbs } from './Breadcrumbs';
 import { FileItem } from './FileItem';
+import { ContextMenu, type ContextMenuPosition } from './ContextMenu';
 
 interface FileExplorerProps {
   currentPath: string;
@@ -22,9 +23,12 @@ interface FileExplorerProps {
   onUploadFiles: (files: FileList) => void;
   onNewFolder: () => void;
   onOpenFile: (item: FileItemData) => void;
+  onOpenInNewTab?: (item: FileItemData) => void;
   onDownloadFile: (item: FileItemData) => void;
   onDeleteItem: (item: FileItemData) => void;
   onRenameItem?: (item: FileItemData) => void;
+  onMetadataItem?: (item: FileItemData) => void;
+  onPublicShareItem?: (item: FileItemData) => void;
   onShareFolder?: (item: FileItemData) => void;
   onManageShares?: (item: FileItemData) => void;
   searchTerm?: string;
@@ -44,9 +48,12 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
   onUploadFiles,
   onNewFolder,
   onOpenFile,
+  onOpenInNewTab,
   onDownloadFile,
   onDeleteItem,
   onRenameItem,
+  onMetadataItem,
+  onPublicShareItem,
   onShareFolder,
   onManageShares,
   searchTerm = '',
@@ -55,6 +62,7 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
   isSharedContext = false,
 }) => {
   const [isDraggingOver, setIsDraggingOver] = useState(false);
+  const [contextMenu, setContextMenu] = useState<ContextMenuPosition | null>(null);
 
   // Filter items by search
   const filteredItems = items.filter((item) =>
@@ -245,6 +253,9 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
                         onRename={onRenameItem}
                         onShare={onShareFolder}
                         onManageShares={onManageShares}
+                        onContextMenu={(it, x, y) => setContextMenu({ item: it, x, y })}
+                        onMetadata={onMetadataItem}
+                        onPublicShare={onPublicShareItem}
                         isActionsDisabled={isActionsDisabled}
                       />
                     ))}
@@ -262,6 +273,9 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
                         onRename={onRenameItem}
                         onShare={onShareFolder}
                         onManageShares={onManageShares}
+                        onContextMenu={(it, x, y) => setContextMenu({ item: it, x, y })}
+                        onMetadata={onMetadataItem}
+                        onPublicShare={onPublicShareItem}
                         isActionsDisabled={isActionsDisabled}
                       />
                     ))}
@@ -288,6 +302,9 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
                         onDownload={onDownloadFile}
                         onDelete={onDeleteItem}
                         onRename={onRenameItem}
+                        onContextMenu={(it, x, y) => setContextMenu({ item: it, x, y })}
+                        onMetadata={onMetadataItem}
+                        onPublicShare={onPublicShareItem}
                         isActionsDisabled={isActionsDisabled}
                       />
                     ))}
@@ -312,6 +329,9 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
                         onDownload={onDownloadFile}
                         onDelete={onDeleteItem}
                         onRename={onRenameItem}
+                        onContextMenu={(it, x, y) => setContextMenu({ item: it, x, y })}
+                        onMetadata={onMetadataItem}
+                        onPublicShare={onPublicShareItem}
                         isActionsDisabled={isActionsDisabled}
                       />
                     ))}
@@ -322,6 +342,20 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
           </div>
         )}
       </div>
+
+      {/* Custom Context Menu */}
+      <ContextMenu
+        position={contextMenu}
+        onClose={() => setContextMenu(null)}
+        onOpen={(it) => onOpenFile(it)}
+        onOpenInNewTab={onOpenInNewTab}
+        onDownload={(it) => onDownloadFile(it)}
+        onRename={(it) => onRenameItem?.(it)}
+        onMetadata={(it) => onMetadataItem?.(it)}
+        onPublicShare={(it) => onPublicShareItem?.(it)}
+        onDelete={(it) => onDeleteItem(it)}
+        isActionsDisabled={isActionsDisabled}
+      />
     </div>
   );
 };

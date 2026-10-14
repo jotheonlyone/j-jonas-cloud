@@ -1,4 +1,5 @@
 import type { FileItemData, StorageUsage } from '../types';
+import { getActiveUser } from './accountManager';
 
 // Feste Konstante gemäß Vorgabe – kein Einstellungsfenster / keine dynamische Überschreibung
 export const STORAGE_BASE_URL = 'https://storage.j-jonas.com';
@@ -10,7 +11,7 @@ export interface ServerStatus {
 }
 
 /**
- * Prüft die Erreichbarkeit des Mini-PC FastAPI Backends (https://storage.j-jonas.com).
+ * Prüft die Erreichbarkeit des Mini-PC FastAPI / Express Backends (https://storage.j-jonas.com).
  * Es werden keine Fake-Daten erzeugt.
  */
 export async function checkServerStatus(): Promise<ServerStatus> {
@@ -48,7 +49,7 @@ export async function checkServerStatus(): Promise<ServerStatus> {
 
 /**
  * GET /storage-usage?user=<username>
- * Liefert { used_bytes: number, used_gb: number } direkt vom Server.
+ * Liefert { status, user, usedBytes, usedGB, limitBytes, limitGB } direkt vom Mini-PC Server.
  */
 export async function getStorageUsage(username: string): Promise<StorageUsage> {
   try {
@@ -58,25 +59,30 @@ export async function getStorageUsage(username: string): Promise<StorageUsage> {
     });
     if (res.ok) {
       const data = await res.json();
-      const used_bytes = Number(data.used_bytes || 0);
+      const used_bytes = Number(data.usedBytes ?? data.used_bytes ?? 0);
       const used_gb = Number(
-        data.used_gb !== undefined ? data.used_gb : (used_bytes / (1024 * 1024 * 1024)).toFixed(2)
+        data.usedGB !== undefined
+          ? data.usedGB
+          : data.used_gb !== undefined
+          ? data.used_gb
+          : (used_bytes / (1024 * 1024 * 1024)).toFixed(2)
       );
-      return { used_bytes, used_gb };
+      const limit_gb = Number(data.limitGB ?? data.limit_gb ?? 1000);
+      return { used_bytes, used_gb, limit_gb };
     }
   } catch (err) {
     // Kein Fallback-Mock: Server nicht erreichbar
   }
-  return { used_bytes: 0, used_gb: 0 };
+  return { used_bytes: 0, used_gb: 0, limit_gb: 1000 };
 }
 
 /**
  * GET /files?user=<owner>&path=<relative_path>
  * Liefert die Liste aller echten Dateien und Ordner.
- * Wenn keine Dateien auf dem Server liegen oder Server offline ist, wird ein leeres Array geliefert.
+ * Das Backend liefert { files: [...], currentPath: ... }.
  */
 export async function listFiles(owner: string, relativePath = ''): Promise<{ items: FileItemData[]; error?: string }> {
-  const cleanPath = relativePath.trim().replace(/^\/+|\/+$/g, '');
+  const cleanPath = relativePath.trim().replace(/^\/+|\/+$/g, '') || '.';
 
   try {
     const url = `${STORAGE_BASE_URL}/files?user=${encodeURIComponent(owner)}&path=${encodeURIComponent(cleanPath)}`;
@@ -87,28 +93,48 @@ export async function listFiles(owner: string, relativePath = ''): Promise<{ ite
 
     if (res.ok) {
       const data = await res.json();
-      if (Array.isArray(data)) {
-        const mapped: FileItemData[] = data.map((item: any) => {
-          const itemName = String(item.name);
-          const itemPath = item.path || (cleanPath ? `${cleanPath}/${itemName}` : itemName);
-          return {
-            name: itemName,
-            type: item.type === 'folder' || item.is_dir ? 'folder' : 'file',
-            size: Number(item.size || 0),
-            modified: item.modified || item.updated_at || new Date().toISOString(),
-            mime_type: item.mime_type || item.content_type,
-            path: itemPath,
-          };
-        });
+      const rawList = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.files)
+        ? data.files
+        : [];
 
-        mapped.sort((a, b) => {
-          if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
-          return a.name.localeCompare(b.name);
-        });
+      const normalizedCleanPath = cleanPath === '.' ? '' : cleanPath;
 
-        return { items: mapped };
-      }
-      return { items: [] };
+      const mapped: FileItemData[] = rawList.map((item: any) => {
+        const itemName = String(item.name || '');
+        const itemPath =
+          item.path ||
+          (normalizedCleanPath ? `${normalizedCleanPath}/${itemName}` : itemName);
+        const isFolder =
+          item.isDirectory === true ||
+          item.type === 'folder' ||
+          item.is_dir === true;
+
+        return {
+          name: itemName,
+          type: isFolder ? 'folder' : 'file',
+          size: Number(item.size || 0),
+          modified:
+            item.updatedAt ||
+            item.updated_at ||
+            item.modified ||
+            item.createdAt ||
+            new Date().toISOString(),
+          mime_type:
+            item.type && item.type !== 'folder'
+              ? item.type
+              : item.mime_type || item.content_type,
+          path: itemPath,
+        };
+      });
+
+      mapped.sort((a, b) => {
+        if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+
+      return { items: mapped };
     }
 
     if (res.status === 404) {
@@ -145,15 +171,18 @@ export async function uploadFile(
     };
   }
 
-  const cleanPath = relativePath.trim().replace(/^\/+|\/+$/g, '');
+  const cleanPath = relativePath.trim().replace(/^\/+|\/+$/g, '') || '.';
 
   try {
     const formData = new FormData();
-    formData.append('file', file);
+    // Parameter vor der Datei einfügen, damit multer sie vor dem Stream parsen kann
     formData.append('user', owner);
     formData.append('path', cleanPath);
+    formData.append('file', file);
+    formData.append('upload', file);
 
-    const res = await fetch(`${STORAGE_BASE_URL}/upload`, {
+    const uploadUrl = `${STORAGE_BASE_URL}/upload?user=${encodeURIComponent(owner)}&path=${encodeURIComponent(cleanPath)}`;
+    const res = await fetch(uploadUrl, {
       method: 'POST',
       body: formData,
     });
@@ -172,8 +201,8 @@ export async function uploadFile(
 }
 
 /**
- * POST /create-folder
- * JSON: { user: string, path: string, folder_name: string }
+ * POST /folders oder POST /mkdir
+ * JSON / Query: { user: string, path: string, name: string, folderName: string }
  */
 export async function createFolder(
   owner: string,
@@ -188,18 +217,43 @@ export async function createFolder(
     return { success: false, error: 'Ungültige Sonderzeichen im Ordnernamen.' };
   }
 
-  const cleanPath = relativePath.trim().replace(/^\/+|\/+$/g, '');
+  const cleanPath = relativePath.trim().replace(/^\/+|\/+$/g, '') || '.';
 
   try {
-    const res = await fetch(`${STORAGE_BASE_URL}/create-folder`, {
+    const payload = {
+      user: owner,
+      path: cleanPath,
+      name: folder_name,
+      folderName: folder_name,
+      folder_name,
+    };
+
+    const queryParams = `user=${encodeURIComponent(owner)}&path=${encodeURIComponent(cleanPath)}&name=${encodeURIComponent(folder_name)}`;
+
+    // 1. Primär: POST /folders (Mini-PC Backend)
+    let res = await fetch(`${STORAGE_BASE_URL}/folders?${queryParams}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        user: owner,
-        path: cleanPath,
-        folder_name,
-      }),
+      body: JSON.stringify(payload),
     });
+
+    // 2. Fallback: POST /mkdir
+    if (!res.ok && (res.status === 404 || res.status === 405)) {
+      res = await fetch(`${STORAGE_BASE_URL}/mkdir?${queryParams}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    }
+
+    // 3. Fallback: POST /create-folder (Legacy)
+    if (!res.ok && (res.status === 404 || res.status === 405)) {
+      res = await fetch(`${STORAGE_BASE_URL}/create-folder`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    }
 
     if (res.ok) {
       return { success: true };
@@ -215,26 +269,34 @@ export async function createFolder(
 }
 
 /**
- * GET /api/stream?path={item.path}
- * Liefert die URL zum Streamen/Betrachten oder Vorschaubild der Datei
+ * GET /stream?user=<username>&path=<relative_path>&file=<relative_path>
+ * Liefert die direkte Streaming-/Vorschau-URL mit CORS und Range-Unterstützung
  */
-export function getStreamUrl(itemPath: string): string {
+export function getStreamUrl(itemPath: string, user?: string): string {
+  if (!itemPath) return '';
+  if (itemPath.startsWith('http://') || itemPath.startsWith('https://') || itemPath.startsWith('blob:')) {
+    return itemPath;
+  }
   const clean = itemPath.replace(/^\/+/, '');
-  return `/api/stream?path=${encodeURIComponent(clean)}`;
+  const username = (user || getActiveUser()?.username || '').trim();
+  const userParam = username ? `user=${encodeURIComponent(username)}&` : '';
+
+  return `${STORAGE_BASE_URL}/stream?${userParam}path=${encodeURIComponent(clean)}&file=${encodeURIComponent(clean)}`;
 }
 
 /**
- * GET /download?user=<owner>&file=<relative_path>
+ * GET /download?user=<owner>&path=<relative_path>&file=<relative_path>
  * Direkter Download im Browser.
  */
 export function triggerDirectDownload(owner: string, filePath: string, filename: string): void {
   const cleanPath = filePath.trim().replace(/^\/+/, '');
-  // Entweder über backend stream mit download-Attribut oder Server-Download-Endpunkt
-  const downloadUrl = `/api/stream?path=${encodeURIComponent(cleanPath)}`;
+  const username = (owner || getActiveUser()?.username || '').trim();
+  const userParam = username ? `user=${encodeURIComponent(username)}&` : '';
+  const downloadUrl = `${STORAGE_BASE_URL}/download?${userParam}path=${encodeURIComponent(cleanPath)}&file=${encodeURIComponent(cleanPath)}`;
 
   const a = document.createElement('a');
   a.href = downloadUrl;
-  a.download = filename;
+  a.download = filename || cleanPath.split('/').pop() || 'download';
   a.target = '_blank';
   document.body.appendChild(a);
   a.click();
@@ -243,7 +305,7 @@ export function triggerDirectDownload(owner: string, filePath: string, filename:
 
 /**
  * DELETE /delete-user?user=<username>
- * Löscht das gesamte physische Verzeichnis des Nutzers (/media/ssd/users/<username>/) vom Server.
+ * Löscht das gesamte Verzeichnis des Nutzers vom Server.
  */
 export async function deleteUserServerDirectory(username: string): Promise<{ success: boolean; error?: string }> {
   try {
@@ -258,7 +320,7 @@ export async function deleteUserServerDirectory(username: string): Promise<{ suc
 
     // 2. Fallback to /delete root item
     const fallbackRes = await fetch(
-      `${STORAGE_BASE_URL}/delete?user=${encodeURIComponent(username)}&item=`,
+      `${STORAGE_BASE_URL}/delete?user=${encodeURIComponent(username)}&item=&path=`,
       { method: 'DELETE' }
     );
 
@@ -280,7 +342,7 @@ export async function deleteUserServerDirectory(username: string): Promise<{ suc
 }
 
 /**
- * DELETE /delete?user=<owner>&item=<relative_path>
+ * DELETE /delete?user=<owner>&item=<relative_path>&path=<relative_path>
  * Löscht eine Datei oder einen Ordner auf dem Server.
  */
 export async function deleteItem(
@@ -292,16 +354,36 @@ export async function deleteItem(
   const itemFullPath = cleanPath ? `${cleanPath}/${itemName}` : itemName;
 
   try {
-    const res = await fetch(
-      `${STORAGE_BASE_URL}/delete?user=${encodeURIComponent(owner)}&item=${encodeURIComponent(itemFullPath)}`,
-      {
-        method: 'DELETE',
-      }
-    );
+    const queryParams = `user=${encodeURIComponent(owner)}&item=${encodeURIComponent(itemFullPath)}&path=${encodeURIComponent(itemFullPath)}`;
+    const payload = {
+      user: owner,
+      item: itemFullPath,
+      path: itemFullPath,
+    };
+
+    // 1. DELETE /delete mit Query-Parametern und Body
+    let res = await fetch(`${STORAGE_BASE_URL}/delete?${queryParams}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
 
     if (res.ok) {
       return { success: true };
     }
+
+    // 2. Fallback: DELETE /files
+    if (res.status === 404 || res.status === 405) {
+      res = await fetch(`${STORAGE_BASE_URL}/files?${queryParams}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        return { success: true };
+      }
+    }
+
     const errText = await res.text().catch(() => '');
     return { success: false, error: errText || `Löschen fehlgeschlagen (Status ${res.status})` };
   } catch (err: unknown) {
@@ -313,8 +395,8 @@ export async function deleteItem(
 }
 
 /**
- * POST /rename
- * Falls der Server Umbenennung unterstützt, sonst Meldung.
+ * POST /rename oder PUT /rename
+ * Parameter: user, old_path / oldPath, new_name / newName, new_path / newPath
  */
 export async function renameItem(
   owner: string,
@@ -327,19 +409,43 @@ export async function renameItem(
   const newPath = cleanPath ? `${cleanPath}/${newName}` : newName;
 
   try {
-    const res = await fetch(`${STORAGE_BASE_URL}/rename`, {
+    const payload = {
+      user: owner,
+      old_path: oldPath,
+      oldPath: oldPath,
+      new_name: newName,
+      newName: newName,
+      new_path: newPath,
+      newPath: newPath,
+      path: oldPath,
+      name: newName,
+    };
+
+    const queryParams = `user=${encodeURIComponent(owner)}`;
+
+    // 1. POST /rename
+    let res = await fetch(`${STORAGE_BASE_URL}/rename?${queryParams}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        user: owner,
-        old_path: oldPath,
-        new_path: newPath,
-      }),
+      body: JSON.stringify(payload),
     });
 
     if (res.ok) {
       return { success: true };
     }
+
+    // 2. Fallback: PUT /rename
+    if (res.status === 404 || res.status === 405) {
+      res = await fetch(`${STORAGE_BASE_URL}/rename?${queryParams}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        return { success: true };
+      }
+    }
+
     const err = await res.text().catch(() => '');
     return { success: false, error: err || `Umbenennen fehlgeschlagen (${res.status})` };
   } catch {
@@ -348,6 +454,146 @@ export async function renameItem(
       error: 'Umbenennen fehlgeschlagen: Der Server unterstützt diesen Endpunkt nicht oder ist offline.',
     };
   }
+}
+
+/**
+ * GET /metadata?path=relativer/pfad/datei.ext
+ * Erwartete Antwort: { description: "..." }
+ */
+export async function getFileMetadata(
+  relativePath: string
+): Promise<{ description: string; error?: string }> {
+  const cleanPath = relativePath.trim().replace(/^\/+/, '');
+  try {
+    const res = await fetch(`${STORAGE_BASE_URL}/metadata?path=${encodeURIComponent(cleanPath)}`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      return { description: typeof data?.description === 'string' ? data.description : '' };
+    }
+    return { description: '' };
+  } catch {
+    return { description: '' };
+  }
+}
+
+/**
+ * POST /set-metadata
+ * JSON: { "path": "relativer/pfad/datei.ext", "description": "Text..." }
+ */
+export async function setFileMetadata(
+  relativePath: string,
+  description: string
+): Promise<{ success: boolean; error?: string }> {
+  const cleanPath = relativePath.trim().replace(/^\/+/, '');
+  try {
+    const res = await fetch(`${STORAGE_BASE_URL}/set-metadata`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        path: cleanPath,
+        description: description.trim(),
+      }),
+    });
+
+    if (res.ok) {
+      return { success: true };
+    }
+    const err = await res.text().catch(() => '');
+    return { success: false, error: err || `Metadaten konnten nicht gespeichert werden (${res.status})` };
+  } catch {
+    return {
+      success: false,
+      error: 'Verbindungsfehler: Metadaten konnten nicht an den Server übertragen werden.',
+    };
+  }
+}
+
+/**
+ * Liefert die direkte öffentliche Download-/Stream-URL:
+ * GET /public/{username}/{path}
+ */
+export function getPublicDownloadUrl(username: string, relativePath: string): string {
+  const cleanPath = relativePath.trim().replace(/^\/+/, '');
+  return `${STORAGE_BASE_URL}/public/${encodeURIComponent(username)}/${cleanPath}`;
+}
+
+/**
+ * Ruft den öffentlichen Ordnerinhalt ab:
+ * GET /public-files/{username}/{path}
+ */
+export async function getPublicFolderFiles(
+  username: string,
+  relativePath: string
+): Promise<{ isFolder: boolean; items: FileItemData[]; error?: string }> {
+  const cleanPath = relativePath.trim().replace(/^\/+|\/+$/g, '');
+  try {
+    const res = await fetch(
+      `${STORAGE_BASE_URL}/public-files/${encodeURIComponent(username)}/${cleanPath ? encodeURIComponent(cleanPath) : ''}`,
+      {
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+      }
+    );
+
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        const mapped: FileItemData[] = data.map((item: any) => {
+          const itemName = String(item.name || item.filename || 'Datei');
+          const itemPath = item.path || (cleanPath ? `${cleanPath}/${itemName}` : itemName);
+          return {
+            name: itemName,
+            type: item.type === 'folder' || item.is_dir ? 'folder' : 'file',
+            size: Number(item.size || 0),
+            modified: item.modified || item.updated_at || new Date().toISOString(),
+            mime_type: item.mime_type || item.content_type,
+            path: itemPath,
+          };
+        });
+        return { isFolder: true, items: mapped };
+      }
+    }
+    return { isFolder: false, items: [] };
+  } catch {
+    return { isFolder: false, items: [] };
+  }
+}
+
+/**
+ * Automatische Titel-Verschönerung:
+ * Bei Videodateien die Dateiendung (.mp4, .mkv, .webm etc.) ausblenden,
+ * Unterstriche (_) und Bindestriche (-) durch Leerzeichen ersetzen und
+ * Wörter mit großem Anfangsbuchstaben formatieren (z. B. "der-beste-film.mp4" -> "Der Beste Film").
+ */
+export function formatCleanTitle(filename: string): string {
+  if (!filename) return '';
+  // Dateiendung entfernen
+  const withoutExt = filename.replace(/\.(mp4|mkv|webm|avi|mov|m4v|flv|wmv|ts|3gp|m4a|mp3)$/i, '')
+    .replace(/\.[a-zA-Z0-9]{2,4}$/, '');
+
+  // Unterstriche und Bindestriche durch Leerzeichen ersetzen
+  const withSpaces = withoutExt.replace(/[_\-]+/g, ' ').trim();
+  if (!withSpaces) return filename;
+
+  // Wörter mit großem Anfangsbuchstaben formatieren
+  return withSpaces
+    .split(/\s+/)
+    .map((word) => {
+      if (!word) return '';
+      return word.charAt(0).toUpperCase() + word.slice(1);
+    })
+    .join(' ');
+}
+
+export interface VideoCategory {
+  id: string;
+  title: string;
+  folderPath: string;
+  videos: FileItemData[];
 }
 
 // Format bytes
@@ -359,3 +605,4 @@ export function formatBytes(bytes: number, decimals = 1): string {
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
 }
+

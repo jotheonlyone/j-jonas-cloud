@@ -12,7 +12,9 @@ import {
   Download,
   Trash2,
   Share2,
-  Edit2
+  Edit2,
+  Link as LinkIcon,
+  Info
 } from 'lucide-react';
 import type { FileItemData, ViewMode } from '../types';
 import { formatBytes, getStreamUrl } from '../services/storageApi';
@@ -27,6 +29,9 @@ interface FileItemProps {
   onRename?: (item: FileItemData) => void;
   onShare?: (item: FileItemData) => void;
   onManageShares?: (item: FileItemData) => void;
+  onContextMenu?: (item: FileItemData, x: number, y: number) => void;
+  onMetadata?: (item: FileItemData) => void;
+  onPublicShare?: (item: FileItemData) => void;
   isActionsDisabled?: boolean;
 }
 
@@ -94,11 +99,19 @@ export const FileItem: React.FC<FileItemProps> = ({
   onRename,
   onShare,
   onManageShares,
+  onContextMenu,
+  onMetadata,
+  onPublicShare,
   isActionsDisabled = false,
 }) => {
   const [menuOpen, setMenuOpen] = useState(false);
   const [imgError, setImgError] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  // Mobile Long-Press Detection
+  const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const touchStartPosRef = useRef<{ x: number; y: number } | null>(null);
+  const isLongPressTriggeredRef = useRef(false);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -128,9 +141,51 @@ export const FileItem: React.FC<FileItemProps> = ({
   const isPdf = isPdfFile(item);
   const streamUrl = getStreamUrl(item.path || item.name);
 
+  // Touch handlers for mobile long-press (500ms)
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    touchStartPosRef.current = { x: touch.clientX, y: touch.clientY };
+    isLongPressTriggeredRef.current = false;
+
+    if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+    longPressTimerRef.current = setTimeout(() => {
+      isLongPressTriggeredRef.current = true;
+      if (onContextMenu && touchStartPosRef.current) {
+        onContextMenu(item, touchStartPosRef.current.x, touchStartPosRef.current.y);
+      }
+    }, 500);
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (!touchStartPosRef.current || e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    const dx = Math.abs(touch.clientX - touchStartPosRef.current.x);
+    const dy = Math.abs(touch.clientY - touchStartPosRef.current.y);
+    if (dx > 10 || dy > 10) {
+      if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+    }
+  };
+
+  const handleTouchEnd = () => {
+    if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+  };
+
+  // Desktop Right-Click
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (onContextMenu) {
+      onContextMenu(item, e.clientX, e.clientY);
+    }
+  };
+
   // Single click handler:
-  // Folders open on single click, files open in preview on single click
-  const handleItemClick = () => {
+  const handleItemClick = (e: React.MouseEvent) => {
+    if (isLongPressTriggeredRef.current) {
+      isLongPressTriggeredRef.current = false;
+      return;
+    }
     onOpen(item);
   };
 
@@ -144,6 +199,10 @@ export const FileItem: React.FC<FileItemProps> = ({
     return (
       <div
         onClick={handleItemClick}
+        onContextMenu={handleContextMenu}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
         className="group relative flex flex-col justify-between p-3 rounded-2xl bg-white dark:bg-gray-800 border border-gray-200/80 dark:border-gray-700 hover:border-blue-400 dark:hover:border-blue-500 hover:shadow-md transition-all cursor-pointer select-none"
       >
         {/* Top bar in card: Thumbnail / Icon + Context menu */}
@@ -184,7 +243,12 @@ export const FileItem: React.FC<FileItemProps> = ({
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  setMenuOpen(!menuOpen);
+                  if (onContextMenu) {
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    onContextMenu(item, rect.left, rect.bottom + 4);
+                  } else {
+                    setMenuOpen(!menuOpen);
+                  }
                 }}
                 className="p-1 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 opacity-80 group-hover:opacity-100 transition-opacity"
                 aria-label="Optionen"
@@ -311,6 +375,10 @@ export const FileItem: React.FC<FileItemProps> = ({
   return (
     <div
       onClick={handleItemClick}
+      onContextMenu={handleContextMenu}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
       className="group flex items-center justify-between px-3.5 py-2.5 rounded-xl border border-transparent hover:border-gray-200 dark:hover:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800/60 transition-all cursor-pointer select-none"
     >
       <div className="flex items-center gap-3 flex-1 min-w-0 pr-4">
@@ -376,7 +444,12 @@ export const FileItem: React.FC<FileItemProps> = ({
             type="button"
             onClick={(e) => {
               e.stopPropagation();
-              setMenuOpen(!menuOpen);
+              if (onContextMenu) {
+                const rect = e.currentTarget.getBoundingClientRect();
+                onContextMenu(item, rect.left, rect.bottom + 4);
+              } else {
+                setMenuOpen(!menuOpen);
+              }
             }}
             className="p-1 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-200/50 dark:hover:bg-gray-700 transition-colors"
             aria-label="Optionen"

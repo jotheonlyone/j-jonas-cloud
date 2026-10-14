@@ -23,6 +23,16 @@ export interface FileItemData {
 export interface StorageUsage {
   used_bytes: number;
   used_gb: number;
+  limit_gb?: number;
+  limit_bytes?: number;
+}
+
+export interface SharedMember {
+  username: string;
+  status: 'pending' | 'accepted' | 'declined';
+  can_see_members: boolean;
+  can_manage_members: boolean;
+  added_at: string;
 }
 
 export interface FolderShare {
@@ -30,10 +40,16 @@ export interface FolderShare {
   folder_path: string;
   folder_name: string;
   owner: string;
-  invited_user: string;
-  status: 'pending' | 'accepted' | 'declined';
+  shared_with: SharedMember[];
   created_at: string;
+  updated_at?: string;
+  // Optional legacy fields for backward compatibility during runtime migrations
+  invited_user?: string;
+  status?: 'pending' | 'accepted' | 'declined';
+  can_see_members?: boolean;
+  can_manage_members?: boolean;
 }
+
 
 export interface SystemConfig {
   maintenance: boolean;

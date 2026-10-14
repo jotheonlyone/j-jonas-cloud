@@ -39,27 +39,35 @@ import { ManageFolderSharesModal } from './components/ManageFolderSharesModal';
 import { MediaViewerModal, isVideoFile } from './components/MediaViewerModal';
 import { CinemaView } from './components/CinemaView';
 import { CinemaTvView } from './components/CinemaTvView';
-import { AccountSettingsModal } from './components/AccountSettingsModal';
+import { CinemaTvAuthModal } from './components/CinemaTvAuthModal';
+import { SettingsModal } from './components/SettingsModal';
+import { FileViewerPage } from './components/FileViewerPage';
 import { MaintenanceBanner } from './components/MaintenanceBanner';
 import { LegalLinks } from './components/LegalLinks';
 import { ToastProvider, useToast } from './components/Toast';
+import { RenameModal, FileMetadataModal, PublicShareModal } from './components/FileActionModals';
+import { PublicShareView } from './components/PublicShareView';
+import {
+  getActiveUser,
+  getSavedAccounts,
+  saveAndActivateAccount,
+  switchActiveAccount,
+  logoutCurrentAccount,
+  logoutAllAccounts,
+  CURRENT_USER_KEY,
+} from './services/accountManager';
 
-const CURRENT_USER_KEY = 'jjcloud_session_user';
 const DARK_MODE_KEY = 'jjcloud_dark_mode';
 const VIEW_MODE_KEY = 'jjcloud_view_mode';
+const OPEN_FILES_IN_NEW_TAB_KEY = 'jjcloud_open_files_in_new_tab';
 
 function MainApp() {
   const { addToast } = useToast();
 
-  // User session
-  const [user, setUser] = useState<UserAccount | null>(() => {
-    try {
-      const raw = localStorage.getItem(CURRENT_USER_KEY);
-      return raw ? JSON.parse(raw) : null;
-    } catch {
-      return null;
-    }
-  });
+  // Multi-account persistent session
+  const [user, setUser] = useState<UserAccount | null>(() => getActiveUser());
+  const [savedAccounts, setSavedAccounts] = useState<UserAccount[]>(() => getSavedAccounts());
+  const [showAddAccountModal, setShowAddAccountModal] = useState<boolean>(false);
 
   // Dark Mode: Auto-detects device mode if no explicit user override exists
   const [darkMode, setDarkMode] = useState<boolean>(() => {
@@ -86,11 +94,38 @@ function MainApp() {
   };
 
   // UI state
+  const [isShareRoute, setIsShareRoute] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return window.location.pathname.toLowerCase().startsWith('/share');
+  });
+  const [isViewRoute, setIsViewRoute] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    const path = window.location.pathname.toLowerCase().replace(/\/+$/, '') || '/';
+    const search = window.location.search.toLowerCase();
+    return path === '/view' || path.startsWith('/view/') || search.includes('view=');
+  });
+
+  const [openFilesInNewTab, setOpenFilesInNewTab] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(OPEN_FILES_IN_NEW_TAB_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const handleToggleOpenFilesInNewTab = (val: boolean) => {
+    setOpenFilesInNewTab(val);
+    try {
+      localStorage.setItem(OPEN_FILES_IN_NEW_TAB_KEY, String(val));
+    } catch {}
+  };
+
   const [currentTab, setCurrentTab] = useState<NavigationTab>(getTabFromUrl);
   const [currentPath, setCurrentPath] = useState<string>('');
 
   // Synchronize browser history and path
   const navigateToTab = useCallback((tab: NavigationTab, replace = false) => {
+    setIsShareRoute(false);
     setCurrentTab(tab);
     if (typeof window !== 'undefined') {
       const currentUrlPath = window.location.pathname.toLowerCase().replace(/\/+$/, '') || '/';
@@ -111,6 +146,10 @@ function MainApp() {
   // Listen to browser Back/Forward (popstate)
   useEffect(() => {
     const handlePopState = () => {
+      const isShare = typeof window !== 'undefined' && window.location.pathname.toLowerCase().startsWith('/share');
+      setIsShareRoute(isShare);
+      if (isShare) return;
+
       const tab = getTabFromUrl();
       setCurrentTab(tab);
       // Canonicalize /vod to /cinema, and /tv to /cinema/tv in address bar
@@ -162,9 +201,12 @@ function MainApp() {
   const [showNewSharedModal, setShowNewSharedModal] = useState(false);
   const [showAccountSettingsModal, setShowAccountSettingsModal] = useState(false);
   const [folderToShare, setFolderToShare] = useState<FileItemData | null>(null);
+  const [itemToRename, setItemToRename] = useState<FileItemData | null>(null);
+  const [itemForMetadata, setItemForMetadata] = useState<FileItemData | null>(null);
+  const [itemForPublicShare, setItemForPublicShare] = useState<FileItemData | null>(null);
 
   // Manage Shares Modal state
-  const [manageSharesFolder, setManageSharesFolder] = useState<{ path: string; name: string } | null>(null);
+  const [manageSharesFolder, setManageSharesFolder] = useState<{ path: string; name: string; owner?: string } | null>(null);
 
   // Media Viewer Modal state
   const [viewerItem, setViewerItem] = useState<FileItemData | null>(null);
@@ -178,7 +220,7 @@ function MainApp() {
 
   // Scan for videos across directories when cinema mode is entered
   useEffect(() => {
-    if (!user || currentTab !== 'cinema') return;
+    if (!user || (currentTab !== 'cinema' && currentTab !== 'cinema-tv')) return;
     let isMounted = true;
     const scanAllVideos = async () => {
       try {
@@ -325,8 +367,12 @@ function MainApp() {
         getSharesByOwner(username),
       ]);
       const map = new Map<string, FolderShare>();
-      invited.forEach((s) => map.set(s.id, s));
-      owned.forEach((s) => map.set(s.id, s));
+      (invited || []).filter(Boolean).forEach((s) => {
+        if (s && s.id) map.set(s.id, s);
+      });
+      (owned || []).filter(Boolean).forEach((s) => {
+        if (s && s.id) map.set(s.id, s);
+      });
       setShares(Array.from(map.values()));
     } catch (err) {
       console.warn('Failed to load shares', err);
@@ -362,18 +408,64 @@ function MainApp() {
     }
   }, [user, currentPath, currentTab, loadDirectoryFiles]);
 
-  const handleLoginSuccess = (loggedInUser: UserAccount) => {
+  const handleLoginSuccess = (loggedInUser: UserAccount, targetTabOverride?: NavigationTab) => {
+    const updatedAccounts = saveAndActivateAccount(loggedInUser);
+    setSavedAccounts(updatedAccounts);
     setUser(loggedInUser);
     setCurrentPath('');
-    setCurrentTab('my-drive');
+
+    const urlTab = getTabFromUrl();
+    const destinationTab: NavigationTab =
+      targetTabOverride ||
+      (currentTab === 'cinema-tv' || urlTab === 'cinema-tv'
+        ? 'cinema-tv'
+        : currentTab === 'cinema' || urlTab === 'cinema'
+        ? 'cinema'
+        : 'my-drive');
+
+    navigateToTab(destinationTab, true);
+    setShowAddAccountModal(false);
     addToast('success', 'Angemeldet', `Willkommen zurück, @${loggedInUser.username}!`);
   };
 
-  const handleLogout = () => {
-    setUser(null);
+  const handleSwitchAccount = (targetUser: UserAccount) => {
+    const switched = switchActiveAccount(targetUser.username);
+    if (switched) {
+      setUser(switched);
+      setCurrentPath('');
+      setItems([]);
+      loadDirectoryFiles(switched.username, '');
+      loadUsage(switched.username);
+      loadShares(switched.username);
+      addToast('success', 'Konto gewechselt', `Jetzt aktiv: @${switched.username}`);
+    }
+  };
+
+  const handleLogoutCurrentAccount = () => {
+    if (!user) return;
+    const { remainingAccounts, nextUser } = logoutCurrentAccount(user.username);
+    setSavedAccounts(remainingAccounts);
     setCurrentPath('');
     setItems([]);
-    addToast('info', 'Abgemeldet', 'Erfolgreich abgemeldet.');
+    if (nextUser) {
+      setUser(nextUser);
+      loadDirectoryFiles(nextUser.username, '');
+      loadUsage(nextUser.username);
+      loadShares(nextUser.username);
+      addToast('info', 'Konto abgemeldet', `Zu @${nextUser.username} gewechselt.`);
+    } else {
+      setUser(null);
+      addToast('info', 'Abgemeldet', 'Erfolgreich abgemeldet.');
+    }
+  };
+
+  const handleLogoutAllAccounts = () => {
+    logoutAllAccounts();
+    setUser(null);
+    setSavedAccounts([]);
+    setCurrentPath('');
+    setItems([]);
+    addToast('info', 'Abgemeldet', 'Von allen Konten abgemeldet.');
   };
 
   // Upload handler with quota check
@@ -433,23 +525,13 @@ function MainApp() {
   };
 
   // Rename item handler
-  const handleRenameItem = async (item: FileItemData) => {
+  const handleRenameItem = (item: FileItemData) => {
     if (!user) return;
     if (maintenanceMode && user.role !== 'master') {
       addToast('error', 'Wartungsmodus', 'Aktion im Wartungsmodus pausiert.');
       return;
     }
-
-    const newName = window.prompt(`Neuer Name für "${item.name}":`, item.name);
-    if (!newName || newName.trim() === item.name) return;
-
-    const res = await renameItem(user.username, currentPath, item.name, newName.trim());
-    if (res.success) {
-      addToast('success', 'Umbenannt', `"${item.name}" wurde zu "${newName.trim()}" umbenannt.`);
-      loadDirectoryFiles(user.username, currentPath);
-    } else {
-      addToast('error', 'Fehler beim Umbenennen', res.error);
-    }
+    setItemToRename(item);
   };
 
   // Download item handler
@@ -459,29 +541,49 @@ function MainApp() {
     triggerDirectDownload(user.username, fullItemPath, item.name);
   };
 
-  // Open item (files open preview modal, folders navigate)
+  // Open file in dedicated tab
+  const handleOpenFileInNewTab = useCallback((item: FileItemData) => {
+    const fullPath = item.path || (currentPath ? `${currentPath}/${item.name}` : item.name);
+    const tempSessionId = `s_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const searchParams = new URLSearchParams({
+      path: fullPath,
+      name: item.name,
+      session_ref: tempSessionId,
+      ...(user ? { owner: user.username } : {}),
+    });
+    window.open(`/view?${searchParams.toString()}`, '_blank');
+  }, [currentPath, user]);
+
+  // Open item (files open preview modal or new tab according to setting, folders navigate)
   const handleOpenItem = (item: FileItemData) => {
     if (item.type === 'folder') {
       const nextPath = currentPath ? `${currentPath}/${item.name}` : item.name;
       setCurrentPath(nextPath);
     } else {
-      setViewerItem(item);
-      setViewerItemsList(items);
+      if (openFilesInNewTab) {
+        handleOpenFileInNewTab(item);
+      } else {
+        setViewerItem(item);
+        setViewerItemsList(items);
+      }
     }
   };
 
   // Share handlers
   const handleAcceptShare = async (shareId: string) => {
-    await respondToShare(shareId, 'accepted');
+    if (!user) return;
+    await respondToShare(shareId, 'accepted', user.username);
     addToast('success', 'Einladung angenommen', 'Der Ordner wurde zum Geteilten Bereich hinzugefügt.');
-    if (user) loadShares(user.username);
+    loadShares(user.username);
   };
 
   const handleDeclineShare = async (shareId: string) => {
-    await respondToShare(shareId, 'declined');
+    if (!user) return;
+    await respondToShare(shareId, 'declined', user.username);
     addToast('info', 'Einladung abgelehnt');
-    if (user) loadShares(user.username);
+    loadShares(user.username);
   };
+
 
   // Admin handlers
   const handleToggleMaintenance = async (enabled: boolean) => {
@@ -530,12 +632,64 @@ function MainApp() {
   };
 
   const pendingSharesCount = user
-    ? shares.filter(
-        (s) => s.invited_user.toLowerCase() === user.username.toLowerCase() && s.status === 'pending'
-      ).length
+    ? shares.filter((s) => {
+        if (!s) return false;
+        const userNorm = (user.username || '').toLowerCase();
+        if (s.invited_user && s.invited_user?.toLowerCase() === userNorm && s.status === 'pending') {
+          return true;
+        }
+        return Array.isArray(s.shared_with) && s.shared_with.some(
+          (m) => m?.username && m.username?.toLowerCase() === userNorm && m.status === 'pending'
+        );
+      }).length
     : 0;
 
+
+  if (isViewRoute) {
+    return (
+      <FileViewerPage
+        darkMode={darkMode}
+        onToggleDarkMode={toggleDarkMode}
+      />
+    );
+  }
+
+  if (isShareRoute) {
+    return (
+      <PublicShareView
+        darkMode={darkMode}
+        onGoToHome={() => {
+          if (typeof window !== 'undefined') {
+            window.history.pushState({}, '', '/');
+          }
+          setIsShareRoute(false);
+          setCurrentTab('my-drive');
+        }}
+      />
+    );
+  }
+
   if (!user) {
+    if (currentTab === 'cinema-tv') {
+      return (
+        <CinemaTvAuthModal
+          onSuccess={(u) => handleLoginSuccess(u, 'cinema-tv')}
+          onStartDemo={() => {
+            const demoUser: UserAccount = {
+              username: 'demo_gast',
+              passwordHash: 'demo_guest_hash',
+              salt: 'demo_guest_salt',
+              role: 'user',
+              status: 'active',
+              quota_gb: 100,
+              createdAt: new Date().toISOString(),
+            };
+            handleLoginSuccess(demoUser, 'cinema-tv');
+          }}
+        />
+      );
+    }
+
     return (
       <AuthModal
         onSuccess={handleLoginSuccess}
@@ -608,7 +762,12 @@ function MainApp() {
           {/* Top Header */}
           <Header
             user={user}
-            onLogout={handleLogout}
+            savedAccounts={savedAccounts}
+            onSwitchAccount={handleSwitchAccount}
+            onAddAccount={() => setShowAddAccountModal(true)}
+            onLogoutCurrentAccount={handleLogoutCurrentAccount}
+            onLogoutAllAccounts={handleLogoutAllAccounts}
+            onLogout={handleLogoutCurrentAccount}
             viewMode={viewMode}
             onViewModeChange={handleViewModeChange}
             searchTerm={searchTerm}
@@ -704,9 +863,12 @@ function MainApp() {
                   onUploadFiles={handleUploadFiles}
                   onNewFolder={() => setShowNewFolderModal(true)}
                   onOpenFile={handleOpenItem}
+                  onOpenInNewTab={handleOpenFileInNewTab}
                   onDownloadFile={handleDownloadItem}
                   onDeleteItem={handleDeleteItem}
                   onRenameItem={handleRenameItem}
+                  onMetadataItem={(item) => setItemForMetadata(item)}
+                  onPublicShareItem={(item) => setItemForPublicShare(item)}
                   onShareFolder={(item) => {
                     setFolderToShare(item);
                     setShowNewSharedModal(true);
@@ -731,12 +893,16 @@ function MainApp() {
                   viewMode={viewMode}
                   maintenanceMode={maintenanceMode}
                   onOpenNewSharedModal={() => setShowNewSharedModal(true)}
-                  onManageFolderShares={(fPath, fName) => {
-                    setManageSharesFolder({ path: fPath, name: fName });
+                  onManageFolderShares={(fPath, fName, fOwner) => {
+                    setManageSharesFolder({ path: fPath, name: fName, owner: fOwner });
                   }}
                   onOpenFilePreview={(item, allItems) => {
-                    setViewerItem(item);
-                    setViewerItemsList(allItems);
+                    if (openFilesInNewTab) {
+                      handleOpenFileInNewTab(item);
+                    } else {
+                      setViewerItem(item);
+                      setViewerItemsList(allItems);
+                    }
                   }}
                 />
               )}
@@ -772,13 +938,14 @@ function MainApp() {
         onDownload={handleDownloadItem}
       />
 
-      {/* Manage Folder Shares Modal: Multiple users, delete shares, add new user */}
+      {/* Manage Folder Shares Modal: Multiple users, delete shares, add new user, permission toggles */}
       {manageSharesFolder && (
         <ManageFolderSharesModal
           isOpen={Boolean(manageSharesFolder)}
           onClose={() => setManageSharesFolder(null)}
           folderPath={manageSharesFolder.path}
           folderName={manageSharesFolder.name}
+          folderOwner={manageSharesFolder.owner}
           currentUser={user}
           onSharesUpdated={() => loadShares(user.username)}
         />
@@ -811,13 +978,66 @@ function MainApp() {
         existingFolderName={folderToShare?.name}
       />
 
-      {/* Account Settings Modal */}
-      <AccountSettingsModal
+      {/* Central Settings Modal (Allgemein & Kontoeinstellungen) */}
+      <SettingsModal
         isOpen={showAccountSettingsModal}
         onClose={() => setShowAccountSettingsModal(false)}
         user={user}
         onUserUpdated={handleUserUpdated}
+        openFilesInNewTab={openFilesInNewTab}
+        onToggleOpenFilesInNewTab={handleToggleOpenFilesInNewTab}
+        darkMode={darkMode}
+        onToggleDarkMode={toggleDarkMode}
+        viewMode={viewMode}
+        onViewModeChange={handleViewModeChange}
+        storageUsage={storageUsage}
+        serverStatus={serverStatus}
       />
+
+      {/* Rename Item Modal */}
+      <RenameModal
+        isOpen={Boolean(itemToRename)}
+        item={itemToRename}
+        currentPath={currentPath}
+        username={user.username}
+        onClose={() => setItemToRename(null)}
+        onSuccess={(oldName, newName) => {
+          addToast('success', 'Umbenannt', `"${oldName}" wurde zu "${newName}" umbenannt.`);
+          loadDirectoryFiles(user.username, currentPath);
+          loadUsage(user.username);
+        }}
+      />
+
+      {/* Details & Description Modal */}
+      <FileMetadataModal
+        isOpen={Boolean(itemForMetadata)}
+        item={itemForMetadata}
+        currentPath={currentPath}
+        onClose={() => setItemForMetadata(null)}
+        onSaved={() => {
+          addToast('success', 'Beschreibung gespeichert', 'Metadaten wurden auf dem Server hinterlegt.');
+        }}
+      />
+
+      {/* Public Share Modal */}
+      <PublicShareModal
+        isOpen={Boolean(itemForPublicShare)}
+        item={itemForPublicShare}
+        currentPath={currentPath}
+        username={user.username}
+        onClose={() => setItemForPublicShare(null)}
+      />
+
+      {/* Add Account Modal (Multi-Account Switcher) */}
+      {user && showAddAccountModal && (
+        <AuthModal
+          onSuccess={handleLoginSuccess}
+          darkMode={darkMode}
+          onToggleDarkMode={toggleDarkMode}
+          onClose={() => setShowAddAccountModal(false)}
+          isAddAccountMode={true}
+        />
+      )}
     </div>
   );
 }

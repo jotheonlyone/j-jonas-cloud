@@ -1,0 +1,459 @@
+import React, { useState, useEffect } from 'react';
+import { X, Check, Copy, ExternalLink, FileText, Edit2, Share2, Info, Loader2 } from 'lucide-react';
+import type { FileItemData } from '../types';
+import {
+  renameItem,
+  getFileMetadata,
+  setFileMetadata,
+  formatBytes,
+  formatCleanTitle,
+} from '../services/storageApi';
+
+// -------------------------------------------------------------
+// 1. RENAME MODAL
+// -------------------------------------------------------------
+interface RenameModalProps {
+  isOpen: boolean;
+  item: FileItemData | null;
+  currentPath: string;
+  username: string;
+  onClose: () => void;
+  onSuccess: (oldName: string, newName: string) => void;
+}
+
+export const RenameModal: React.FC<RenameModalProps> = ({
+  isOpen,
+  item,
+  currentPath,
+  username,
+  onClose,
+  onSuccess,
+}) => {
+  const [newName, setNewName] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (item) {
+      setNewName(item.name);
+      setError(null);
+    }
+  }, [item]);
+
+  if (!isOpen || !item) return null;
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = newName.trim();
+    if (!trimmed) {
+      setError('Der Name darf nicht leer sein.');
+      return;
+    }
+    if (trimmed === item.name) {
+      onClose();
+      return;
+    }
+
+    setIsLoading(true);
+    setError(null);
+
+    const oldRelativePath = item.path || (currentPath ? `${currentPath}/${item.name}` : item.name);
+    const res = await renameItem(username, currentPath, item.name, trimmed);
+
+    setIsLoading(false);
+    if (res.success) {
+      onSuccess(item.name, trimmed);
+      onClose();
+    } else {
+      setError(res.error || 'Fehler beim Umbenennen.');
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
+      <div
+        className="relative w-full max-w-md bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-800 p-6 overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between pb-3 border-b border-gray-100 dark:border-gray-800">
+          <div className="flex items-center gap-2 text-gray-900 dark:text-gray-100 font-semibold text-base">
+            <Edit2 className="w-5 h-5 text-blue-500" />
+            <span>{item.type === 'folder' ? 'Ordner umbenennen' : 'Datei umbenennen'}</span>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider mb-1.5">
+              Neuer Name
+            </label>
+            <input
+              type="text"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              autoFocus
+              className="w-full px-3.5 py-2.5 rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm transition-all shadow-xs"
+              placeholder="Name eingeben..."
+            />
+          </div>
+
+          {error && (
+            <p className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/40 p-2.5 rounded-lg border border-red-200 dark:border-red-800/60">
+              {error}
+            </p>
+          )}
+
+          <div className="flex items-center justify-end gap-2.5 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={isLoading}
+              className="px-4 py-2 rounded-xl text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+            >
+              Abbrechen
+            </button>
+            <button
+              type="submit"
+              disabled={isLoading}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white transition-all shadow-xs disabled:opacity-60"
+            >
+              {isLoading && <Loader2 className="w-4 h-4 animate-spin" />}
+              <span>Speichern</span>
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+// -------------------------------------------------------------
+// 2. FILE METADATA & DESCRIPTION MODAL
+// -------------------------------------------------------------
+interface FileMetadataModalProps {
+  isOpen: boolean;
+  item: FileItemData | null;
+  currentPath: string;
+  onClose: () => void;
+  onSaved?: (description: string) => void;
+}
+
+export const FileMetadataModal: React.FC<FileMetadataModalProps> = ({
+  isOpen,
+  item,
+  currentPath,
+  onClose,
+  onSaved,
+}) => {
+  const [description, setDescription] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  const relativePath = item ? (item.path || (currentPath ? `${currentPath}/${item.name}` : item.name)) : '';
+
+  useEffect(() => {
+    if (!isOpen || !item) return;
+    let isMounted = true;
+    setIsLoading(true);
+    setStatusMessage(null);
+
+    getFileMetadata(relativePath)
+      .then((data) => {
+        if (isMounted) {
+          setDescription(data.description || '');
+          setIsLoading(false);
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setDescription('');
+          setIsLoading(false);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isOpen, item, relativePath]);
+
+  if (!isOpen || !item) return null;
+
+  const handleSave = async () => {
+    setIsSaving(true);
+    setStatusMessage(null);
+
+    const res = await setFileMetadata(relativePath, description);
+    setIsSaving(false);
+
+    if (res.success) {
+      setStatusMessage({ type: 'success', text: 'Beschreibung erfolgreich gespeichert.' });
+      if (onSaved) onSaved(description);
+      setTimeout(() => {
+        onClose();
+      }, 900);
+    } else {
+      setStatusMessage({
+        type: 'error',
+        text: res.error || 'Speichern der Beschreibung fehlgeschlagen.',
+      });
+    }
+  };
+
+  const formattedDate = () => {
+    try {
+      return new Date(item.modified).toLocaleString('de-DE');
+    } catch {
+      return item.modified;
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
+      <div
+        className="relative w-full max-w-lg bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-800 p-6 overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between pb-3 border-b border-gray-100 dark:border-gray-800">
+          <div className="flex items-center gap-2 text-gray-900 dark:text-gray-100 font-semibold text-base">
+            <Info className="w-5 h-5 text-blue-500" />
+            <span>Details & Beschreibung</span>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* File Quick Info */}
+        <div className="mt-4 p-3.5 rounded-xl bg-gray-50 dark:bg-gray-800/60 border border-gray-100 dark:border-gray-800 space-y-1.5 text-xs text-gray-600 dark:text-gray-300">
+          <div className="flex justify-between">
+            <span className="text-gray-400">Name:</span>
+            <span className="font-medium text-gray-900 dark:text-gray-100 truncate max-w-[280px]">
+              {item.name}
+            </span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-400">Pfad:</span>
+            <span className="font-mono text-[11px] text-gray-700 dark:text-gray-300 truncate max-w-[280px]">
+              {relativePath || '/'}
+            </span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-400">Größe:</span>
+            <span className="font-medium">{item.type === 'folder' ? 'Ordner' : formatBytes(item.size)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-400">Geändert am:</span>
+            <span>{formattedDate()}</span>
+          </div>
+        </div>
+
+        {/* Description textarea */}
+        <div className="mt-4">
+          <div className="flex items-center justify-between mb-1.5">
+            <label className="text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">
+              Beschreibung
+            </label>
+            {isLoading && (
+              <span className="flex items-center gap-1 text-[11px] text-blue-500">
+                <Loader2 className="w-3 h-3 animate-spin" /> Wird geladen...
+              </span>
+            )}
+          </div>
+          <textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            disabled={isLoading || isSaving}
+            rows={4}
+            placeholder="Optionale Notiz oder Filmbeschreibung eingeben (wird auch im Cinema-Modus angezeigt)..."
+            className="w-full px-3.5 py-2.5 rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm transition-all shadow-xs resize-y disabled:opacity-60"
+          />
+        </div>
+
+        {statusMessage && (
+          <div
+            className={`mt-3 p-2.5 rounded-xl text-xs font-medium ${
+              statusMessage.type === 'success'
+                ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                : 'bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800'
+            }`}
+          >
+            {statusMessage.text}
+          </div>
+        )}
+
+        <div className="flex items-center justify-end gap-2.5 pt-4 mt-2 border-t border-gray-100 dark:border-gray-800">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={isSaving}
+            className="px-4 py-2 rounded-xl text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+          >
+            Schließen
+          </button>
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={isLoading || isSaving}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white transition-all shadow-xs disabled:opacity-60"
+          >
+            {isSaving && <Loader2 className="w-4 h-4 animate-spin" />}
+            <span>Speichern</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// -------------------------------------------------------------
+// 3. PUBLIC SHARE MODAL
+// Format: https://cloud.j-jonas.com/share/{current_username}/{encoded_relative_path}
+// -------------------------------------------------------------
+interface PublicShareModalProps {
+  isOpen: boolean;
+  item: FileItemData | null;
+  currentPath: string;
+  username: string;
+  onClose: () => void;
+}
+
+export const PublicShareModal: React.FC<PublicShareModalProps> = ({
+  isOpen,
+  item,
+  currentPath,
+  username,
+  onClose,
+}) => {
+  const [copied, setCopied] = useState(false);
+
+  if (!isOpen || !item) return null;
+
+  const rawPath = item.path || (currentPath ? `${currentPath}/${item.name}` : item.name);
+  const cleanPath = rawPath.trim().replace(/^\/+/, '');
+  
+  // URL Format: https://cloud.j-jonas.com/share/{current_username}/{encoded_relative_path}
+  // Pfad-Elemente sauber URI-encoden
+  const encodedPath = cleanPath
+    .split('/')
+    .map((seg) => encodeURIComponent(seg))
+    .join('/');
+
+  const shareUrl = `https://cloud.j-jonas.com/share/${encodeURIComponent(username)}/${encodedPath}`;
+  const localTestUrl = `/share/${encodeURIComponent(username)}/${encodedPath}`;
+
+  const handleCopy = async () => {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(shareUrl);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = shareUrl;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    } catch {
+      setCopied(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
+      <div
+        className="relative w-full max-w-lg bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-800 p-6 overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between pb-3 border-b border-gray-100 dark:border-gray-800">
+          <div className="flex items-center gap-2 text-gray-900 dark:text-gray-100 font-semibold text-base">
+            <Share2 className="w-5 h-5 text-emerald-500" />
+            <span>Öffentlichen Link teilen</span>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="mt-4 space-y-4">
+          <p className="text-xs text-gray-600 dark:text-gray-300 leading-relaxed">
+            Über diesen öffentlichen Link kann jede Person {item.type === 'folder' ? 'den Ordner' : 'die Datei'}{' '}
+            <strong>"{item.name}"</strong> ohne Cloud-Login oder Passwort ansehen und herunterladen.
+          </p>
+
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider mb-1.5">
+              Generierter Freigabelink
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                readOnly
+                value={shareUrl}
+                onFocus={(e) => e.target.select()}
+                className="flex-1 font-mono text-xs px-3.5 py-2.5 rounded-xl border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-800 dark:text-gray-200 select-all focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+              <button
+                type="button"
+                onClick={handleCopy}
+                className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-semibold text-white transition-all shadow-xs ${
+                  copied
+                    ? 'bg-emerald-600 hover:bg-emerald-700 ring-2 ring-emerald-400'
+                    : 'bg-blue-600 hover:bg-blue-700'
+                }`}
+              >
+                {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                <span>{copied ? 'Kopiert!' : 'Kopieren'}</span>
+              </button>
+            </div>
+          </div>
+
+          {copied && (
+            <div className="flex items-center gap-2 p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 text-xs font-medium border border-emerald-200 dark:border-emerald-800 animate-in fade-in">
+              <Check className="w-4 h-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+              <span>Link wurde in die Zwischenablage kopiert!</span>
+            </div>
+          )}
+
+          <div className="p-3 rounded-xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200/70 dark:border-amber-800/40 text-amber-800 dark:text-amber-300 text-xs leading-relaxed">
+            <strong>Hinweis:</strong> Diese Datei ist nicht im internen geteilten Bereich für Cloud-Nutzer sichtbar, sondern wird über ein separates, öffentliches System bereitgestellt.
+          </div>
+
+          <div className="flex items-center justify-between pt-3 border-t border-gray-100 dark:border-gray-800">
+            <a
+              href={localTestUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1.5 text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+              <span>Link im Browser testen</span>
+            </a>
+
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 rounded-xl text-sm font-medium bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+            >
+              Fertig
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { User, Lock, ArrowRight, AlertCircle, CheckCircle2, Eye, EyeOff, Sun, Moon } from 'lucide-react';
+import { User, Lock, ArrowRight, AlertCircle, CheckCircle2, Eye, EyeOff, Sun, Moon, X } from 'lucide-react';
 import { registerUser, loginUser } from '../services/firebase';
 import type { UserAccount } from '../types';
 import { LegalLinks } from './LegalLinks';
@@ -8,12 +8,16 @@ interface AuthModalProps {
   onSuccess: (user: UserAccount) => void;
   darkMode?: boolean;
   onToggleDarkMode?: () => void;
+  onClose?: () => void;
+  isAddAccountMode?: boolean;
 }
 
 export const AuthModal: React.FC<AuthModalProps> = ({
   onSuccess,
   darkMode = false,
   onToggleDarkMode,
+  onClose,
+  isAddAccountMode = false,
 }) => {
   const [isRegistering, setIsRegistering] = useState(false);
   const [username, setUsername] = useState('');
@@ -75,25 +79,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
   };
 
-  return (
-    <div className="relative min-h-full flex flex-col justify-center items-center p-4 bg-[#f8fafd] dark:bg-gray-950 select-none">
-      {/* Top right theme toggle */}
-      {onToggleDarkMode && (
-        <div className="absolute top-4 right-4 sm:top-6 sm:right-6">
-          <button
-            type="button"
-            onClick={onToggleDarkMode}
-            className="p-2.5 rounded-full text-gray-600 dark:text-gray-400 hover:bg-gray-200/60 dark:hover:bg-gray-800 transition-colors shadow-xs"
-            title={darkMode ? 'Heller Modus' : 'Dunkler Modus'}
-            aria-label="Design umschalten"
-          >
-            {darkMode ? <Sun className="w-5 h-5 text-amber-400" /> : <Moon className="w-5 h-5 text-gray-600" />}
-          </button>
-        </div>
-      )}
+  const isModal = Boolean(onClose);
 
-      <div className="w-full max-w-md">
-        {/* Logo and Brand in Header */}
+  const authContent = (
+    <div className="w-full max-w-md">
+      {/* Logo and Brand in Header (only in full-page mode) */}
+      {!isModal && (
         <div className="text-center mb-7">
           <div
             className="inline-block select-none cursor-pointer"
@@ -115,17 +106,38 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             Private Cloud-Speicherplattform
           </p>
         </div>
+      )}
 
-        {/* Auth Card in Google Drive Look */}
-        <div className="rounded-2xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 shadow-xs p-6 sm:p-8">
-          <div className="flex items-center justify-between pb-4 mb-4 border-b border-gray-100 dark:border-gray-800">
+      {/* Auth Card in Google Drive Look */}
+      <div className="rounded-2xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 shadow-xl p-6 sm:p-8 relative">
+        {isModal && onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            className="absolute top-4 right-4 p-2 rounded-full text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors cursor-pointer"
+            title="Schließen"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        )}
+
+        <div className="flex items-center justify-between pb-4 mb-4 border-b border-gray-100 dark:border-gray-800 pr-8">
+          <div>
             <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">
-              {isRegistering ? 'Konto erstellen' : 'Anmelden'}
+              {isAddAccountMode
+                ? (isRegistering ? 'Weiteres Konto registrieren' : 'Weiteres Konto hinzufügen')
+                : (isRegistering ? 'Konto erstellen' : 'Anmelden')}
             </h2>
-            <span className="text-xs font-medium text-gray-400 dark:text-gray-500">
-              {isRegistering ? 'Registrierung' : 'Login'}
-            </span>
+            {isAddAccountMode && (
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                Dein bisheriges Konto bleibt im Hintergrund gespeichert.
+              </p>
+            )}
           </div>
+          <span className="text-xs font-medium text-gray-400 dark:text-gray-500">
+            {isRegistering ? 'Registrierung' : 'Login'}
+          </span>
+        </div>
 
           {errorMsg && (
             <div className="mb-4 p-3 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 flex items-start gap-2.5 text-xs text-red-700 dark:text-red-300 animate-in fade-in duration-150">
@@ -268,6 +280,39 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           <LegalLinks />
         </div>
       </div>
+    );
+
+  if (isModal) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs overflow-y-auto">
+        <div
+          className="fixed inset-0 cursor-pointer"
+          onClick={onClose}
+        />
+        <div className="relative z-10 w-full max-w-md my-auto">
+          {authContent}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative min-h-full flex flex-col justify-center items-center p-4 bg-[#f8fafd] dark:bg-gray-950 select-none">
+      {/* Top right theme toggle */}
+      {onToggleDarkMode && (
+        <div className="absolute top-4 right-4 sm:top-6 sm:right-6">
+          <button
+            type="button"
+            onClick={onToggleDarkMode}
+            className="p-2.5 rounded-full text-gray-600 dark:text-gray-400 hover:bg-gray-200/60 dark:hover:bg-gray-800 transition-colors shadow-xs cursor-pointer"
+            title={darkMode ? 'Heller Modus' : 'Dunkler Modus'}
+            aria-label="Design umschalten"
+          >
+            {darkMode ? <Sun className="w-5 h-5 text-amber-400" /> : <Moon className="w-5 h-5 text-gray-600" />}
+          </button>
+        </div>
+      )}
+      {authContent}
     </div>
   );
 };

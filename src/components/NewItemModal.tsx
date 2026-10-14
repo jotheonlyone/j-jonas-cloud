@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { FolderPlus, Share2, X, User, AlertCircle, Plus, Trash2, Users, Loader2 } from 'lucide-react';
+import { FolderPlus, Share2, X, User, AlertCircle, Plus, Trash2, Users, Loader2, WifiOff } from 'lucide-react';
 import { createFolderShare } from '../services/firebase';
-import { createFolder } from '../services/storageApi';
+import { createFolder, checkServerStatus } from '../services/storageApi';
 import { useToast } from './Toast';
 import type { UserAccount } from '../types';
 
@@ -23,6 +23,14 @@ export const NewFolderModal: React.FC<NewFolderModalProps> = ({
   const { addToast } = useToast();
   const [folderName, setFolderName] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [serverOnline, setServerOnline] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      setFolderName('');
+      checkServerStatus().then(s => setServerOnline(s.isOnline)).catch(() => setServerOnline(false));
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -31,6 +39,14 @@ export const NewFolderModal: React.FC<NewFolderModalProps> = ({
     if (!folderName.trim()) return;
 
     setIsSubmitting(true);
+    const status = await checkServerStatus();
+    if (!status.isOnline) {
+      setIsSubmitting(false);
+      setServerOnline(false);
+      addToast('error', 'Server offline', 'Verbindung zu https://storage.j-jonas.com nicht möglich. Ordnererstellung gesperrt.');
+      return;
+    }
+
     const res = await createFolder(owner, currentPath, folderName.trim());
     setIsSubmitting(false);
 
@@ -57,6 +73,13 @@ export const NewFolderModal: React.FC<NewFolderModalProps> = ({
           </button>
         </div>
 
+        {serverOnline === false && (
+          <div className="mt-4 p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/60 flex items-start gap-2.5 text-xs text-amber-800 dark:text-amber-200">
+            <WifiOff className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+            <span>Speicher-Server (storage.j-jonas.com) ist offline. Das Anlegen von Ordnern ist derzeit gesperrt.</span>
+          </div>
+        )}
+
         <form onSubmit={handleSubmit} className="mt-4 space-y-4">
           <div>
             <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
@@ -82,14 +105,14 @@ export const NewFolderModal: React.FC<NewFolderModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="px-3.5 py-2 text-xs font-semibold rounded-xl text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+              className="px-3.5 py-2 text-xs font-semibold rounded-xl text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer"
             >
               Abbrechen
             </button>
             <button
               type="submit"
-              disabled={isSubmitting || !folderName.trim()}
-              className="px-4 py-2 text-xs font-semibold rounded-xl bg-blue-600 hover:bg-blue-700 text-white shadow-xs transition-colors disabled:opacity-50"
+              disabled={isSubmitting || serverOnline === false || !folderName.trim()}
+              className="px-4 py-2 text-xs font-semibold rounded-xl bg-blue-600 hover:bg-blue-700 text-white shadow-xs transition-colors disabled:opacity-50 cursor-pointer"
             >
               {isSubmitting ? 'Wird erstellt...' : 'Erstellen'}
             </button>
@@ -122,15 +145,31 @@ export const NewSharedFolderModal: React.FC<NewSharedFolderModalProps> = ({
   // Multi-user list: begins with one input field
   const [targetUsers, setTargetUsers] = useState<string[]>(['']);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isServerChecking, setIsServerChecking] = useState(false);
+  const [isServerOnline, setIsServerOnline] = useState<boolean | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
 
-  // Reset when opened
+  // Reset and check server when opened
   useEffect(() => {
     if (isOpen) {
       setFolderName(existingFolderName || '');
       setTargetUsers(['']);
       setErrorMsg('');
       setIsSubmitting(false);
+      setIsServerChecking(true);
+      checkServerStatus()
+        .then((s) => {
+          setIsServerOnline(s.isOnline);
+          setIsServerChecking(false);
+          if (!s.isOnline) {
+            setErrorMsg('Speicher-Server (storage.j-jonas.com) ist offline. Das Erstellen von geteilten Ordnern ist derzeit gesperrt.');
+          }
+        })
+        .catch(() => {
+          setIsServerOnline(false);
+          setIsServerChecking(false);
+          setErrorMsg('Speicher-Server (storage.j-jonas.com) ist offline. Das Erstellen von geteilten Ordnern ist derzeit gesperrt.');
+        });
     }
   }, [isOpen, existingFolderName]);
 
@@ -183,15 +222,28 @@ export const NewSharedFolderModal: React.FC<NewSharedFolderModalProps> = ({
     }
 
     // Don't allow sharing with yourself
-    if (cleanedUsers.includes(user.username.toLowerCase())) {
+    if (cleanedUsers.includes((user.username || '').toLowerCase())) {
       setErrorMsg('Du kannst einen Ordner nicht mit deinem eigenen Account teilen.');
+      return;
+    }
+
+    // 1. Serversperre: Active connection to storage.j-jonas.com is strictly required!
+    const serverStatus = await checkServerStatus();
+    if (!serverStatus.isOnline) {
+      setIsServerOnline(false);
+      setErrorMsg('Speicher-Server (storage.j-jonas.com) ist offline. Geteilte Ordner können nur erstellt werden, wenn eine aktive Verbindung zum Server besteht.');
       return;
     }
 
     setIsSubmitting(true);
     try {
       if (!existingFolderName) {
-        await createFolder(user.username, currentPath, trimmedFolder);
+        const createRes = await createFolder(user.username, currentPath, trimmedFolder);
+        if (!createRes.success) {
+          setErrorMsg(createRes.error || 'Speicher-Server nicht erreichbar. Ordnererstellung fehlgeschlagen.');
+          setIsSubmitting(false);
+          return;
+        }
       }
 
       const folderPath = currentPath ? `${currentPath}/${trimmedFolder}` : trimmedFolder;
@@ -199,26 +251,20 @@ export const NewSharedFolderModal: React.FC<NewSharedFolderModalProps> = ({
       let successCount = 0;
       const failedUsers: string[] = [];
 
-      // Send invitations to all designated users in parallel
-      const results = await Promise.all(
-        cleanedUsers.map(async (targetUsername) => {
-          const res = await createFolderShare(
-            folderPath,
-            trimmedFolder,
-            user.username,
-            targetUsername
-          );
-          return { targetUsername, res };
-        })
-      );
-
-      results.forEach(({ targetUsername, res }) => {
+      // Send invitations sequentially into the single shared folder document
+      for (const targetUsername of cleanedUsers) {
+        const res = await createFolderShare(
+          folderPath,
+          trimmedFolder,
+          user.username,
+          targetUsername
+        );
         if (res.success) {
           successCount++;
         } else {
           failedUsers.push(`@${targetUsername} (${res.error || 'Fehler'})`);
         }
-      });
+      }
 
       if (successCount > 0) {
         addToast(
@@ -264,6 +310,19 @@ export const NewSharedFolderModal: React.FC<NewSharedFolderModalProps> = ({
           <div className="mt-4 p-3 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 flex items-start gap-2 text-xs text-red-700 dark:text-red-300 shrink-0">
             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
             <span>{errorMsg}</span>
+          </div>
+        )}
+
+        {/* Serversperre Notice when offline */}
+        {isServerOnline === false && (
+          <div className="mt-3 p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/60 flex items-start gap-2.5 text-xs text-amber-800 dark:text-amber-200 shrink-0">
+            <WifiOff className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+            <div>
+              <span className="font-semibold block">Serversperre aktiv</span>
+              <span>
+                Verbindung zu https://storage.j-jonas.com fehlt. Das Erstellen und Teilen von Ordnern ist erst bei aktivem Speicher-Server möglich.
+              </span>
+            </div>
           </div>
         )}
 
@@ -351,8 +410,8 @@ export const NewSharedFolderModal: React.FC<NewSharedFolderModalProps> = ({
             </button>
             <button
               type="submit"
-              disabled={isSubmitting || !folderName.trim() || targetUsers.every(u => !u.trim())}
-              className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-xl bg-blue-600 hover:bg-blue-700 text-white shadow-xs transition-colors disabled:opacity-50"
+              disabled={isSubmitting || isServerOnline === false || isServerChecking || !folderName.trim() || targetUsers.every(u => !u.trim())}
+              className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-xl bg-blue-600 hover:bg-blue-700 text-white shadow-xs transition-colors disabled:opacity-50 cursor-pointer"
             >
               {isSubmitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
               <span>{isSubmitting ? 'Wird geprüft...' : 'Freigeben & Einladen'}</span>
