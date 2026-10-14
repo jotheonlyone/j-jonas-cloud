@@ -694,7 +694,7 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
           {/* Ambient Video Background */}
           <div className="absolute inset-0 bg-[#0a0a0a] overflow-hidden pointer-events-none">
             <video
-              src={getStreamUrl(heroVideo.path || heroVideo.name)}
+              src={getStreamUrl(heroVideo.path || heroVideo.name, heroVideo.owner)}
               className="w-full h-full object-cover opacity-60"
               preload="metadata"
               muted
@@ -840,7 +840,7 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
                       focusedZone === 'carousels' &&
                       carouselRowIdx === rowIdx &&
                       carouselColIdx === colIdx;
-                    const streamUrl = getStreamUrl(video.path || video.name);
+                    const streamUrl = getStreamUrl(video.path || video.name, video.owner);
                     const cleanTitle = formatCleanTitle(video.name);
 
                     return (
@@ -1001,7 +1001,7 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 sm:gap-6 py-2">
               {gridVideos.map((video, idx) => {
                 const isFocused = focusedZone === 'grid' && gridIdx === idx;
-                const streamUrl = getStreamUrl(video.path || video.name);
+                const streamUrl = getStreamUrl(video.path || video.name, video.owner);
                 const cleanTitle = formatCleanTitle(video.name);
 
                 return (
@@ -1191,7 +1191,7 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
             {/* Video preview thumbnail */}
             <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-black border border-white/10">
               <video
-                src={getStreamUrl(selectedDetailsVideo.path || selectedDetailsVideo.name)}
+                src={getStreamUrl(selectedDetailsVideo.path || selectedDetailsVideo.name, selectedDetailsVideo.owner)}
                 preload="metadata"
                 controls
                 className="w-full h-full object-contain"
@@ -1450,7 +1450,7 @@ const TvMediaPlayerOverlay: React.FC<TvMediaPlayerOverlayProps> = ({
   };
 
   const progressPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
-  const streamUrl = getStreamUrl(video.path || video.name);
+  const streamUrl = getStreamUrl(video.path || video.name, video.owner);
 
   return (
     <div

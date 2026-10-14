@@ -362,7 +362,7 @@ export const CinemaView: React.FC<CinemaViewProps> = ({
           <div className="absolute inset-0 bg-[#0a0a0a] overflow-hidden pointer-events-none">
             {/* Live Video Preview Frame */}
             <video
-              src={getStreamUrl(heroVideo.path || heroVideo.name)}
+              src={getStreamUrl(heroVideo.path || heroVideo.name, heroVideo.owner)}
               className="w-full h-full object-cover opacity-60"
               preload="metadata"
               muted
@@ -678,7 +678,7 @@ export const CinemaView: React.FC<CinemaViewProps> = ({
             {/* Video preview thumbnail */}
             <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-black border border-white/10">
               <video
-                src={getStreamUrl(selectedDetailsVideo.path || selectedDetailsVideo.name)}
+                src={getStreamUrl(selectedDetailsVideo.path || selectedDetailsVideo.name, selectedDetailsVideo.owner)}
                 preload="metadata"
                 controls
                 className="w-full h-full object-contain"
@@ -751,7 +751,7 @@ export const CinemaView: React.FC<CinemaViewProps> = ({
       {activeFullscreenVideo && (
         <div className="fixed inset-0 z-50 bg-black flex items-center justify-center select-none overflow-hidden">
           <video
-            src={getStreamUrl(activeFullscreenVideo.path || activeFullscreenVideo.name)}
+            src={getStreamUrl(activeFullscreenVideo.path || activeFullscreenVideo.name, activeFullscreenVideo.owner)}
             autoPlay
             controls
             className="w-full h-full object-contain"
@@ -778,7 +778,7 @@ interface VideoCardProps {
 }
 
 const VideoCard: React.FC<VideoCardProps> = ({ video, onPlay, onDetails, onDownload }) => {
-  const streamUrl = getStreamUrl(video.path || video.name);
+  const streamUrl = getStreamUrl(video.path || video.name, video.owner);
 
   return (
     <div

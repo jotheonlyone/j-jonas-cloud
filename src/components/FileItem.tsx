@@ -139,7 +139,7 @@ export const FileItem: React.FC<FileItemProps> = ({
   const isImg = isImageFile(item);
   const isVid = isVideoFile(item);
   const isPdf = isPdfFile(item);
-  const streamUrl = getStreamUrl(item.path || item.name);
+  const streamUrl = getStreamUrl(item.path || item.name, item.owner);
 
   // Touch handlers for mobile long-press (500ms)
   const handleTouchStart = (e: React.TouchEvent) => {

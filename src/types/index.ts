@@ -18,6 +18,7 @@ export interface FileItemData {
   modified: string;
   mime_type?: string;
   path?: string;
+  owner?: string;
 }
 
 export interface StorageUsage {

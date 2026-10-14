@@ -26,8 +26,10 @@ import {
   triggerDirectDownload,
   deleteItem,
   renameItem,
-  getStorageUsage
+  getStorageUsage,
+  CHUNK_SIZE
 } from '../services/storageApi';
+import type { UploadTaskState } from './UploadProgressWidget';
 import {
   deleteFolderShare,
   deleteFolderShareMember,
@@ -46,6 +48,7 @@ interface SharedSectionProps {
   onOpenNewSharedModal: () => void;
   onManageFolderShares?: (folderPath: string, folderName: string, folderOwner?: string) => void;
   onOpenFilePreview?: (item: FileItemData, allItems: FileItemData[]) => void;
+  onUploadTaskChange?: (updater: UploadTaskState | null | ((prev: UploadTaskState | null) => UploadTaskState | null)) => void;
 }
 
 export const SharedSection: React.FC<SharedSectionProps> = ({
@@ -59,6 +62,7 @@ export const SharedSection: React.FC<SharedSectionProps> = ({
   onOpenNewSharedModal,
   onManageFolderShares,
   onOpenFilePreview,
+  onUploadTaskChange,
 }) => {
   const { addToast } = useToast();
   const [activeFolderShare, setActiveFolderShare] = useState<FolderShare | null>(null);
@@ -113,7 +117,12 @@ export const SharedSection: React.FC<SharedSectionProps> = ({
     try {
       const fullPath = subPath ? `${share.folder_path}/${subPath}` : share.folder_path;
       const res = await listFiles(share.owner, fullPath);
-      setFolderItems(res.items);
+      const itemsWithOwner = (res.items || []).map((it) => ({
+        ...it,
+        owner: share.owner,
+        path: it.path || (fullPath ? `${fullPath}/${it.name}` : it.name),
+      }));
+      setFolderItems(itemsWithOwner);
       if (res.error) {
         setServerError(res.error);
       }
@@ -140,24 +149,82 @@ export const SharedSection: React.FC<SharedSectionProps> = ({
     if (!activeFolderShare) return;
     try {
       const ownerUsage = await getStorageUsage(activeFolderShare.owner);
-      const ownerQuotaGb = 100;
+      const ownerQuotaGb = 1000;
 
       const currentDir = sharedSubPath
         ? `${activeFolderShare.folder_path}/${sharedSubPath}`
         : activeFolderShare.folder_path;
 
       let count = 0;
+      const totalFiles = files.length;
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
-        const res = await uploadFile(file, activeFolderShare.owner, currentDir, ownerUsage.used_bytes, ownerQuotaGb);
+        const initialTotalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
+        onUploadTaskChange?.({
+          id: `shared_${Date.now()}_${i}`,
+          fileName: file.name,
+          fileSize: file.size,
+          currentChunk: 0,
+          totalChunks: initialTotalChunks,
+          progressPercent: 0,
+          uploadedBytes: 0,
+          status: 'uploading',
+          fileIndex: i + 1,
+          totalFiles,
+        });
+
+        const res = await uploadFile(
+          file,
+          activeFolderShare.owner,
+          currentDir,
+          ownerUsage.used_bytes,
+          ownerQuotaGb,
+          (info) => {
+            onUploadTaskChange?.((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    currentChunk: info.currentChunk,
+                    totalChunks: info.totalChunks,
+                    progressPercent: info.progressPercent,
+                    uploadedBytes: info.uploadedBytes,
+                  }
+                : null
+            );
+          }
+        );
+
         if (!res.success) {
+          onUploadTaskChange?.((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  status: 'error',
+                  errorMessage: res.error,
+                }
+              : null
+          );
           addToast('error', 'Upload fehlgeschlagen', res.error);
           break;
         }
         count++;
       }
-      if (count > 0) {
+      if (count === totalFiles && totalFiles > 0) {
+        onUploadTaskChange?.((prev) =>
+          prev
+            ? {
+                ...prev,
+                status: 'completed',
+                progressPercent: 100,
+              }
+            : null
+        );
+        setTimeout(() => {
+          onUploadTaskChange?.((prev) => (prev?.status === 'completed' ? null : prev));
+        }, 4000);
         addToast('success', 'Hochgeladen', `${count} Datei(en) in den geteilten Ordner geladen.`);
+        loadSharedFolderItems(activeFolderShare, sharedSubPath);
+      } else if (count > 0) {
         loadSharedFolderItems(activeFolderShare, sharedSubPath);
       }
     } catch (err) {
@@ -438,7 +505,23 @@ export const SharedSection: React.FC<SharedSectionProps> = ({
                 const next = sharedSubPath ? `${sharedSubPath}/${item.name}` : item.name;
                 handleNavigateSubPath(next);
               } else if (onOpenFilePreview) {
-                onOpenFilePreview(item, folderItems);
+                const currentDir = sharedSubPath
+                  ? `${activeFolderShare.folder_path}/${sharedSubPath}`
+                  : activeFolderShare.folder_path;
+                const fullItemPath = item.path || (currentDir ? `${currentDir}/${item.name}` : item.name);
+                const itemWithOwner: FileItemData = {
+                  ...item,
+                  owner: activeFolderShare.owner,
+                  path: fullItemPath,
+                };
+                onOpenFilePreview(
+                  itemWithOwner,
+                  folderItems.map((fi) => ({
+                    ...fi,
+                    owner: activeFolderShare.owner,
+                    path: fi.path || (currentDir ? `${currentDir}/${fi.name}` : fi.name),
+                  }))
+                );
               } else {
                 handleDownloadItem(item);
               }

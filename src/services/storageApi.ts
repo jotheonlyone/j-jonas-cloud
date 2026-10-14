@@ -126,6 +126,7 @@ export async function listFiles(owner: string, relativePath = ''): Promise<{ ite
               ? item.type
               : item.mime_type || item.content_type,
           path: itemPath,
+          owner: owner || undefined,
         };
       });
 
@@ -150,36 +151,32 @@ export async function listFiles(owner: string, relativePath = ''): Promise<{ ite
   }
 }
 
+export const CHUNK_SIZE = 20 * 1024 * 1024; // 20 MB
+
+export interface UploadProgressInfo {
+  progressPercent: number;
+  currentChunk: number;
+  totalChunks: number;
+  uploadedBytes: number;
+  totalBytes: number;
+}
+
+export type UploadProgressCallback = (info: UploadProgressInfo) => void;
+
 /**
- * POST /upload
- * Multipart-Formdata mit Datei, user (Ordner-Besitzer) und path.
- * Quota-Prüfung vor dem Senden!
+ * Fallback-Upload für Einzelanfragen (<= 20 MB) an POST /upload
  */
-export async function uploadFile(
+async function uploadSingleDirect(
   file: File,
   owner: string,
-  relativePath: string,
-  currentUsageBytes: number,
-  quotaGb: number
+  cleanPath: string
 ): Promise<{ success: boolean; error?: string }> {
-  const quotaBytes = quotaGb * 1024 * 1024 * 1024;
-  if (currentUsageBytes + file.size > quotaBytes) {
-    const quotaFormatted = `${quotaGb} GB`;
-    return {
-      success: false,
-      error: `Speicherplatzlimit (${quotaFormatted}) würde durch diese Datei (${(file.size / (1024 * 1024)).toFixed(1)} MB) überschritten werden!`,
-    };
-  }
-
-  const cleanPath = relativePath.trim().replace(/^\/+|\/+$/g, '') || '.';
-
   try {
     const formData = new FormData();
-    // Parameter vor der Datei einfügen, damit multer sie vor dem Stream parsen kann
     formData.append('user', owner);
     formData.append('path', cleanPath);
     formData.append('file', file);
-    formData.append('upload', file);
+    formData.append('files', file);
 
     const uploadUrl = `${STORAGE_BASE_URL}/upload?user=${encodeURIComponent(owner)}&path=${encodeURIComponent(cleanPath)}`;
     const res = await fetch(uploadUrl, {
@@ -198,6 +195,129 @@ export async function uploadFile(
       error: 'Upload fehlgeschlagen: Keine Verbindung zum Server (https://storage.j-jonas.com).',
     };
   }
+}
+
+/**
+ * Sequenzieller Chunked Upload:
+ * - Sobald eine Datei größer als 20 MB ist, wird sie in 20-MB-Stücke via file.slice() zerlegt.
+ * - Chunks werden nacheinander (sequenziell per await) an POST /upload-chunk gesendet.
+ * - Übergibt sowohl als URL-Query-Parameter als auch in FormData:
+ *   user, path, fileName, chunkIndex, totalChunks und chunk.
+ * - Berechnet den Ladebalken via Math.round(((chunkIndex + 1) / totalChunks) * 100).
+ */
+export async function uploadFileInChunks(
+  file: File,
+  owner: string,
+  relativePath: string,
+  onProgress?: UploadProgressCallback
+): Promise<{ success: boolean; error?: string }> {
+  const cleanPath = relativePath.trim().replace(/^\/+|\/+$/g, '') || '.';
+  const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
+
+  for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+    const start = chunkIndex * CHUNK_SIZE;
+    const end = Math.min(start + CHUNK_SIZE, file.size);
+    const chunkBlob = file.slice(start, end);
+
+    const formData = new FormData();
+    formData.append('user', owner);
+    formData.append('path', cleanPath);
+    formData.append('fileName', file.name);
+    formData.append('chunkIndex', String(chunkIndex));
+    formData.append('totalChunks', String(totalChunks));
+    formData.append('chunk', chunkBlob, file.name);
+
+    const queryParams = new URLSearchParams({
+      user: owner,
+      path: cleanPath,
+      fileName: file.name,
+      chunkIndex: String(chunkIndex),
+      totalChunks: String(totalChunks),
+    });
+
+    const url = `${STORAGE_BASE_URL}/upload-chunk?${queryParams.toString()}`;
+
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!res.ok) {
+        // Fallback für Dateien <= 20 MB auf älteren Serverversionen
+        if (chunkIndex === 0 && totalChunks === 1 && (res.status === 404 || res.status === 405)) {
+          const fallbackRes = await uploadSingleDirect(file, owner, cleanPath);
+          if (fallbackRes.success && onProgress) {
+            onProgress({
+              progressPercent: 100,
+              currentChunk: 1,
+              totalChunks: 1,
+              uploadedBytes: file.size,
+              totalBytes: file.size,
+            });
+          }
+          return fallbackRes;
+        }
+
+        const errJson = await res.json().catch(() => null);
+        const errMsg = errJson?.error || `HTTP ${res.status}`;
+        return {
+          success: false,
+          error: `Upload-Fehler bei Chunk ${chunkIndex + 1}/${totalChunks}: ${errMsg}`,
+        };
+      }
+
+      // Flüssige Ladebalken-Berechnung gemäß Spezifikation:
+      // Math.round(((chunkIndex + 1) / totalChunks) * 100)
+      const progressPercent = Math.round(((chunkIndex + 1) / totalChunks) * 100);
+      if (onProgress) {
+        onProgress({
+          progressPercent,
+          currentChunk: chunkIndex + 1,
+          totalChunks,
+          uploadedBytes: end,
+          totalBytes: file.size,
+        });
+      }
+    } catch (err: unknown) {
+      return {
+        success: false,
+        error: `Verbindungsabbruch bei Chunk ${chunkIndex + 1}/${totalChunks}: https://storage.j-jonas.com nicht erreichbar.`,
+      };
+    }
+  }
+
+  return { success: true };
+}
+
+/**
+ * POST /upload oder POST /upload-chunk
+ * Multipart-Formdata mit Datei, user (Ordner-Besitzer) und path.
+ * Quota-Prüfung vor dem Senden!
+ * Dateien > 20 MB laufen automatisch über Chunked Upload (20 MB Chunks).
+ */
+export async function uploadFile(
+  file: File,
+  owner: string,
+  relativePath: string,
+  currentUsageBytes: number,
+  quotaGb: number,
+  onProgress?: UploadProgressCallback
+): Promise<{ success: boolean; error?: string }> {
+  const quotaBytes = quotaGb * 1024 * 1024 * 1024;
+  if (currentUsageBytes + file.size > quotaBytes) {
+    const quotaFormatted = `${quotaGb} GB`;
+    return {
+      success: false,
+      error: `Speicherplatzlimit (${quotaFormatted}) würde durch diese Datei (${(file.size / (1024 * 1024)).toFixed(1)} MB) überschritten werden!`,
+    };
+  }
+
+  const cleanPath = relativePath.trim().replace(/^\/+|\/+$/g, '') || '.';
+
+  // Sobald eine Datei größer als 20 MB ist (oder generell für zuverlässigen Upload):
+  // Chunked Upload via POST /upload-chunk
+  return uploadFileInChunks(file, owner, cleanPath, onProgress);
 }
 
 /**

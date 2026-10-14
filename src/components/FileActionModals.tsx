@@ -57,8 +57,8 @@ export const RenameModal: React.FC<RenameModalProps> = ({
     setIsLoading(true);
     setError(null);
 
-    const oldRelativePath = item.path || (currentPath ? `${currentPath}/${item.name}` : item.name);
-    const res = await renameItem(username, currentPath, item.name, trimmed);
+    const targetOwner = item.owner || username;
+    const res = await renameItem(targetOwner, currentPath, item.name, trimmed);
 
     setIsLoading(false);
     if (res.success) {

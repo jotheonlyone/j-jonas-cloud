@@ -127,7 +127,7 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
 
   if (!isOpen || !currentItem) return null;
 
-  const streamUrl = getStreamUrl(currentItem.path || currentItem.name);
+  const streamUrl = getStreamUrl(currentItem.path || currentItem.name, currentItem.owner);
 
   return (
     <div

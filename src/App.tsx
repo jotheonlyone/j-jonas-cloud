@@ -27,7 +27,9 @@ import {
   renameItem,
   checkServerStatus,
   type ServerStatus,
+  CHUNK_SIZE,
 } from './services/storageApi';
+import { UploadProgressWidget, type UploadTaskState } from './components/UploadProgressWidget';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { FileExplorer } from './components/FileExplorer';
@@ -217,6 +219,9 @@ function MainApp() {
 
   // File upload input ref
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Active chunked upload task state
+  const [uploadTask, setUploadTask] = useState<UploadTaskState | null>(null);
 
   // Scan for videos across directories when cinema mode is entered
   useEffect(() => {
@@ -468,7 +473,7 @@ function MainApp() {
     addToast('info', 'Abgemeldet', 'Von allen Konten abgemeldet.');
   };
 
-  // Upload handler with quota check
+  // Upload handler with quota check and chunked upload tracking
   const handleUploadFiles = async (files: FileList) => {
     if (!user) return;
     if (maintenanceMode && user.role !== 'master') {
@@ -476,19 +481,79 @@ function MainApp() {
       return;
     }
 
+    const totalFiles = files.length;
     let successCount = 0;
+
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      const res = await uploadFile(file, user.username, currentPath, storageUsage.used_bytes, user.quota_gb);
+      const initialTotalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
+      setUploadTask({
+        id: `upload_${Date.now()}_${i}`,
+        fileName: file.name,
+        fileSize: file.size,
+        currentChunk: 0,
+        totalChunks: initialTotalChunks,
+        progressPercent: 0,
+        uploadedBytes: 0,
+        status: 'uploading',
+        fileIndex: i + 1,
+        totalFiles,
+      });
+
+      const res = await uploadFile(
+        file,
+        user.username,
+        currentPath,
+        storageUsage.used_bytes,
+        user.quota_gb,
+        (info) => {
+          setUploadTask((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  currentChunk: info.currentChunk,
+                  totalChunks: info.totalChunks,
+                  progressPercent: info.progressPercent,
+                  uploadedBytes: info.uploadedBytes,
+                }
+              : null
+          );
+        }
+      );
+
       if (!res.success) {
+        setUploadTask((prev) =>
+          prev
+            ? {
+                ...prev,
+                status: 'error',
+                errorMessage: res.error,
+              }
+            : null
+        );
         addToast('error', 'Upload fehlgeschlagen', res.error);
         break;
       }
       successCount++;
     }
 
-    if (successCount > 0) {
+    if (successCount === totalFiles && totalFiles > 0) {
+      setUploadTask((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: 'completed',
+              progressPercent: 100,
+            }
+          : null
+      );
+      setTimeout(() => {
+        setUploadTask((prev) => (prev?.status === 'completed' ? null : prev));
+      }, 4000);
       addToast('success', 'Upload abgeschlossen', `${successCount} Datei(en) erfolgreich hochgeladen.`);
+      loadDirectoryFiles(user.username, currentPath);
+      loadUsage(user.username);
+    } else if (successCount > 0) {
       loadDirectoryFiles(user.username, currentPath);
       loadUsage(user.username);
     }
@@ -537,19 +602,21 @@ function MainApp() {
   // Download item handler
   const handleDownloadItem = async (item: FileItemData) => {
     if (!user) return;
+    const downloadOwner = item.owner || user.username;
     const fullItemPath = item.path || (currentPath ? `${currentPath}/${item.name}` : item.name);
-    triggerDirectDownload(user.username, fullItemPath, item.name);
+    triggerDirectDownload(downloadOwner, fullItemPath, item.name);
   };
 
   // Open file in dedicated tab
-  const handleOpenFileInNewTab = useCallback((item: FileItemData) => {
+  const handleOpenFileInNewTab = useCallback((item: FileItemData, customOwner?: string) => {
     const fullPath = item.path || (currentPath ? `${currentPath}/${item.name}` : item.name);
     const tempSessionId = `s_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const effectiveOwner = customOwner || item.owner || user?.username;
     const searchParams = new URLSearchParams({
       path: fullPath,
       name: item.name,
       session_ref: tempSessionId,
-      ...(user ? { owner: user.username } : {}),
+      ...(effectiveOwner ? { owner: effectiveOwner } : {}),
     });
     window.open(`/view?${searchParams.toString()}`, '_blank');
   }, [currentPath, user]);
@@ -898,12 +965,13 @@ function MainApp() {
                   }}
                   onOpenFilePreview={(item, allItems) => {
                     if (openFilesInNewTab) {
-                      handleOpenFileInNewTab(item);
+                      handleOpenFileInNewTab(item, item.owner);
                     } else {
                       setViewerItem(item);
                       setViewerItemsList(allItems);
                     }
                   }}
+                  onUploadTaskChange={setUploadTask}
                 />
               )}
 
@@ -1038,6 +1106,12 @@ function MainApp() {
           isAddAccountMode={true}
         />
       )}
+
+      {/* Floating Chunked Upload Progress Widget */}
+      <UploadProgressWidget
+        task={uploadTask}
+        onClose={() => setUploadTask(null)}
+      />
     </div>
   );
 }
