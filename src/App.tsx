@@ -25,10 +25,13 @@ import {
   triggerDirectDownload,
   deleteItem,
   renameItem,
+  copyItem,
+  moveItem,
   checkServerStatus,
   type ServerStatus,
   CHUNK_SIZE,
 } from './services/storageApi';
+import { sanitizeUploadFileName } from './utils/nameSanitizer';
 import { UploadProgressWidget, type UploadTaskState } from './components/UploadProgressWidget';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
@@ -40,7 +43,7 @@ import { NewFolderModal, NewSharedFolderModal } from './components/NewItemModal'
 import { ManageFolderSharesModal } from './components/ManageFolderSharesModal';
 import { MediaViewerModal, isVideoFile } from './components/MediaViewerModal';
 import { CinemaView } from './components/CinemaView';
-import { CinemaTvView } from './components/CinemaTvView';
+import { CinemaTvView, isTvBackEvent } from './components/CinemaTvView';
 import { CinemaTvAuthModal } from './components/CinemaTvAuthModal';
 import { SettingsModal } from './components/SettingsModal';
 import { FileViewerPage } from './components/FileViewerPage';
@@ -123,6 +126,8 @@ function MainApp() {
   };
 
   const [currentTab, setCurrentTab] = useState<NavigationTab>(getTabFromUrl);
+  const isCinemaMode = currentTab === 'cinema';
+  const isTvMode = currentTab === 'cinema-tv';
   const [currentPath, setCurrentPath] = useState<string>('');
 
   // Synchronize browser history and path
@@ -145,12 +150,27 @@ function MainApp() {
     }
   }, []);
 
+  // Keep currentTab in a ref so event listeners (popstate) always read current value
+  const currentTabRef = useRef<NavigationTab>(currentTab);
+  useEffect(() => {
+    currentTabRef.current = currentTab;
+  }, [currentTab]);
+
   // Listen to browser Back/Forward (popstate)
   useEffect(() => {
     const handlePopState = () => {
       const isShare = typeof window !== 'undefined' && window.location.pathname.toLowerCase().startsWith('/share');
       setIsShareRoute(isShare);
       if (isShare) return;
+
+      // When currently in Cinema/TV mode, prevent Android TV / browser back from exiting to standard Cloud
+      if (currentTabRef.current === 'cinema-tv') {
+        if (typeof window !== 'undefined') {
+          window.history.pushState({ tab: 'cinema-tv', tvMode: true }, '', '/cinema/tv');
+        }
+        setCurrentTab('cinema-tv');
+        return;
+      }
 
       const tab = getTabFromUrl();
       setCurrentTab(tab);
@@ -178,6 +198,29 @@ function MainApp() {
 
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
+
+  // Global keydown trap when in cinema-tv mode to prevent Android TV remote back from exiting to normal cloud
+  useEffect(() => {
+    if (currentTab !== 'cinema-tv') return;
+
+    const handleGlobalTvBackKey = (e: KeyboardEvent) => {
+      const isInputActive =
+        document.activeElement?.tagName === 'INPUT' ||
+        document.activeElement?.tagName === 'TEXTAREA';
+
+      if (isInputActive && (e.key === 'Backspace' || (e.keyCode || e.which) === 8)) {
+        return;
+      }
+
+      if (isTvBackEvent(e)) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalTvBackKey);
+    return () => window.removeEventListener('keydown', handleGlobalTvBackKey);
+  }, [currentTab]);
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
     try {
       return (localStorage.getItem(VIEW_MODE_KEY) as ViewMode) || 'grid';
@@ -486,10 +529,11 @@ function MainApp() {
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
+      const safeName = sanitizeUploadFileName(file.name);
       const initialTotalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
       setUploadTask({
         id: `upload_${Date.now()}_${i}`,
-        fileName: file.name,
+        fileName: safeName,
         fileSize: file.size,
         currentChunk: 0,
         totalChunks: initialTotalChunks,
@@ -599,6 +643,86 @@ function MainApp() {
     setItemToRename(item);
   };
 
+  // Clipboard state for Copy / Cut / Paste
+  const [clipboard, setClipboard] = useState<{
+    action: 'copy' | 'cut';
+    item: FileItemData;
+    sourcePath: string;
+  } | null>(null);
+
+  const handleCopyItem = (item: FileItemData) => {
+    const itemPath = item.path || (currentPath ? `${currentPath}/${item.name}` : item.name);
+    setClipboard({
+      action: 'copy',
+      item,
+      sourcePath: itemPath,
+    });
+    addToast('info', 'In Zwischenablage kopiert', `"${item.name}" kopiert. Füge es per Rechtsklick ("Einfügen") oder Strg+V ein.`);
+  };
+
+  const handleCutItem = (item: FileItemData) => {
+    if (maintenanceMode && user?.role !== 'master') {
+      addToast('error', 'Wartungsmodus', 'Aktion im Wartungsmodus pausiert.');
+      return;
+    }
+    const itemPath = item.path || (currentPath ? `${currentPath}/${item.name}` : item.name);
+    setClipboard({
+      action: 'cut',
+      item,
+      sourcePath: itemPath,
+    });
+    addToast('info', 'Ausgeschnitten', `"${item.name}" ausgeschnitten. Füge es per Rechtsklick ("Einfügen") oder Strg+V ein.`);
+  };
+
+  const handlePasteItem = async () => {
+    if (!user || !clipboard) return;
+    if (maintenanceMode && user.role !== 'master') {
+      addToast('error', 'Wartungsmodus', 'Einfügen ist während der Wartungsarbeiten deaktiviert.');
+      return;
+    }
+
+    const cleanCurrentPath = currentPath.trim().replace(/^\/+|\/+$/g, '');
+    const cleanSourcePath = clipboard.sourcePath.trim().replace(/^\/+/, '');
+    const destPath = (cleanCurrentPath ? `${cleanCurrentPath}/${clipboard.item.name}` : clipboard.item.name).replace(/^\/+/, '');
+
+    let targetDestPath = destPath;
+    if (clipboard.action === 'copy' && cleanSourcePath === destPath) {
+      const lastDot = clipboard.item.name.lastIndexOf('.');
+      if (clipboard.item.type === 'file' && lastDot > 0) {
+        const base = clipboard.item.name.slice(0, lastDot);
+        const ext = clipboard.item.name.slice(lastDot);
+        targetDestPath = cleanCurrentPath ? `${cleanCurrentPath}/${base} - Kopie${ext}` : `${base} - Kopie${ext}`;
+      } else {
+        targetDestPath = cleanCurrentPath ? `${cleanCurrentPath}/${clipboard.item.name} - Kopie` : `${clipboard.item.name} - Kopie`;
+      }
+    }
+
+    try {
+      if (clipboard.action === 'copy') {
+        const res = await copyItem(user.username, cleanSourcePath, targetDestPath);
+        if (res.success) {
+          addToast('success', 'Datei kopiert', `"${clipboard.item.name}" wurde erfolgreich kopiert.`);
+          loadDirectoryFiles(user.username, currentPath);
+          loadUsage(user.username);
+        } else {
+          addToast('error', 'Kopieren fehlgeschlagen', res.error || 'Aktion fehlgeschlagen.');
+        }
+      } else {
+        const res = await moveItem(user.username, cleanSourcePath, targetDestPath);
+        if (res.success) {
+          addToast('success', 'Datei verschoben', `"${clipboard.item.name}" wurde erfolgreich verschoben.`);
+          setClipboard(null);
+          loadDirectoryFiles(user.username, currentPath);
+          loadUsage(user.username);
+        } else {
+          addToast('error', 'Verschieben fehlgeschlagen', res.error || 'Aktion fehlgeschlagen.');
+        }
+      }
+    } catch (err: any) {
+      addToast('error', 'Fehler', err.message || 'Unerwarteter Fehler beim Einfügen.');
+    }
+  };
+
   // Download item handler
   const handleDownloadItem = async (item: FileItemData) => {
     if (!user) return;
@@ -623,6 +747,10 @@ function MainApp() {
 
   // Open item (files open preview modal or new tab according to setting, folders navigate)
   const handleOpenItem = (item: FileItemData) => {
+    // In Cinema or Cinema/TV mode, standard preview modal must not be opened
+    if (isCinemaMode || isTvMode) {
+      return;
+    }
     if (item.type === 'folder') {
       const nextPath = currentPath ? `${currentPath}/${item.name}` : item.name;
       setCurrentPath(nextPath);
@@ -767,10 +895,10 @@ function MainApp() {
   }
 
   const isActionsDisabled = maintenanceMode && user.role !== 'master';
-  const isCinemaMode = currentTab === 'cinema' || currentTab === 'cinema-tv';
+  const isAnyCinemaMode = isCinemaMode || isTvMode;
 
   return (
-    <div className={`h-full flex flex-col ${isCinemaMode ? 'bg-[#141414] text-white' : 'bg-[#f8fafd] dark:bg-gray-950 text-gray-900 dark:text-gray-100'} overflow-hidden font-sans`}>
+    <div className={`h-full flex flex-col ${isAnyCinemaMode ? 'bg-[#141414] text-white' : 'bg-[#f8fafd] dark:bg-gray-950 text-gray-900 dark:text-gray-100'} overflow-hidden font-sans`}>
       <input
         type="file"
         ref={fileInputRef}
@@ -791,9 +919,8 @@ function MainApp() {
             user={user}
             items={allCinemaVideos.length > 0 ? allCinemaVideos : items}
             onBackToFiles={() => navigateToTab('my-drive')}
-            onPlayVideo={(item) => {
-              setViewerItem(item);
-              setViewerItemsList(allCinemaVideos.length > 0 ? allCinemaVideos : items);
+            onPlayVideo={(_item) => {
+              // Exklusiver Vollbild-Player in CinemaTvView aktiv - Standard Cloud-Modal blockiert
             }}
             onDownloadVideo={handleDownloadItem}
             onUploadClick={handleTriggerFileInput}
@@ -806,9 +933,8 @@ function MainApp() {
             user={user}
             items={allCinemaVideos.length > 0 ? allCinemaVideos : items}
             onBackToFiles={() => navigateToTab('my-drive')}
-            onPlayVideo={(item) => {
-              setViewerItem(item);
-              setViewerItemsList(allCinemaVideos.length > 0 ? allCinemaVideos : items);
+            onPlayVideo={(_item) => {
+              // Exklusiver Vollbild-Player in CinemaView aktiv - Standard Cloud-Modal blockiert
             }}
             onDownloadVideo={handleDownloadItem}
             onUploadClick={handleTriggerFileInput}
@@ -947,6 +1073,11 @@ function MainApp() {
                   searchTerm={searchTerm}
                   isActionsDisabled={isActionsDisabled}
                   rootLabel="Meine Ablage"
+                  clipboard={clipboard}
+                  onCopyItem={handleCopyItem}
+                  onCutItem={handleCutItem}
+                  onPaste={handlePasteItem}
+                  onUploadClick={handleTriggerFileInput}
                 />
               )}
 
@@ -999,7 +1130,7 @@ function MainApp() {
 
       {/* Media Viewer Modal: Lightbox, Video Player, PDF Viewer */}
       <MediaViewerModal
-        isOpen={Boolean(viewerItem)}
+        isOpen={Boolean(viewerItem) && !isCinemaMode && !isTvMode}
         onClose={() => setViewerItem(null)}
         activeItem={viewerItem}
         allItems={viewerItemsList}
@@ -1081,9 +1212,11 @@ function MainApp() {
         isOpen={Boolean(itemForMetadata)}
         item={itemForMetadata}
         currentPath={currentPath}
+        username={user.username}
         onClose={() => setItemForMetadata(null)}
         onSaved={() => {
           addToast('success', 'Beschreibung gespeichert', 'Metadaten wurden auf dem Server hinterlegt.');
+          loadDirectoryFiles(user.username, currentPath);
         }}
       />
 

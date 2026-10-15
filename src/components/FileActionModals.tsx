@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Check, Copy, ExternalLink, FileText, Edit2, Share2, Info, Loader2 } from 'lucide-react';
+import { X, Check, Copy, ExternalLink, FileText, Edit2, Share2, Info, Loader2, AlertTriangle } from 'lucide-react';
 import type { FileItemData } from '../types';
 import {
   renameItem,
@@ -8,6 +8,7 @@ import {
   formatBytes,
   formatCleanTitle,
 } from '../services/storageApi';
+import { validateItemName, filterNameInput } from '../utils/nameSanitizer';
 
 // -------------------------------------------------------------
 // 1. RENAME MODAL
@@ -29,27 +30,51 @@ export const RenameModal: React.FC<RenameModalProps> = ({
   onClose,
   onSuccess,
 }) => {
-  const [newName, setNewName] = useState('');
+  const isFile = item?.type === 'file';
+  const lastDot = isFile && item ? item.name.lastIndexOf('.') : -1;
+  const fileExt = lastDot > 0 && item ? item.name.slice(lastDot) : '';
+  const initialBase = lastDot > 0 && item ? item.name.slice(0, lastDot) : (item?.name || '');
+
+  const [baseName, setBaseName] = useState(initialBase);
+  const [inputWarning, setInputWarning] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (item) {
-      setNewName(item.name);
+      const isF = item.type === 'file';
+      const dotIdx = isF ? item.name.lastIndexOf('.') : -1;
+      const base = dotIdx > 0 ? item.name.slice(0, dotIdx) : item.name;
+      setBaseName(base);
+      setInputWarning(null);
       setError(null);
     }
   }, [item]);
 
   if (!isOpen || !item) return null;
 
+  const handleInputChange = (val: string) => {
+    const filtered = filterNameInput(val);
+    setBaseName(filtered.value);
+    if (filtered.hasError) {
+      setInputWarning(filtered.error || 'Ungültiges Zeichen blockiert.');
+    } else {
+      setInputWarning(null);
+    }
+  };
+
+  const validation = validateItemName(baseName);
+  const isSubmitDisabled = isLoading || !baseName.trim() || !validation.valid || Boolean(inputWarning);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const trimmed = newName.trim();
-    if (!trimmed) {
-      setError('Der Name darf nicht leer sein.');
+    if (!validation.valid) {
+      setError(validation.error || 'Ungültiger Name.');
       return;
     }
-    if (trimmed === item.name) {
+
+    const finalNewName = fileExt ? `${baseName.trim()}${fileExt}` : baseName.trim();
+    if (finalNewName === item.name) {
       onClose();
       return;
     }
@@ -58,11 +83,11 @@ export const RenameModal: React.FC<RenameModalProps> = ({
     setError(null);
 
     const targetOwner = item.owner || username;
-    const res = await renameItem(targetOwner, currentPath, item.name, trimmed);
+    const res = await renameItem(targetOwner, currentPath, item.name, finalNewName);
 
     setIsLoading(false);
     if (res.success) {
-      onSuccess(item.name, trimmed);
+      onSuccess(item.name, finalNewName);
       onClose();
     } else {
       setError(res.error || 'Fehler beim Umbenennen.');
@@ -70,7 +95,7 @@ export const RenameModal: React.FC<RenameModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150 select-none">
       <div
         className="relative w-full max-w-md bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-800 p-6 overflow-hidden"
         onClick={(e) => e.stopPropagation()}
@@ -90,17 +115,51 @@ export const RenameModal: React.FC<RenameModalProps> = ({
 
         <form onSubmit={handleSubmit} className="mt-4 space-y-4">
           <div>
-            <label className="block text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider mb-1.5">
-              Neuer Name
-            </label>
-            <input
-              type="text"
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              autoFocus
-              className="w-full px-3.5 py-2.5 rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm transition-all shadow-xs"
-              placeholder="Name eingeben..."
-            />
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">
+                {isFile ? 'Dateiname (ohne Endung)' : 'Neuer Ordnername'}
+              </label>
+              {isFile && fileExt && (
+                <span className="text-[11px] text-gray-400 dark:text-gray-500">
+                  Dateiendung geschützt: <code className="font-mono text-blue-600 dark:text-blue-400 font-bold">{fileExt}</code>
+                </span>
+              )}
+            </div>
+
+            {isFile && fileExt ? (
+              <div className="flex items-center">
+                <input
+                  type="text"
+                  value={baseName}
+                  onChange={(e) => handleInputChange(e.target.value)}
+                  autoFocus
+                  className="flex-1 px-3.5 py-2.5 rounded-l-xl border border-r-0 border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm transition-all shadow-xs"
+                  placeholder="Dateiname..."
+                />
+                <span
+                  className="px-3.5 py-2.5 bg-gray-100 dark:bg-gray-800/90 text-gray-600 dark:text-gray-400 font-mono text-sm border border-l-0 border-gray-300 dark:border-gray-700 rounded-r-xl select-none shrink-0"
+                  title="Dateiendung ist geschützt und bleibt unverändert"
+                >
+                  {fileExt}
+                </span>
+              </div>
+            ) : (
+              <input
+                type="text"
+                value={baseName}
+                onChange={(e) => handleInputChange(e.target.value)}
+                autoFocus
+                className="w-full px-3.5 py-2.5 rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm transition-all shadow-xs"
+                placeholder="Name eingeben..."
+              />
+            )}
+
+            {inputWarning && (
+              <div className="mt-2 p-2 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/50 flex items-start gap-1.5 text-[11px] text-amber-700 dark:text-amber-300">
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-500" />
+                <span>{inputWarning}</span>
+              </div>
+            )}
           </div>
 
           {error && (
@@ -120,8 +179,8 @@ export const RenameModal: React.FC<RenameModalProps> = ({
             </button>
             <button
               type="submit"
-              disabled={isLoading}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white transition-all shadow-xs disabled:opacity-60"
+              disabled={isSubmitDisabled}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white transition-all shadow-xs disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
             >
               {isLoading && <Loader2 className="w-4 h-4 animate-spin" />}
               <span>Speichern</span>
@@ -140,6 +199,7 @@ interface FileMetadataModalProps {
   isOpen: boolean;
   item: FileItemData | null;
   currentPath: string;
+  username?: string;
   onClose: () => void;
   onSaved?: (description: string) => void;
 }
@@ -148,6 +208,7 @@ export const FileMetadataModal: React.FC<FileMetadataModalProps> = ({
   isOpen,
   item,
   currentPath,
+  username,
   onClose,
   onSaved,
 }) => {
@@ -157,23 +218,27 @@ export const FileMetadataModal: React.FC<FileMetadataModalProps> = ({
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   const relativePath = item ? (item.path || (currentPath ? `${currentPath}/${item.name}` : item.name)) : '';
+  const effectiveUser = item?.owner || username || '';
 
   useEffect(() => {
     if (!isOpen || !item) return;
     let isMounted = true;
-    setIsLoading(true);
+    const initialDesc = item.metadata?.description || '';
+    setDescription(initialDesc);
+    setIsLoading(!initialDesc);
     setStatusMessage(null);
 
-    getFileMetadata(relativePath)
+    getFileMetadata(relativePath, effectiveUser)
       .then((data) => {
         if (isMounted) {
-          setDescription(data.description || '');
+          if (data.description || !initialDesc) {
+            setDescription(data.description || '');
+          }
           setIsLoading(false);
         }
       })
       .catch(() => {
         if (isMounted) {
-          setDescription('');
           setIsLoading(false);
         }
       });
@@ -181,7 +246,7 @@ export const FileMetadataModal: React.FC<FileMetadataModalProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [isOpen, item, relativePath]);
+  }, [isOpen, item, relativePath, effectiveUser]);
 
   if (!isOpen || !item) return null;
 
@@ -189,10 +254,13 @@ export const FileMetadataModal: React.FC<FileMetadataModalProps> = ({
     setIsSaving(true);
     setStatusMessage(null);
 
-    const res = await setFileMetadata(relativePath, description);
+    const res = await setFileMetadata(relativePath, description, effectiveUser);
     setIsSaving(false);
 
     if (res.success) {
+      if (item) {
+        item.metadata = { ...(item.metadata || {}), description };
+      }
       setStatusMessage({ type: 'success', text: 'Beschreibung erfolgreich gespeichert.' });
       if (onSaved) onSaved(description);
       setTimeout(() => {

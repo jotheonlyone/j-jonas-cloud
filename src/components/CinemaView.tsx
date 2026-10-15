@@ -23,6 +23,7 @@ import {
   type VideoCategory,
 } from '../services/storageApi';
 import { isVideoFile } from './MediaViewerModal';
+import { isTvBackEvent } from './CinemaTvView';
 
 interface CinemaViewProps {
   user: UserAccount;
@@ -177,23 +178,51 @@ export const CinemaView: React.FC<CinemaViewProps> = ({
   const featuredRows = useMemo(() => {
     const rows: VideoCategory[] = [];
 
-    // Row 1: Always "Zuletzt hinzugefügt"
-    rows.push({
-      id: 'recent',
-      title: 'Zuletzt hinzugefügt',
-      folderPath: '',
-      videos: displayVideos,
-    });
+    const q = searchQuery.trim().toLowerCase();
 
-    // Pick 2-3 random categories from folder structures
+    // Helper: test if video matches search query (title, filename, category path, description)
+    const matchesQuery = (v: FileItemData) => {
+      if (!q) return true;
+      const cleanTitle = formatCleanTitle(v.name).toLowerCase();
+      const rawName = v.name.toLowerCase();
+      const path = (v.path || '').toLowerCase();
+      const desc = (v.metadata?.description || '').toLowerCase();
+      return cleanTitle.includes(q) || rawName.includes(q) || path.includes(q) || desc.includes(q);
+    };
+
+    // Row 1: "Zuletzt hinzugefügt" filtered
+    const recentFiltered = displayVideos.filter(matchesQuery);
+    if (recentFiltered.length > 0) {
+      rows.push({
+        id: 'recent',
+        title: 'Zuletzt hinzugefügt',
+        folderPath: '',
+        videos: recentFiltered,
+      });
+    }
+
+    // Category rows: if category title matches, show all its videos; otherwise show matching videos
     if (allFolderCategories.length > 0) {
-      const shuffled = [...allFolderCategories].sort(() => 0.5 - Math.random());
-      const selectedRandom = shuffled.slice(0, 3);
-      rows.push(...selectedRandom);
+      if (q) {
+        allFolderCategories.forEach((cat) => {
+          const catMatches = cat.title.toLowerCase().includes(q);
+          const matchingVideos = cat.videos.filter((v) => catMatches || matchesQuery(v));
+          if (matchingVideos.length > 0) {
+            rows.push({
+              ...cat,
+              videos: matchingVideos,
+            });
+          }
+        });
+      } else {
+        const shuffled = [...allFolderCategories].sort(() => 0.5 - Math.random());
+        const selectedRandom = shuffled.slice(0, 3);
+        rows.push(...selectedRandom);
+      }
     }
 
     return rows;
-  }, [displayVideos, allFolderCategories]);
+  }, [displayVideos, allFolderCategories, searchQuery]);
 
   // Videos displayed in the 16:9 Grid section based on active category filter and search query
   const gridVideos = useMemo(() => {
@@ -209,25 +238,34 @@ export const CinemaView: React.FC<CinemaViewProps> = ({
     }
 
     if (!searchQuery.trim()) return baseList;
-    const q = searchQuery.toLowerCase();
-    return baseList.filter(
-      (v) =>
-        v.name.toLowerCase().includes(q) ||
-        formatCleanTitle(v.name).toLowerCase().includes(q)
-    );
+    const q = searchQuery.toLowerCase().trim();
+    return baseList.filter((v) => {
+      const cleanTitle = formatCleanTitle(v.name).toLowerCase();
+      const rawName = v.name.toLowerCase();
+      const path = (v.path || '').toLowerCase();
+      const desc = (v.metadata?.description || '').toLowerCase();
+      return cleanTitle.includes(q) || rawName.includes(q) || path.includes(q) || desc.includes(q);
+    });
   }, [displayVideos, allFolderCategories, activeCategoryFilter, searchQuery]);
 
-  // Play a video
+  // Play a video exclusively in Cinema fullscreen player (prevent double modal)
   const startPlayback = (video: FileItemData) => {
     setActiveFullscreenVideo(video);
-    onPlayVideo(video);
   };
 
   // Check description and either show Info-Overlay or start playback
   const handleSelectVideo = async (video: FileItemData) => {
+    if (video.metadata?.description && video.metadata.description.trim()) {
+      setDescriptionOverlay({
+        video,
+        description: video.metadata.description.trim(),
+      });
+      return;
+    }
     const itemPath = video.path || video.name;
+    const itemOwner = video.owner || user.username;
     try {
-      const meta = await getFileMetadata(itemPath);
+      const meta = await getFileMetadata(itemPath, itemOwner);
       if (meta.description && meta.description.trim()) {
         setDescriptionOverlay({
           video,
@@ -247,11 +285,16 @@ export const CinemaView: React.FC<CinemaViewProps> = ({
       setDetailsDescription('');
       return;
     }
+    const immediateDesc = selectedDetailsVideo.metadata?.description || '';
+    setDetailsDescription(immediateDesc);
     const itemPath = selectedDetailsVideo.path || selectedDetailsVideo.name;
-    getFileMetadata(itemPath)
-      .then((meta) => setDetailsDescription(meta.description || ''))
-      .catch(() => setDetailsDescription(''));
-  }, [selectedDetailsVideo]);
+    const itemOwner = selectedDetailsVideo.owner || user.username;
+    getFileMetadata(itemPath, itemOwner)
+      .then((meta) => {
+        if (meta.description) setDetailsDescription(meta.description);
+      })
+      .catch(() => {});
+  }, [selectedDetailsVideo, user.username]);
 
   // Carousel scroll handler
   const scrollRow = (elementId: string, direction: 'left' | 'right') => {
@@ -267,7 +310,9 @@ export const CinemaView: React.FC<CinemaViewProps> = ({
   // Keyboard shortcut for closing modals or fullscreen player
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
+      if (isTvBackEvent(e)) {
+        e.preventDefault();
+        e.stopPropagation();
         if (descriptionOverlay) {
           setDescriptionOverlay(null);
         } else if (activeFullscreenVideo) {
@@ -334,7 +379,13 @@ export const CinemaView: React.FC<CinemaViewProps> = ({
 
         {/* Right: Größeres, prominentes Suchfeld (ohne Upload-Button) */}
         <div className="flex-1 max-w-xl ml-4 sm:ml-8">
-          <div className="relative">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              (document.activeElement as HTMLElement)?.blur();
+            }}
+            className="relative"
+          >
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
             <input
               type="text"
@@ -345,13 +396,15 @@ export const CinemaView: React.FC<CinemaViewProps> = ({
             />
             {searchQuery && (
               <button
+                type="button"
                 onClick={() => setSearchQuery('')}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white cursor-pointer"
+                title="Suche zurücksetzen"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
             )}
-          </div>
+          </form>
         </div>
       </header>
 
@@ -395,7 +448,10 @@ export const CinemaView: React.FC<CinemaViewProps> = ({
             {/* Prominent Action Buttons */}
             <div className="flex flex-wrap items-center gap-3.5">
               <button
-                onClick={() => startPlayback(heroVideo)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  startPlayback(heroVideo);
+                }}
                 className="group flex items-center gap-3 px-7 py-3 rounded-xl bg-white hover:bg-gray-100 text-black font-extrabold text-sm sm:text-base transition-all shadow-xl hover:shadow-white/20 active:scale-95 select-none cursor-pointer"
               >
                 <Play className="w-5 h-5 fill-black text-black transition-transform group-hover:scale-110" />
@@ -403,7 +459,10 @@ export const CinemaView: React.FC<CinemaViewProps> = ({
               </button>
 
               <button
-                onClick={() => handleSelectVideo(heroVideo)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleSelectVideo(heroVideo);
+                }}
                 className="flex items-center gap-2.5 px-6 py-3 rounded-xl bg-white/20 hover:bg-white/30 text-white backdrop-blur-md font-semibold text-sm sm:text-base border border-white/15 hover:border-white/30 transition-all active:scale-95 select-none cursor-pointer"
               >
                 <Info className="w-5 h-5 text-gray-200" />
@@ -560,8 +619,22 @@ export const CinemaView: React.FC<CinemaViewProps> = ({
 
           {/* 16:9 Widescreen Grid */}
           {gridVideos.length === 0 ? (
-            <div className="text-center py-12 text-gray-400 text-sm">
-              Keine Filme in dieser Kategorie gefunden.
+            <div className="text-center py-16 text-gray-400 text-sm flex flex-col items-center justify-center gap-3">
+              <Search className="w-8 h-8 text-gray-500 opacity-60" />
+              <p className="font-semibold text-gray-300">
+                {searchQuery
+                  ? `Keine Videos gefunden für "${searchQuery}"`
+                  : 'Keine Filme in dieser Kategorie gefunden.'}
+              </p>
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-semibold cursor-pointer transition-colors"
+                >
+                  Suche zurücksetzen
+                </button>
+              )}
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 sm:gap-6 py-2">
@@ -782,7 +855,10 @@ const VideoCard: React.FC<VideoCardProps> = ({ video, onPlay, onDetails, onDownl
 
   return (
     <div
-      onClick={onPlay}
+      onClick={(e) => {
+        e.stopPropagation();
+        onPlay();
+      }}
       className="group relative flex flex-col rounded-xl overflow-hidden bg-neutral-900 border border-white/10 hover:border-white/30 transition-all duration-300 ease-out hover:scale-105 hover:z-30 hover:shadow-2xl hover:shadow-black/90 cursor-pointer select-none will-change-transform"
     >
       {/* 16:9 Thumbnail Area with Subtle Overlay */}

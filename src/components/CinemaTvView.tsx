@@ -31,6 +31,35 @@ import {
 } from '../services/storageApi';
 import { isVideoFile } from './MediaViewerModal';
 
+/**
+ * Detects whether a keydown event corresponds to the Back / Return button
+ * on Android TV remotes, Smart TV web browsers, or desktop keyboards:
+ * - e.key === "Escape"
+ * - e.key === "Backspace"
+ * - e.key === "GoBack" (Android KeyCode 4)
+ * - e.key === "BrowserBack"
+ * - e.keyCode === 4
+ */
+export const isTvBackEvent = (e: KeyboardEvent): boolean => {
+  const key = e.key;
+  const code = e.keyCode || e.which;
+  return (
+    key === 'Escape' ||
+    key === 'Backspace' ||
+    key === 'GoBack' ||
+    key === 'BrowserBack' ||
+    key === 'Back' ||
+    key === 'Exit' ||
+    key === 'Cancel' ||
+    code === 4 ||     // Android KeyEvent.KEYCODE_BACK (Android TV KeyCode 4)
+    code === 27 ||    // Escape
+    code === 8 ||     // Backspace
+    code === 10009 || // Tizen Return
+    code === 461 ||   // LG webOS Back
+    code === 166      // BrowserBack
+  );
+};
+
 interface CinemaTvViewProps {
   user: UserAccount;
   items: FileItemData[];
@@ -105,6 +134,15 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
     description: string;
   } | null>(null);
 
+  // Reload & Refresh trigger
+  const [reloadTrigger, setReloadTrigger] = useState<number>(0);
+  const [isReloading, setIsReloading] = useState<boolean>(false);
+
+  const handleReload = () => {
+    setIsReloading(true);
+    setReloadTrigger((prev) => prev + 1);
+  };
+
   // Fetch dynamic categories from the account's directory structure
   useEffect(() => {
     let isMounted = true;
@@ -150,12 +188,15 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
         if (isMounted) {
           setAllFolderCategories(loadedCategories);
           setAllUserVideos(mergedVideos.length > 0 ? mergedVideos : items.filter(isVideoFile));
-          setIsLoadingCategories(false);
         }
       } catch (err) {
         if (isMounted) {
           setAllUserVideos(items.filter(isVideoFile));
+        }
+      } finally {
+        if (isMounted) {
           setIsLoadingCategories(false);
+          setIsReloading(false);
         }
       }
     };
@@ -165,7 +206,7 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [user.username, items]);
+  }, [user.username, items, reloadTrigger]);
 
   // Fallback demo clips if library is empty
   const displayVideos = useMemo(() => {
@@ -180,27 +221,55 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
     return null;
   }, [displayVideos]);
 
-  // Featured rows: "Zuletzt hinzugefügt" is ALWAYS first, followed by 2 or 3 randomly selected folder categories
+  // Helper to match videos against search query (title, filename, folder path, description)
+  const matchesQuery = useCallback((v: FileItemData, query: string) => {
+    if (!query.trim()) return true;
+    const q = query.trim().toLowerCase();
+    const cleanTitle = formatCleanTitle(v.name).toLowerCase();
+    const rawName = v.name.toLowerCase();
+    const path = (v.path || '').toLowerCase();
+    const desc = (v.metadata?.description || '').toLowerCase();
+    return cleanTitle.includes(q) || rawName.includes(q) || path.includes(q) || desc.includes(q);
+  }, []);
+
+  // Featured rows: "Zuletzt hinzugefügt" is ALWAYS first, followed by folder categories
   const featuredRows = useMemo(() => {
     const rows: VideoCategory[] = [];
+    const q = searchQuery.trim().toLowerCase();
 
-    // Row 1: Always "Zuletzt hinzugefügt"
-    rows.push({
-      id: 'recent',
-      title: 'Zuletzt hinzugefügt',
-      folderPath: '',
-      videos: displayVideos,
-    });
+    // Row 1: "Zuletzt hinzugefügt"
+    const recentFiltered = displayVideos.filter((v) => matchesQuery(v, searchQuery));
+    if (recentFiltered.length > 0) {
+      rows.push({
+        id: 'recent',
+        title: 'Zuletzt hinzugefügt',
+        folderPath: '',
+        videos: recentFiltered,
+      });
+    }
 
-    // Pick 2-3 random categories from folder structures
+    // Category rows: if category title matches q, show its videos; or show videos matching q
     if (allFolderCategories.length > 0) {
-      const shuffled = [...allFolderCategories].sort(() => 0.5 - Math.random());
-      const selectedRandom = shuffled.slice(0, 3);
-      rows.push(...selectedRandom);
+      if (q) {
+        allFolderCategories.forEach((cat) => {
+          const catMatches = cat.title.toLowerCase().includes(q);
+          const matchingVideos = cat.videos.filter((v) => catMatches || matchesQuery(v, searchQuery));
+          if (matchingVideos.length > 0) {
+            rows.push({
+              ...cat,
+              videos: matchingVideos,
+            });
+          }
+        });
+      } else {
+        const shuffled = [...allFolderCategories].sort(() => 0.5 - Math.random());
+        const selectedRandom = shuffled.slice(0, 3);
+        rows.push(...selectedRandom);
+      }
     }
 
     return rows;
-  }, [displayVideos, allFolderCategories]);
+  }, [displayVideos, allFolderCategories, searchQuery, matchesQuery]);
 
   // Category filter options for interactive pill bar
   const filterOptions = useMemo(() => {
@@ -208,11 +277,14 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
       { id: 'all', label: 'Alle Filme' },
       { id: 'recent', label: 'Zuletzt hinzugefügt' },
     ];
+    const q = searchQuery.trim().toLowerCase();
     allFolderCategories.forEach((cat) => {
-      opts.push({ id: cat.id, label: cat.title });
+      if (!q || cat.title.toLowerCase().includes(q) || cat.videos.some((v) => matchesQuery(v, searchQuery))) {
+        opts.push({ id: cat.id, label: cat.title });
+      }
     });
     return opts;
-  }, [allFolderCategories]);
+  }, [allFolderCategories, searchQuery, matchesQuery]);
 
   // Videos displayed in the 16:9 Grid section based on active category filter and search query
   const gridVideos = useMemo(() => {
@@ -228,13 +300,8 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
     }
 
     if (!searchQuery.trim()) return baseList;
-    const q = searchQuery.toLowerCase();
-    return baseList.filter(
-      (v) =>
-        v.name.toLowerCase().includes(q) ||
-        formatCleanTitle(v.name).toLowerCase().includes(q)
-    );
-  }, [displayVideos, allFolderCategories, activeCategoryFilter, searchQuery]);
+    return baseList.filter((v) => matchesQuery(v, searchQuery));
+  }, [displayVideos, allFolderCategories, activeCategoryFilter, searchQuery, matchesQuery]);
 
   // -------------------------------------------------------------
   // D-PAD & FERNBEDIENUNGS-STEUERUNG
@@ -251,7 +318,7 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
 
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchClearBtnRef = useRef<HTMLButtonElement>(null);
-  const headerDemoBtnRef = useRef<HTMLButtonElement>(null);
+  const headerReloadBtnRef = useRef<HTMLButtonElement>(null);
   const emptyStateBtnRef = useRef<HTMLButtonElement>(null);
   const heroPlayBtnRef = useRef<HTMLButtonElement>(null);
   const heroInfoBtnRef = useRef<HTMLButtonElement>(null);
@@ -316,17 +383,59 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
     descriptionOverlay,
   ]);
 
-  // Play a video
+  // Keep a ref of activePlayerVideo to safely inspect in window popstate handler
+  const activePlayerVideoRef = useRef<FileItemData | null>(activePlayerVideo);
+  useEffect(() => {
+    activePlayerVideoRef.current = activePlayerVideo;
+  }, [activePlayerVideo]);
+
+  // -------------------------------------------------------------
+  // ANDROID TV REMOTE & BROWSER HISTORY (POPSTATE) TRAP
+  // -------------------------------------------------------------
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    // Push state so there is always a cinema-tv state on history
+    window.history.pushState({ tab: 'cinema-tv', tvMode: true }, '', '/cinema/tv');
+
+    const handleTvPopState = () => {
+      // a) If video is currently playing in fullscreen player, close player and return to TV tile overview
+      if (activePlayerVideoRef.current) {
+        setActivePlayerVideo(null);
+      } else {
+        // b) If in main overview: close any overlays and stay in Cinema/TV mode
+        setDescriptionOverlay(null);
+        setSelectedDetailsVideo(null);
+      }
+
+      // Re-push history entry to strictly prevent jumping back to standard Cloud interface
+      window.history.pushState({ tab: 'cinema-tv', tvMode: true }, '', '/cinema/tv');
+    };
+
+    window.addEventListener('popstate', handleTvPopState);
+    return () => {
+      window.removeEventListener('popstate', handleTvPopState);
+    };
+  }, []);
+
+  // Play a video exclusively in TV fullscreen player (prevent double modal)
   const startPlayback = (video: FileItemData) => {
     setActivePlayerVideo(video);
-    onPlayVideo(video);
   };
 
   // Check description and either show Info-Overlay or start playback
   const handleSelectVideo = async (video: FileItemData) => {
+    if (video.metadata?.description && video.metadata.description.trim()) {
+      setDescriptionOverlay({
+        video,
+        description: video.metadata.description.trim(),
+      });
+      return;
+    }
     const itemPath = video.path || video.name;
+    const itemOwner = video.owner || user.username;
     try {
-      const meta = await getFileMetadata(itemPath);
+      const meta = await getFileMetadata(itemPath, itemOwner);
       if (meta.description && meta.description.trim()) {
         setDescriptionOverlay({
           video,
@@ -346,11 +455,16 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
       setDetailsDescription('');
       return;
     }
+    const immediateDesc = selectedDetailsVideo.metadata?.description || '';
+    setDetailsDescription(immediateDesc);
     const itemPath = selectedDetailsVideo.path || selectedDetailsVideo.name;
-    getFileMetadata(itemPath)
-      .then((meta) => setDetailsDescription(meta.description || ''))
-      .catch(() => setDetailsDescription(''));
-  }, [selectedDetailsVideo]);
+    const itemOwner = selectedDetailsVideo.owner || user.username;
+    getFileMetadata(itemPath, itemOwner)
+      .then((meta) => {
+        if (meta.description) setDetailsDescription(meta.description);
+      })
+      .catch(() => {});
+  }, [selectedDetailsVideo, user.username]);
 
   // Carousel scroll handler
   const scrollRow = (elementId: string, direction: 'left' | 'right') => {
@@ -363,18 +477,71 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
     });
   };
 
-  // Handle D-Pad Keyboard Navigation
+  // Handle D-Pad Keyboard Navigation & Android TV Back Button
   useEffect(() => {
     const handleTvDpad = (e: KeyboardEvent) => {
+      const isInputActive =
+        document.activeElement === searchInputRef.current ||
+        document.activeElement?.tagName === 'INPUT' ||
+        document.activeElement?.tagName === 'TEXTAREA';
+
+      // -------------------------------------------------------------
+      // 1. GLOBAL BACK BUTTON (Android TV Remote & Keyboard)
+      // -------------------------------------------------------------
+      if (isTvBackEvent(e)) {
+        // If user is editing text in search input, allow normal backspace to delete characters
+        if (isInputActive && (e.key === 'Backspace' || (e.keyCode || e.which) === 8)) {
+          return;
+        }
+
+        // Intercept and prevent back navigation from leaving Cinema/TV
+        e.preventDefault();
+        e.stopPropagation();
+
+        // a) If video player is active (safety fallback if player overlay bubbled)
+        if (activePlayerVideo) {
+          setActivePlayerVideo(null);
+          return;
+        }
+
+        // b) If info description overlay is open -> close it and return to tile overview
+        if (descriptionOverlay) {
+          setDescriptionOverlay(null);
+          return;
+        }
+
+        // c) If details modal is open -> close it and return to tile overview
+        if (selectedDetailsVideo) {
+          setSelectedDetailsVideo(null);
+          return;
+        }
+
+        // d) If search input is focused -> blur it and reset focus to header
+        if (isInputActive) {
+          searchInputRef.current?.blur();
+          setFocusedZone('header');
+          setHeaderFocusIndex(0);
+          return;
+        }
+
+        // e) If navigating content zones (carousels, filterBar, grid, emptyState) -> return focus to top header
+        if (focusedZone !== 'header') {
+          setFocusedZone('header');
+          setHeaderFocusIndex(0);
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+          return;
+        }
+
+        // f) In main header overview: strictly stay in Cinema/TV mode (never exit to normal cloud)
+        return;
+      }
+
       if (descriptionOverlay) {
         if (e.key === 'Enter') {
           e.preventDefault();
           const vid = descriptionOverlay.video;
           setDescriptionOverlay(null);
           startPlayback(vid);
-        } else if (e.key === 'Escape' || e.key === 'Backspace') {
-          e.preventDefault();
-          setDescriptionOverlay(null);
         }
         return;
       }
@@ -385,9 +552,6 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
           const vid = selectedDetailsVideo;
           setSelectedDetailsVideo(null);
           startPlayback(vid);
-        } else if (e.key === 'Escape' || e.key === 'Backspace') {
-          e.preventDefault();
-          setSelectedDetailsVideo(null);
         }
         return;
       }
@@ -532,13 +696,26 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
           e.preventDefault();
           if (focusedZone === 'header') {
             if (headerFocusIndex === 0) {
-              searchInputRef.current?.focus();
+              if (document.activeElement === searchInputRef.current) {
+                // Confirm search, close on-screen keyboard, and focus results
+                searchInputRef.current?.blur();
+                if (gridVideos.length > 0) {
+                  setFocusedZone('grid');
+                  setGridIdx(0);
+                } else if (featuredRows.length > 0 && featuredRows[0].videos.length > 0) {
+                  setFocusedZone('carousels');
+                  setCarouselRowIdx(0);
+                  setCarouselColIdx(0);
+                }
+              } else {
+                searchInputRef.current?.focus();
+              }
             } else if (searchQuery && headerFocusIndex === 1) {
               setSearchQuery('');
               setHeaderFocusIndex(0);
               searchInputRef.current?.focus();
             } else {
-              setUseDemoFallback((prev) => !prev);
+              handleReload();
             }
           } else if (focusedZone === 'emptyState') {
             setUseDemoFallback((prev) => !prev);
@@ -560,16 +737,6 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
             if (vid) {
               handleSelectVideo(vid);
             }
-          }
-          break;
-        }
-
-        case 'Escape':
-        case 'Backspace': {
-          if (focusedZone !== 'header') {
-            e.preventDefault();
-            setFocusedZone('header');
-            setHeaderFocusIndex(0);
           }
           break;
         }
@@ -625,7 +792,21 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
         {/* Right: Controls mit Suchleiste & Demo-Modus Button */}
         <div className="flex items-center gap-3 flex-1 max-w-2xl ml-4 sm:ml-8 justify-end">
           {/* Suchleiste */}
-          <div className="relative flex-1 max-w-md">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              searchInputRef.current?.blur();
+              if (gridVideos.length > 0) {
+                setFocusedZone('grid');
+                setGridIdx(0);
+              } else if (featuredRows.length > 0 && featuredRows[0].videos.length > 0) {
+                setFocusedZone('carousels');
+                setCarouselRowIdx(0);
+                setCarouselColIdx(0);
+              }
+            }}
+            className="relative flex-1 max-w-md"
+          >
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
             <input
               ref={searchInputRef}
@@ -637,6 +818,36 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
                 setFocusedZone('header');
                 setHeaderFocusIndex(0);
               }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  searchInputRef.current?.blur();
+                  if (gridVideos.length > 0) {
+                    setFocusedZone('grid');
+                    setGridIdx(0);
+                  } else if (featuredRows.length > 0 && featuredRows[0].videos.length > 0) {
+                    setFocusedZone('carousels');
+                    setCarouselRowIdx(0);
+                    setCarouselColIdx(0);
+                  }
+                } else if (e.key === 'ArrowDown') {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  searchInputRef.current?.blur();
+                  if (heroVideo) {
+                    setFocusedZone('hero');
+                    setHeroIndex(0);
+                  } else if (featuredRows.length > 0) {
+                    setFocusedZone('carousels');
+                    setCarouselRowIdx(0);
+                    setCarouselColIdx(0);
+                  } else if (gridVideos.length > 0) {
+                    setFocusedZone('grid');
+                    setGridIdx(0);
+                  }
+                }
+              }}
               className={`w-full pl-10 pr-9 py-2 text-xs sm:text-sm rounded-full bg-white/10 text-white placeholder-gray-400 focus:outline-none transition-all shadow-inner ${
                 focusedZone === 'header' && headerFocusIndex === 0
                   ? 'border-[#E50914] ring-2 ring-[#E50914] bg-black/70'
@@ -645,6 +856,7 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
             />
             {searchQuery && (
               <button
+                type="button"
                 ref={searchClearBtnRef}
                 onClick={() => setSearchQuery('')}
                 onMouseEnter={() => {
@@ -661,29 +873,27 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
                 <X className="w-3.5 h-3.5" />
               </button>
             )}
-          </div>
+          </form>
 
-          {/* Demo-Modus Schnellknopf im Header */}
+          {/* Kleiner Reload-Knopf im Header zum Aktualisieren und Prüfen auf neue Dateien */}
           <button
-            ref={headerDemoBtnRef}
-            onClick={() => setUseDemoFallback(!useDemoFallback)}
+            ref={headerReloadBtnRef}
+            onClick={handleReload}
+            disabled={isReloading || isLoadingCategories}
             onMouseEnter={() => {
               setFocusedZone('header');
               setHeaderFocusIndex(searchQuery ? 2 : 1);
             }}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-full text-xs sm:text-sm font-semibold transition-all select-none cursor-pointer outline-none shrink-0 ${
+            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs sm:text-sm font-semibold transition-all select-none cursor-pointer outline-none shrink-0 ${
               focusedZone === 'header' && headerFocusIndex === (searchQuery ? 2 : 1)
                 ? 'bg-white text-black ring-4 ring-white scale-105 shadow-xl font-bold'
-                : useDemoFallback
-                ? 'bg-[#E50914]/25 text-[#E50914] border border-[#E50914]/50'
                 : 'text-gray-300 hover:text-white bg-white/10 hover:bg-white/20 border border-white/10'
             }`}
-            title="Demo-Videos umschalten"
+            title="Auf neue Dateien prüfen und Mediathek neu laden"
+            aria-label="Mediathek aktualisieren"
           >
-            <Sparkles className="w-4 h-4 text-amber-400" />
-            <span className="hidden sm:inline">
-              {useDemoFallback ? 'Demo-Videos aktiv' : 'Demo-Modus'}
-            </span>
+            <RotateCw className={`w-3.5 h-3.5 text-blue-400 ${isReloading || isLoadingCategories ? 'animate-spin' : ''}`} />
+            <span className="hidden sm:inline">Aktualisieren</span>
           </button>
         </div>
       </header>
@@ -728,7 +938,10 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
             <div className="flex flex-wrap items-center gap-3.5">
               <button
                 ref={heroPlayBtnRef}
-                onClick={() => startPlayback(heroVideo)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  startPlayback(heroVideo);
+                }}
                 onMouseEnter={() => {
                   setFocusedZone('hero');
                   setHeroIndex(0);
@@ -745,7 +958,10 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
 
               <button
                 ref={heroInfoBtnRef}
-                onClick={() => handleSelectVideo(heroVideo)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleSelectVideo(heroVideo);
+                }}
                 onMouseEnter={() => {
                   setFocusedZone('hero');
                   setHeroIndex(1);
@@ -851,7 +1067,8 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
                           if (el) carouselItemRefs.current.set(key, el);
                           else carouselItemRefs.current.delete(key);
                         }}
-                        onClick={() => {
+                        onClick={(e) => {
+                          e.stopPropagation();
                           setFocusedZone('carousels');
                           setCarouselRowIdx(rowIdx);
                           setCarouselColIdx(colIdx);
@@ -994,8 +1211,22 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
 
           {/* 16:9 Widescreen Grid (Fernbedienungs-optimiert) */}
           {gridVideos.length === 0 ? (
-            <div className="text-center py-12 text-gray-400 text-sm">
-              Keine Filme in dieser Kategorie gefunden.
+            <div className="text-center py-16 text-gray-400 text-sm flex flex-col items-center justify-center gap-3">
+              <Search className="w-8 h-8 text-gray-500 opacity-60" />
+              <p className="font-semibold text-gray-300">
+                {searchQuery
+                  ? `Keine Videos gefunden für "${searchQuery}"`
+                  : 'Keine Filme in dieser Kategorie gefunden.'}
+              </p>
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-semibold cursor-pointer transition-colors"
+                >
+                  Suche zurücksetzen
+                </button>
+              )}
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 sm:gap-6 py-2">
@@ -1011,7 +1242,8 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
                       if (el) gridItemRefs.current.set(idx, el);
                       else gridItemRefs.current.delete(idx);
                     }}
-                    onClick={() => {
+                    onClick={(e) => {
+                      e.stopPropagation();
                       setFocusedZone('grid');
                       setGridIdx(idx);
                       handleSelectVideo(video);
@@ -1391,9 +1623,41 @@ const TvMediaPlayerOverlay: React.FC<TvMediaPlayerOverlayProps> = ({
     resetOsdTimer();
   }, [resetOsdTimer]);
 
+  // Safe player close: pauses video, exits fullscreen, and closes overlay
+  const handleClosePlayer = useCallback(() => {
+    if (videoRef.current) {
+      try {
+        videoRef.current.pause();
+      } catch {}
+    }
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+    }
+    onClose();
+  }, [onClose]);
+
+  // Ensure video stream pauses on component unmount
+  useEffect(() => {
+    return () => {
+      if (videoRef.current) {
+        try {
+          videoRef.current.pause();
+        } catch {}
+      }
+    };
+  }, []);
+
   // Fernbedienungs-Tastensteuerung im Player
   useEffect(() => {
     const handlePlayerKeyDown = (e: KeyboardEvent) => {
+      // 1. Android TV Remote Back / Escape / Backspace / GoBack / KeyCode 4
+      if (isTvBackEvent(e)) {
+        e.preventDefault();
+        e.stopPropagation();
+        handleClosePlayer();
+        return;
+      }
+
       switch (e.key) {
         case ' ':
         case 'Enter':
@@ -1426,17 +1690,12 @@ const TvMediaPlayerOverlay: React.FC<TvMediaPlayerOverlayProps> = ({
           e.preventDefault();
           toggleFullscreen();
           break;
-        case 'Escape':
-        case 'Backspace':
-          e.preventDefault();
-          onClose();
-          break;
       }
     };
 
-    window.addEventListener('keydown', handlePlayerKeyDown);
-    return () => window.removeEventListener('keydown', handlePlayerKeyDown);
-  }, [togglePlayPause, skipTime, changeVolume, toggleMute, toggleFullscreen, onClose]);
+    window.addEventListener('keydown', handlePlayerKeyDown, { capture: true });
+    return () => window.removeEventListener('keydown', handlePlayerKeyDown, { capture: true });
+  }, [togglePlayPause, skipTime, changeVolume, toggleMute, toggleFullscreen, handleClosePlayer]);
 
   const formatPlayerTime = (seconds: number) => {
     if (isNaN(seconds) || seconds < 0) return '00:00';
@@ -1492,9 +1751,9 @@ const TvMediaPlayerOverlay: React.FC<TvMediaPlayerOverlayProps> = ({
       >
         <div className="flex items-center gap-3">
           <button
-            onClick={onClose}
+            onClick={handleClosePlayer}
             className="p-2 sm:p-2.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors"
-            title="Wiedergabe schließen (Esc)"
+            title="Wiedergabe schließen (Zurück / Esc)"
           >
             <ArrowLeft className="w-5 h-5" />
           </button>

@@ -1,5 +1,6 @@
 import type { FileItemData, StorageUsage } from '../types';
 import { getActiveUser } from './accountManager';
+import { sanitizeUploadFileName, validateItemName } from '../utils/nameSanitizer';
 
 // Feste Konstante gemäß Vorgabe – kein Einstellungsfenster / keine dynamische Überschreibung
 export const STORAGE_BASE_URL = 'https://storage.j-jonas.com';
@@ -127,6 +128,12 @@ export async function listFiles(owner: string, relativePath = ''): Promise<{ ite
               : item.mime_type || item.content_type,
           path: itemPath,
           owner: owner || undefined,
+          metadata:
+            item.metadata && typeof item.metadata === 'object'
+              ? item.metadata
+              : item.description
+              ? { description: String(item.description) }
+              : undefined,
         };
       });
 
@@ -172,13 +179,15 @@ async function uploadSingleDirect(
   cleanPath: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
+    const safeFileName = sanitizeUploadFileName(file.name);
     const formData = new FormData();
     formData.append('user', owner);
     formData.append('path', cleanPath);
-    formData.append('file', file);
-    formData.append('files', file);
+    formData.append('file', file, safeFileName);
+    formData.append('files', file, safeFileName);
+    formData.append('fileName', safeFileName);
 
-    const uploadUrl = `${STORAGE_BASE_URL}/upload?user=${encodeURIComponent(owner)}&path=${encodeURIComponent(cleanPath)}`;
+    const uploadUrl = `${STORAGE_BASE_URL}/upload?user=${encodeURIComponent(owner)}&path=${encodeURIComponent(cleanPath)}&fileName=${encodeURIComponent(safeFileName)}`;
     const res = await fetch(uploadUrl, {
       method: 'POST',
       body: formData,
@@ -213,6 +222,7 @@ export async function uploadFileInChunks(
 ): Promise<{ success: boolean; error?: string }> {
   const cleanPath = relativePath.trim().replace(/^\/+|\/+$/g, '') || '.';
   const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
+  const safeFileName = sanitizeUploadFileName(file.name);
 
   for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
     const start = chunkIndex * CHUNK_SIZE;
@@ -222,15 +232,15 @@ export async function uploadFileInChunks(
     const formData = new FormData();
     formData.append('user', owner);
     formData.append('path', cleanPath);
-    formData.append('fileName', file.name);
+    formData.append('fileName', safeFileName);
     formData.append('chunkIndex', String(chunkIndex));
     formData.append('totalChunks', String(totalChunks));
-    formData.append('chunk', chunkBlob, file.name);
+    formData.append('chunk', chunkBlob, safeFileName);
 
     const queryParams = new URLSearchParams({
       user: owner,
       path: cleanPath,
-      fileName: file.name,
+      fileName: safeFileName,
       chunkIndex: String(chunkIndex),
       totalChunks: String(totalChunks),
     });
@@ -412,12 +422,11 @@ export function triggerDirectDownload(owner: string, filePath: string, filename:
   const cleanPath = filePath.trim().replace(/^\/+/, '');
   const username = (owner || getActiveUser()?.username || '').trim();
   const userParam = username ? `user=${encodeURIComponent(username)}&` : '';
-  const downloadUrl = `${STORAGE_BASE_URL}/download?${userParam}path=${encodeURIComponent(cleanPath)}&file=${encodeURIComponent(cleanPath)}`;
+  const downloadUrl = `${STORAGE_BASE_URL}/download?${userParam}path=${encodeURIComponent(cleanPath)}&download=true`;
 
   const a = document.createElement('a');
   a.href = downloadUrl;
-  a.download = filename || cleanPath.split('/').pop() || 'download';
-  a.target = '_blank';
+  a.setAttribute('download', filename || cleanPath.split('/').pop() || 'download');
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -577,22 +586,118 @@ export async function renameItem(
 }
 
 /**
- * GET /metadata?path=relativer/pfad/datei.ext
- * Erwartete Antwort: { description: "..." }
+ * POST /copy
+ * Body: { "user": "<username>", "sourcePath": "<relativer-quellpfad>", "destinationPath": "<relativer-zielpfad>" }
+ */
+export async function copyItem(
+  user: string,
+  sourcePath: string,
+  destinationPath: string
+): Promise<{ success: boolean; error?: string }> {
+  const cleanSource = sourcePath.trim().replace(/^\/+/, '');
+  const cleanDest = destinationPath.trim().replace(/^\/+/, '');
+  try {
+    const payload = {
+      user: user.trim(),
+      sourcePath: cleanSource,
+      destinationPath: cleanDest,
+      source_path: cleanSource,
+      destination_path: cleanDest,
+    };
+
+    const res = await fetch(`${STORAGE_BASE_URL}/copy`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (res.ok) {
+      return { success: true };
+    }
+
+    const errData = await res.json().catch(() => ({}));
+    return {
+      success: false,
+      error: errData.error || errData.message || `Kopieren fehlgeschlagen (${res.status})`,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err.message || 'Netzwerkfehler beim Kopieren.',
+    };
+  }
+}
+
+/**
+ * POST /move
+ * Body: { "user": "<username>", "sourcePath": "<relativer-quellpfad>", "destinationPath": "<relativer-zielpfad>" }
+ */
+export async function moveItem(
+  user: string,
+  sourcePath: string,
+  destinationPath: string
+): Promise<{ success: boolean; error?: string }> {
+  const cleanSource = sourcePath.trim().replace(/^\/+/, '');
+  const cleanDest = destinationPath.trim().replace(/^\/+/, '');
+  try {
+    const payload = {
+      user: user.trim(),
+      sourcePath: cleanSource,
+      destinationPath: cleanDest,
+      source_path: cleanSource,
+      destination_path: cleanDest,
+    };
+
+    const res = await fetch(`${STORAGE_BASE_URL}/move`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (res.ok) {
+      return { success: true };
+    }
+
+    const errData = await res.json().catch(() => ({}));
+    return {
+      success: false,
+      error: errData.error || errData.message || `Verschieben fehlgeschlagen (${res.status})`,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err.message || 'Netzwerkfehler beim Verschieben.',
+    };
+  }
+}
+
+/**
+ * GET /metadata?user=<owner>&path=relativer/pfad/datei.ext
+ * Erwartete Antwort: { metadata: { description: "..." } } oder { description: "..." }
  */
 export async function getFileMetadata(
-  relativePath: string
-): Promise<{ description: string; error?: string }> {
+  relativePath: string,
+  user?: string
+): Promise<{ description: string; metadata?: any; error?: string }> {
   const cleanPath = relativePath.trim().replace(/^\/+/, '');
+  const username = (user || getActiveUser()?.username || '').trim();
+  const userParam = username ? `user=${encodeURIComponent(username)}&` : '';
+
   try {
-    const res = await fetch(`${STORAGE_BASE_URL}/metadata?path=${encodeURIComponent(cleanPath)}`, {
+    const res = await fetch(`${STORAGE_BASE_URL}/metadata?${userParam}path=${encodeURIComponent(cleanPath)}`, {
       method: 'GET',
       headers: { Accept: 'application/json' },
     });
 
     if (res.ok) {
       const data = await res.json();
-      return { description: typeof data?.description === 'string' ? data.description : '' };
+      const desc =
+        typeof data?.metadata?.description === 'string'
+          ? data.metadata.description
+          : typeof data?.description === 'string'
+          ? data.description
+          : '';
+      return { description: desc, metadata: data?.metadata || data };
     }
     return { description: '' };
   } catch {
@@ -602,21 +707,38 @@ export async function getFileMetadata(
 
 /**
  * POST /set-metadata
- * JSON: { "path": "relativer/pfad/datei.ext", "description": "Text..." }
+ * Request-Body (JSON):
+ * {
+ *   "user": ownerOrUser,
+ *   "path": filePath,
+ *   "metadata": {
+ *     "description": "Hier steht die Beschreibung"
+ *   }
+ * }
  */
 export async function setFileMetadata(
   relativePath: string,
-  description: string
+  description: string,
+  user?: string
 ): Promise<{ success: boolean; error?: string }> {
   const cleanPath = relativePath.trim().replace(/^\/+/, '');
+  const username = (user || getActiveUser()?.username || '').trim();
+
   try {
+    const payload = {
+      user: username,
+      path: cleanPath,
+      metadata: {
+        description: description.trim(),
+      },
+      // Root-Feld zur zusätzlichen Kompatibilität
+      description: description.trim(),
+    };
+
     const res = await fetch(`${STORAGE_BASE_URL}/set-metadata`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        path: cleanPath,
-        description: description.trim(),
-      }),
+      body: JSON.stringify(payload),
     });
 
     if (res.ok) {
@@ -633,12 +755,21 @@ export async function setFileMetadata(
 }
 
 /**
- * Liefert die direkte öffentliche Download-/Stream-URL:
- * GET /public/{username}/{path}
+ * Liefert die direkte öffentliche Streaming-/Vorschau-URL:
+ * GET /stream?user={username}&path={encodedPath} bzw. /public/{username}/{encodedPath}
+ */
+export function getPublicStreamUrl(username: string, relativePath: string): string {
+  const cleanPath = relativePath.trim().replace(/^\/+/, '');
+  return `${STORAGE_BASE_URL}/stream?user=${encodeURIComponent(username)}&path=${encodeURIComponent(cleanPath)}`;
+}
+
+/**
+ * Liefert die direkte öffentliche Download-URL:
+ * GET /download?user={username}&path={encodedPath}&download=true
  */
 export function getPublicDownloadUrl(username: string, relativePath: string): string {
   const cleanPath = relativePath.trim().replace(/^\/+/, '');
-  return `${STORAGE_BASE_URL}/public/${encodeURIComponent(username)}/${cleanPath}`;
+  return `${STORAGE_BASE_URL}/download?user=${encodeURIComponent(username)}&path=${encodeURIComponent(cleanPath)}&download=true`;
 }
 
 /**

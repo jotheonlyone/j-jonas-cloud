@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { FolderPlus, Share2, X, User, AlertCircle, Plus, Trash2, Users, Loader2, WifiOff } from 'lucide-react';
+import { FolderPlus, Share2, X, User, AlertCircle, Plus, Trash2, Users, Loader2, WifiOff, AlertTriangle } from 'lucide-react';
 import { createFolderShare } from '../services/firebase';
 import { createFolder, checkServerStatus } from '../services/storageApi';
+import { validateItemName, filterNameInput } from '../utils/nameSanitizer';
 import { useToast } from './Toast';
 import type { UserAccount } from '../types';
 
@@ -22,21 +23,44 @@ export const NewFolderModal: React.FC<NewFolderModalProps> = ({
 }) => {
   const { addToast } = useToast();
   const [folderName, setFolderName] = useState('');
+  const [inputWarning, setInputWarning] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [serverOnline, setServerOnline] = useState<boolean | null>(null);
 
   useEffect(() => {
     if (isOpen) {
       setFolderName('');
+      setInputWarning(null);
       checkServerStatus().then(s => setServerOnline(s.isOnline)).catch(() => setServerOnline(false));
     }
   }, [isOpen]);
 
   if (!isOpen) return null;
 
+  const handleInputChange = (val: string) => {
+    const filtered = filterNameInput(val);
+    setFolderName(filtered.value);
+    if (filtered.hasError) {
+      setInputWarning(filtered.error || 'Ungültiges Zeichen blockiert.');
+    } else {
+      setInputWarning(null);
+    }
+  };
+
+  const validation = validateItemName(folderName);
+  const isSubmitDisabled =
+    isSubmitting ||
+    serverOnline === false ||
+    !folderName.trim() ||
+    !validation.valid ||
+    Boolean(inputWarning);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!folderName.trim()) return;
+    if (!validation.valid) {
+      setInputWarning(validation.error || 'Ungültiger Ordnername.');
+      return;
+    }
 
     setIsSubmitting(true);
     const status = await checkServerStatus();
@@ -90,10 +114,16 @@ export const NewFolderModal: React.FC<NewFolderModalProps> = ({
               required
               autoFocus
               value={folderName}
-              onChange={(e) => setFolderName(e.target.value)}
-              placeholder="Ordnername"
+              onChange={(e) => handleInputChange(e.target.value)}
+              placeholder="z. B. Meine Dokumente"
               className="w-full px-3.5 py-2 text-sm rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:outline-none focus:border-blue-500 focus:bg-white dark:focus:bg-gray-800"
             />
+            {inputWarning && (
+              <div className="mt-2 p-2 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/50 flex items-start gap-1.5 text-[11px] text-amber-700 dark:text-amber-300">
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-500" />
+                <span>{inputWarning}</span>
+              </div>
+            )}
             {currentPath && (
               <p className="text-[11px] text-gray-400 mt-1 font-mono">
                 Wird erstellt in: /{currentPath}
@@ -111,8 +141,8 @@ export const NewFolderModal: React.FC<NewFolderModalProps> = ({
             </button>
             <button
               type="submit"
-              disabled={isSubmitting || serverOnline === false || !folderName.trim()}
-              className="px-4 py-2 text-xs font-semibold rounded-xl bg-blue-600 hover:bg-blue-700 text-white shadow-xs transition-colors disabled:opacity-50 cursor-pointer"
+              disabled={isSubmitDisabled}
+              className="px-4 py-2 text-xs font-semibold rounded-xl bg-blue-600 hover:bg-blue-700 text-white shadow-xs transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
             >
               {isSubmitting ? 'Wird erstellt...' : 'Erstellen'}
             </button>
@@ -142,6 +172,7 @@ export const NewSharedFolderModal: React.FC<NewSharedFolderModalProps> = ({
 }) => {
   const { addToast } = useToast();
   const [folderName, setFolderName] = useState(existingFolderName || '');
+  const [folderWarning, setFolderWarning] = useState<string | null>(null);
   // Multi-user list: begins with one input field
   const [targetUsers, setTargetUsers] = useState<string[]>(['']);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -149,10 +180,21 @@ export const NewSharedFolderModal: React.FC<NewSharedFolderModalProps> = ({
   const [isServerOnline, setIsServerOnline] = useState<boolean | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
 
+  const handleFolderNameChange = (val: string) => {
+    const filtered = filterNameInput(val);
+    setFolderName(filtered.value);
+    if (filtered.hasError) {
+      setFolderWarning(filtered.error || 'Ungültiges Zeichen blockiert.');
+    } else {
+      setFolderWarning(null);
+    }
+  };
+
   // Reset and check server when opened
   useEffect(() => {
     if (isOpen) {
       setFolderName(existingFolderName || '');
+      setFolderWarning(null);
       setTargetUsers(['']);
       setErrorMsg('');
       setIsSubmitting(false);
@@ -337,10 +379,16 @@ export const NewSharedFolderModal: React.FC<NewSharedFolderModalProps> = ({
               required
               disabled={Boolean(existingFolderName)}
               value={folderName}
-              onChange={(e) => setFolderName(e.target.value)}
+              onChange={(e) => handleFolderNameChange(e.target.value)}
               placeholder="Ordnername"
               className="w-full px-3.5 py-2 text-sm rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:outline-none focus:border-blue-500 disabled:opacity-70"
             />
+            {folderWarning && (
+              <div className="mt-2 p-2 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/50 flex items-start gap-1.5 text-[11px] text-amber-700 dark:text-amber-300">
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-500" />
+                <span>{folderWarning}</span>
+              </div>
+            )}
           </div>
 
           <div>
@@ -410,8 +458,16 @@ export const NewSharedFolderModal: React.FC<NewSharedFolderModalProps> = ({
             </button>
             <button
               type="submit"
-              disabled={isSubmitting || isServerOnline === false || isServerChecking || !folderName.trim() || targetUsers.every(u => !u.trim())}
-              className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-xl bg-blue-600 hover:bg-blue-700 text-white shadow-xs transition-colors disabled:opacity-50 cursor-pointer"
+              disabled={
+                isSubmitting ||
+                isServerOnline === false ||
+                isServerChecking ||
+                !folderName.trim() ||
+                !validateItemName(folderName).valid ||
+                Boolean(folderWarning) ||
+                targetUsers.every((u) => !u.trim())
+              }
+              className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-xl bg-blue-600 hover:bg-blue-700 text-white shadow-xs transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
             >
               {isSubmitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
               <span>{isSubmitting ? 'Wird geprüft...' : 'Freigeben & Einladen'}</span>

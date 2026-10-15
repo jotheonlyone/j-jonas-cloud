@@ -18,7 +18,7 @@ import {
   ArrowLeft
 } from 'lucide-react';
 import { getActiveUser } from '../services/accountManager';
-import { getStreamUrl, triggerDirectDownload } from '../services/storageApi';
+import { getStreamUrl, triggerDirectDownload, getFileMetadata } from '../services/storageApi';
 import { isImageFile, isVideoFile, isPdfFile } from './MediaViewerModal';
 import { getSmallFileIcon } from './FileItem';
 
@@ -95,6 +95,17 @@ export const FileViewerPage: React.FC<FileViewerPageProps> = ({
 
   const { path, name, owner } = fileParams;
   const streamUrl = path ? getStreamUrl(path, owner) : '';
+
+  const [description, setDescription] = useState<string>('');
+  useEffect(() => {
+    if (path) {
+      getFileMetadata(path, owner)
+        .then((res) => {
+          if (res.description) setDescription(res.description);
+        })
+        .catch(() => {});
+    }
+  }, [path, owner]);
 
   const isImg = isImageFile({ name, type: 'file' } as any);
   const isVid = isVideoFile({ name, type: 'file' } as any);
@@ -317,6 +328,16 @@ export const FileViewerPage: React.FC<FileViewerPageProps> = ({
           </button>
         </div>
       </header>
+
+      {/* Description banner if metadata exists */}
+      {description && (
+        <div className="px-4 sm:px-6 py-2 bg-blue-50/90 dark:bg-blue-950/40 border-b border-blue-100 dark:border-blue-900/50 text-xs text-blue-950 dark:text-blue-200 flex items-center gap-2 shrink-0 z-20">
+          <span className="font-bold uppercase tracking-wider text-[10px] text-blue-600 dark:text-blue-400 shrink-0">
+            Beschreibung:
+          </span>
+          <span className="truncate">{description}</span>
+        </div>
+      )}
 
       {/* VIEWER CONTENT AREA */}
       <main className="flex-1 overflow-hidden relative flex items-center justify-center p-3 sm:p-6">

@@ -24,6 +24,7 @@ import {
 import type { FileItemData } from '../types';
 import {
   getPublicDownloadUrl,
+  getPublicStreamUrl,
   getPublicFolderFiles,
   getFileMetadata,
   formatBytes,
@@ -143,7 +144,12 @@ export const PublicShareView: React.FC<PublicShareViewProps> = ({
   }, [username, filePath]);
 
   const fileName = filePath.split('/').pop() || filePath || 'Freigegebene Datei';
-  const downloadUrl = username && filePath ? getPublicDownloadUrl(username, filePath) : '';
+  const cleanPath = filePath.trim().replace(/^\/+/, '');
+  const streamUrl = username && filePath ? getPublicStreamUrl(username, cleanPath) : '';
+  const downloadUrl = username && filePath ? getPublicDownloadUrl(username, cleanPath) : '';
+  const directPublicUrl = username && filePath
+    ? `${STORAGE_BASE_URL}/public/${encodeURIComponent(username)}/${encodeURIComponent(cleanPath)}`
+    : '';
 
   const ext = fileName.split('.').pop()?.toLowerCase() || '';
   const isVideo = ['mp4', 'webm', 'ogg', 'mov', 'mkv'].includes(ext);
@@ -155,12 +161,12 @@ export const PublicShareView: React.FC<PublicShareViewProps> = ({
   const handleDownload = (customPath?: string, customName?: string) => {
     const targetPath = customPath !== undefined ? customPath : filePath;
     const targetName = customName !== undefined ? customName : fileName;
-    const url = getPublicDownloadUrl(username, targetPath);
+    const cleanPath = targetPath.trim().replace(/^\/+/, '');
+    const url = `${STORAGE_BASE_URL}/download?user=${encodeURIComponent(username)}&path=${encodeURIComponent(cleanPath)}&download=true`;
 
     const a = document.createElement('a');
     a.href = url;
-    a.download = targetName;
-    a.target = '_blank';
+    a.setAttribute('download', targetName);
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -358,33 +364,57 @@ export const PublicShareView: React.FC<PublicShareViewProps> = ({
                 {isVideo && (
                   <div className="aspect-video w-full rounded-2xl overflow-hidden bg-black flex items-center justify-center shadow-lg">
                     <video
-                      src={downloadUrl}
+                      src={streamUrl}
                       controls
+                      playsInline
                       autoPlay
                       className="w-full h-full object-contain"
+                      onError={(e) => {
+                        const target = e.currentTarget;
+                        if (directPublicUrl && target.src !== directPublicUrl) {
+                          target.src = directPublicUrl;
+                        }
+                      }}
                     />
                   </div>
                 )}
 
                 {isAudio && (
                   <div className="p-4 bg-gray-900 rounded-2xl">
-                    <audio src={downloadUrl} controls autoPlay className="w-full" />
+                    <audio
+                      src={streamUrl}
+                      controls
+                      autoPlay
+                      className="w-full"
+                      onError={(e) => {
+                        const target = e.currentTarget;
+                        if (directPublicUrl && target.src !== directPublicUrl) {
+                          target.src = directPublicUrl;
+                        }
+                      }}
+                    />
                   </div>
                 )}
 
                 {isImage && (
                   <div className="max-h-[460px] rounded-2xl overflow-hidden flex items-center justify-center bg-black">
                     <img
-                      src={downloadUrl}
+                      src={streamUrl}
                       alt={fileName}
                       className="max-h-[460px] w-full object-contain rounded-2xl"
+                      onError={(e) => {
+                        const target = e.currentTarget;
+                        if (directPublicUrl && target.src !== directPublicUrl) {
+                          target.src = directPublicUrl;
+                        }
+                      }}
                     />
                   </div>
                 )}
 
                 {isPdf && (
                   <iframe
-                    src={downloadUrl}
+                    src={streamUrl}
                     title={fileName}
                     className="w-full h-96 rounded-2xl border-0 bg-white"
                   />

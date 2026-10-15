@@ -286,6 +286,16 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
           )}
         </div>
 
+        {/* File Description from metadata if present */}
+        {currentItem.metadata?.description && (
+          <div className="w-full mt-2 px-4 py-2.5 rounded-xl bg-gray-900/90 backdrop-blur-md border border-white/10 text-xs text-gray-200 z-20 shrink-0 max-h-24 overflow-y-auto">
+            <span className="text-[10px] uppercase font-bold text-blue-400 block mb-0.5">
+              Beschreibung
+            </span>
+            <p className="leading-relaxed whitespace-pre-wrap">{currentItem.metadata.description}</p>
+          </div>
+        )}
+
         {/* Bottom Hint Bar */}
         <div className="w-full flex items-center justify-between px-4 py-2 text-[11px] text-gray-400 bg-gray-900/60 backdrop-blur-md rounded-xl border border-white/5">
           <span>{currentItem.path || currentItem.name}</span>

@@ -1,14 +1,21 @@
 import React, { useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   FolderOpen,
   Eye,
   Download,
   Edit2,
   FileText,
-  Share2,
   Trash2,
   Link as LinkIcon,
-  ExternalLink
+  ExternalLink,
+  Copy,
+  Scissors,
+  Clipboard,
+  FolderPlus,
+  UploadCloud,
+  RefreshCw,
+  Share2,
 } from 'lucide-react';
 import type { FileItemData } from '../types';
 
@@ -16,6 +23,7 @@ export interface ContextMenuPosition {
   x: number;
   y: number;
   item: FileItemData;
+  triggerRect?: DOMRect;
 }
 
 interface ContextMenuProps {
@@ -28,6 +36,10 @@ interface ContextMenuProps {
   onMetadata: (item: FileItemData) => void;
   onPublicShare: (item: FileItemData) => void;
   onDelete: (item: FileItemData) => void;
+  onCopy?: (item: FileItemData) => void;
+  onCut?: (item: FileItemData) => void;
+  onShare?: (item: FileItemData) => void;
+  onManageShares?: (item: FileItemData) => void;
   isActionsDisabled?: boolean;
 }
 
@@ -41,6 +53,10 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
   onMetadata,
   onPublicShare,
   onDelete,
+  onCopy,
+  onCut,
+  onShare,
+  onManageShares,
   isActionsDisabled = false,
 }) => {
   const menuRef = useRef<HTMLDivElement>(null);
@@ -75,29 +91,54 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
     };
   }, [position, onClose]);
 
-  if (!position) return null;
+  if (!position || typeof document === 'undefined') return null;
 
-  const { x, y, item } = position;
+  const { x, y, item, triggerRect } = position;
 
-  // Viewport bounds detection
-  const menuWidth = 220;
-  const menuHeight = 260;
+  // Viewport-aware dynamic placement using fixed portal
+  const menuWidth = 240;
   const padding = 12;
 
-  const adjustedX = Math.min(
-    Math.max(padding, x),
-    (typeof window !== 'undefined' ? window.innerWidth : 800) - menuWidth - padding
-  );
-  const adjustedY = Math.min(
-    Math.max(padding, y),
-    (typeof window !== 'undefined' ? window.innerHeight : 600) - menuHeight - padding
-  );
+  const winWidth = typeof window !== 'undefined' ? window.innerWidth : 1024;
+  const winHeight = typeof window !== 'undefined' ? window.innerHeight : 768;
 
-  return (
+  const triggerTop = triggerRect ? triggerRect.top : y;
+  const triggerBottom = triggerRect ? triggerRect.bottom : y;
+  const spaceBelow = winHeight - triggerBottom - padding;
+  const spaceAbove = triggerTop - padding;
+
+  // If there's less than 380px below and more room above than below, flip upwards!
+  const flipUpward = spaceBelow < 380 && spaceAbove > spaceBelow;
+
+  const menuStyle: React.CSSProperties = {
+    position: 'fixed',
+    zIndex: 9999,
+    width: `${menuWidth}px`,
+  };
+
+  if (flipUpward) {
+    const bottomPos = winHeight - triggerTop + 6;
+    menuStyle.bottom = `${Math.max(padding, bottomPos)}px`;
+    menuStyle.maxHeight = `${Math.max(220, spaceAbove - 8)}px`;
+  } else {
+    const topPos = triggerBottom + 6;
+    menuStyle.top = `${Math.max(padding, topPos)}px`;
+    menuStyle.maxHeight = `${Math.max(220, spaceBelow - 8)}px`;
+  }
+
+  // Horizontal position: align to the right of trigger button if provided
+  let leftPos = x;
+  if (triggerRect) {
+    leftPos = triggerRect.right - menuWidth;
+  }
+  // Clamp inside screen bounds
+  menuStyle.left = `${Math.min(Math.max(padding, leftPos), winWidth - menuWidth - padding)}px`;
+
+  return createPortal(
     <div
       ref={menuRef}
-      style={{ left: `${adjustedX}px`, top: `${adjustedY}px` }}
-      className="fixed z-50 w-56 rounded-2xl bg-white/95 dark:bg-gray-900/95 backdrop-blur-md border border-gray-200/80 dark:border-gray-800 shadow-2xl py-1.5 text-xs text-gray-700 dark:text-gray-200 animate-in fade-in zoom-in-95 duration-100 select-none divide-y divide-gray-100 dark:divide-gray-800/80"
+      style={menuStyle}
+      className="fixed z-[9999] rounded-2xl bg-white/95 dark:bg-gray-900/95 backdrop-blur-md border border-gray-200/90 dark:border-gray-800 shadow-2xl py-1.5 text-xs text-gray-700 dark:text-gray-200 animate-in fade-in zoom-in-95 duration-100 select-none divide-y divide-gray-100 dark:divide-gray-800/80 overflow-y-auto"
     >
       {/* Header item summary */}
       <div className="px-3.5 py-2">
@@ -107,7 +148,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
         </p>
       </div>
 
-      {/* Primary Actions */}
+      {/* Primary Actions: Open & Download */}
       <div className="py-1">
         <button
           type="button"
@@ -115,12 +156,12 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
             onClose();
             onOpen(item);
           }}
-          className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-blue-50 dark:hover:bg-blue-950/40 hover:text-blue-600 dark:hover:text-blue-400 text-left transition-colors font-medium"
+          className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-blue-50 dark:hover:bg-blue-950/40 hover:text-blue-600 dark:hover:text-blue-400 text-left transition-colors font-medium cursor-pointer"
         >
           {item.type === 'folder' ? (
-            <FolderOpen className="w-4 h-4 text-amber-500" />
+            <FolderOpen className="w-4 h-4 text-amber-500 shrink-0" />
           ) : (
-            <Eye className="w-4 h-4 text-blue-500" />
+            <Eye className="w-4 h-4 text-blue-500 shrink-0" />
           )}
           <span>{item.type === 'folder' ? 'Öffnen' : 'Vorschau / Öffnen'}</span>
         </button>
@@ -134,7 +175,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
             }}
             className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-purple-50 dark:hover:bg-purple-950/40 hover:text-purple-600 dark:hover:text-purple-400 text-left transition-colors font-medium cursor-pointer"
           >
-            <ExternalLink className="w-4 h-4 text-purple-500" />
+            <ExternalLink className="w-4 h-4 text-purple-500 shrink-0" />
             <span>In neuem Tab öffnen</span>
           </button>
         )}
@@ -148,8 +189,46 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
             }}
             className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-800 text-left transition-colors font-medium cursor-pointer"
           >
-            <Download className="w-4 h-4 text-emerald-500" />
+            <Download className="w-4 h-4 text-emerald-500 shrink-0" />
             <span>Herunterladen</span>
+          </button>
+        )}
+      </div>
+
+      {/* Clipboard Actions: Copy & Cut */}
+      <div className="py-1">
+        {onCopy && (
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              onCopy(item);
+            }}
+            className="w-full flex items-center justify-between px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-800 text-left transition-colors font-medium cursor-pointer"
+          >
+            <div className="flex items-center gap-2.5">
+              <Copy className="w-4 h-4 text-blue-500 shrink-0" />
+              <span>Kopieren</span>
+            </div>
+            <span className="text-[10px] text-gray-400 font-mono">Strg+C</span>
+          </button>
+        )}
+
+        {onCut && (
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              onCut(item);
+            }}
+            disabled={isActionsDisabled}
+            className="w-full flex items-center justify-between px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-800 text-left transition-colors font-medium disabled:opacity-50 cursor-pointer"
+          >
+            <div className="flex items-center gap-2.5">
+              <Scissors className="w-4 h-4 text-amber-500 shrink-0" />
+              <span>Ausschneiden</span>
+            </div>
+            <span className="text-[10px] text-gray-400 font-mono">Strg+X</span>
           </button>
         )}
       </div>
@@ -163,9 +242,9 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
             onRename(item);
           }}
           disabled={isActionsDisabled}
-          className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-800 text-left transition-colors font-medium disabled:opacity-50"
+          className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-800 text-left transition-colors font-medium disabled:opacity-50 cursor-pointer"
         >
-          <Edit2 className="w-4 h-4 text-indigo-500" />
+          <Edit2 className="w-4 h-4 text-indigo-500 shrink-0" />
           <span>Umbenennen</span>
         </button>
 
@@ -176,12 +255,46 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
             onMetadata(item);
           }}
           disabled={isActionsDisabled}
-          className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-800 text-left transition-colors font-medium disabled:opacity-50"
+          className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-800 text-left transition-colors font-medium disabled:opacity-50 cursor-pointer"
         >
-          <FileText className="w-4 h-4 text-teal-500" />
+          <FileText className="w-4 h-4 text-teal-500 shrink-0" />
           <span>Details / Beschreibung</span>
         </button>
       </div>
+
+      {/* Folder Share Actions (if folder) */}
+      {item.type === 'folder' && (onShare || onManageShares) && (
+        <div className="py-1">
+          {onShare && (
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                onShare(item);
+              }}
+              disabled={isActionsDisabled}
+              className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 text-left transition-colors font-medium disabled:opacity-50 cursor-pointer"
+            >
+              <Share2 className="w-4 h-4 text-emerald-500 shrink-0" />
+              <span>Ordner teilen</span>
+            </button>
+          )}
+
+          {onManageShares && (
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                onManageShares(item);
+              }}
+              className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-blue-50 dark:hover:bg-blue-950/40 text-blue-600 dark:text-blue-400 text-left transition-colors font-medium cursor-pointer"
+            >
+              <Share2 className="w-4 h-4 text-blue-500 shrink-0" />
+              <span>Freigaben verwalten</span>
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Sharing & Delete Actions */}
       <div className="py-1">
@@ -191,9 +304,9 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
             onClose();
             onPublicShare(item);
           }}
-          className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 hover:text-emerald-600 dark:hover:text-emerald-400 text-left transition-colors font-medium"
+          className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 hover:text-emerald-600 dark:hover:text-emerald-400 text-left transition-colors font-medium cursor-pointer"
         >
-          <LinkIcon className="w-4 h-4 text-emerald-500" />
+          <LinkIcon className="w-4 h-4 text-emerald-500 shrink-0" />
           <span>Öffentlichen Link teilen</span>
         </button>
 
@@ -204,12 +317,183 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
             onDelete(item);
           }}
           disabled={isActionsDisabled}
-          className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-red-50 dark:hover:bg-red-950/40 text-red-600 dark:text-red-400 text-left transition-colors font-medium disabled:opacity-50"
+          className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-red-50 dark:hover:bg-red-950/40 text-red-600 dark:text-red-400 text-left transition-colors font-medium disabled:opacity-50 cursor-pointer"
         >
-          <Trash2 className="w-4 h-4 text-red-500" />
+          <Trash2 className="w-4 h-4 text-red-500 shrink-0" />
           <span>Löschen</span>
         </button>
       </div>
-    </div>
+    </div>,
+    document.body
+  );
+};
+
+// -------------------------------------------------------------
+// EMPTY AREA CONTEXT MENU (Rechtsklick ins Leere)
+// -------------------------------------------------------------
+export interface EmptyAreaContextMenuProps {
+  position: { x: number; y: number } | null;
+  onClose: () => void;
+  onPaste: () => void;
+  canPaste: boolean;
+  clipboardItemName?: string;
+  clipboardAction?: 'copy' | 'cut';
+  onNewFolder: () => void;
+  onUploadClick: () => void;
+  onRefresh: () => void;
+  isActionsDisabled?: boolean;
+}
+
+export const EmptyAreaContextMenu: React.FC<EmptyAreaContextMenuProps> = ({
+  position,
+  onClose,
+  onPaste,
+  canPaste,
+  clipboardItemName,
+  clipboardAction,
+  onNewFolder,
+  onUploadClick,
+  onRefresh,
+  isActionsDisabled = false,
+}) => {
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!position) return;
+
+    const handleOutsideClick = (e: MouseEvent | TouchEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        onClose();
+      }
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+
+    const handleScroll = () => {
+      onClose();
+    };
+
+    document.addEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('touchstart', handleOutsideClick);
+    document.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('scroll', handleScroll, true);
+
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+      document.removeEventListener('touchstart', handleOutsideClick);
+      document.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('scroll', handleScroll, true);
+    };
+  }, [position, onClose]);
+
+  if (!position || typeof document === 'undefined') return null;
+
+  const { x, y } = position;
+  const menuWidth = 240;
+  const padding = 12;
+
+  const winWidth = typeof window !== 'undefined' ? window.innerWidth : 1024;
+  const winHeight = typeof window !== 'undefined' ? window.innerHeight : 768;
+
+  const spaceBelow = winHeight - y - padding;
+  const spaceAbove = y - padding;
+
+  const flipUpward = spaceBelow < 220 && spaceAbove > spaceBelow;
+
+  const menuStyle: React.CSSProperties = {
+    position: 'fixed',
+    zIndex: 9999,
+    width: `${menuWidth}px`,
+  };
+
+  if (flipUpward) {
+    const bottomPos = winHeight - y + 6;
+    menuStyle.bottom = `${Math.max(padding, bottomPos)}px`;
+    menuStyle.maxHeight = `${Math.max(160, spaceAbove - 8)}px`;
+  } else {
+    menuStyle.top = `${Math.max(padding, y + 6)}px`;
+    menuStyle.maxHeight = `${Math.max(160, spaceBelow - 8)}px`;
+  }
+
+  menuStyle.left = `${Math.min(Math.max(padding, x), winWidth - menuWidth - padding)}px`;
+
+  return createPortal(
+    <div
+      ref={menuRef}
+      style={menuStyle}
+      className="fixed z-[9999] rounded-2xl bg-white/95 dark:bg-gray-900/95 backdrop-blur-md border border-gray-200/90 dark:border-gray-800 shadow-2xl py-1.5 text-xs text-gray-700 dark:text-gray-200 animate-in fade-in zoom-in-95 duration-100 select-none divide-y divide-gray-100 dark:divide-gray-800/80 overflow-y-auto"
+    >
+      <div className="py-1">
+        <button
+          type="button"
+          onClick={() => {
+            if (canPaste && !isActionsDisabled) {
+              onClose();
+              onPaste();
+            }
+          }}
+          disabled={!canPaste || isActionsDisabled}
+          className={`w-full flex items-center justify-between px-3 py-2 text-left transition-colors font-medium ${
+            canPaste && !isActionsDisabled
+              ? 'hover:bg-blue-50 dark:hover:bg-blue-950/40 hover:text-blue-600 dark:hover:text-blue-400 cursor-pointer'
+              : 'opacity-40 cursor-not-allowed text-gray-400'
+          }`}
+        >
+          <div className="flex items-center gap-2.5 truncate">
+            <Clipboard className="w-4 h-4 text-blue-500 shrink-0" />
+            <span className="truncate">
+              Einfügen
+              {clipboardItemName ? ` (${clipboardItemName})` : ''}
+            </span>
+          </div>
+          <span className="text-[10px] text-gray-400 font-mono ml-2 shrink-0">Strg+V</span>
+        </button>
+      </div>
+
+      <div className="py-1">
+        <button
+          type="button"
+          onClick={() => {
+            onClose();
+            onNewFolder();
+          }}
+          disabled={isActionsDisabled}
+          className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-800 text-left transition-colors font-medium disabled:opacity-50 cursor-pointer"
+        >
+          <FolderPlus className="w-4 h-4 text-amber-500 shrink-0" />
+          <span>Neuer Ordner</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            onClose();
+            onUploadClick();
+          }}
+          disabled={isActionsDisabled}
+          className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-800 text-left transition-colors font-medium disabled:opacity-50 cursor-pointer"
+        >
+          <UploadCloud className="w-4 h-4 text-blue-500 shrink-0" />
+          <span>Dateien hochladen</span>
+        </button>
+      </div>
+
+      <div className="py-1">
+        <button
+          type="button"
+          onClick={() => {
+            onClose();
+            onRefresh();
+          }}
+          className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-800 text-left transition-colors font-medium cursor-pointer"
+        >
+          <RefreshCw className="w-4 h-4 text-gray-500 shrink-0" />
+          <span>Aktualisieren</span>
+        </button>
+      </div>
+    </div>,
+    document.body
   );
 };

@@ -29,10 +29,12 @@ interface FileItemProps {
   onRename?: (item: FileItemData) => void;
   onShare?: (item: FileItemData) => void;
   onManageShares?: (item: FileItemData) => void;
-  onContextMenu?: (item: FileItemData, x: number, y: number) => void;
+  onContextMenu?: (item: FileItemData, x: number, y: number, triggerRect?: DOMRect) => void;
   onMetadata?: (item: FileItemData) => void;
   onPublicShare?: (item: FileItemData) => void;
   isActionsDisabled?: boolean;
+  isSelected?: boolean;
+  isCut?: boolean;
 }
 
 export function getFileIcon(item: FileItemData) {
@@ -103,25 +105,15 @@ export const FileItem: React.FC<FileItemProps> = ({
   onMetadata,
   onPublicShare,
   isActionsDisabled = false,
+  isSelected = false,
+  isCut = false,
 }) => {
-  const [menuOpen, setMenuOpen] = useState(false);
   const [imgError, setImgError] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
 
   // Mobile Long-Press Detection
   const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
   const touchStartPosRef = useRef<{ x: number; y: number } | null>(null);
   const isLongPressTriggeredRef = useRef(false);
-
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        setMenuOpen(false);
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
 
   const formatDate = (isoString: string) => {
     try {
@@ -203,7 +195,11 @@ export const FileItem: React.FC<FileItemProps> = ({
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
-        className="group relative flex flex-col justify-between p-3 rounded-2xl bg-white dark:bg-gray-800 border border-gray-200/80 dark:border-gray-700 hover:border-blue-400 dark:hover:border-blue-500 hover:shadow-md transition-all cursor-pointer select-none"
+        className={`group relative flex flex-col justify-between p-3 rounded-2xl bg-white dark:bg-gray-800 border ${
+          isSelected
+            ? 'border-blue-500 ring-2 ring-blue-500/40 bg-blue-50/20 dark:bg-blue-950/20'
+            : 'border-gray-200/80 dark:border-gray-700 hover:border-blue-400 dark:hover:border-blue-500 hover:shadow-md'
+        } ${isCut ? 'opacity-50' : ''} transition-all cursor-pointer select-none`}
       >
         {/* Top bar in card: Thumbnail / Icon + Context menu */}
         <div className="flex items-start justify-between gap-2">
@@ -237,105 +233,22 @@ export const FileItem: React.FC<FileItemProps> = ({
               </span>
             )}
 
-            {/* Context Menu Button */}
-            <div className="relative" ref={menuRef}>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (onContextMenu) {
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    onContextMenu(item, rect.left, rect.bottom + 4);
-                  } else {
-                    setMenuOpen(!menuOpen);
-                  }
-                }}
-                className="p-1 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 opacity-80 group-hover:opacity-100 transition-opacity"
-                aria-label="Optionen"
-              >
-                <MoreVertical className="w-4 h-4" />
-              </button>
-
-              {menuOpen && (
-                <div className="absolute right-0 top-full mt-1 w-44 rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-xl py-1.5 z-30 animate-in fade-in zoom-in-95 duration-100">
-                  {item.type === 'file' && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setMenuOpen(false);
-                        onDownload(item);
-                      }}
-                      className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 text-left transition-colors"
-                    >
-                      <Download className="w-3.5 h-3.5 text-blue-500" />
-                      <span>Herunterladen</span>
-                    </button>
-                  )}
-
-                  {onRename && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setMenuOpen(false);
-                        onRename(item);
-                      }}
-                      disabled={isActionsDisabled}
-                      className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 text-left transition-colors disabled:opacity-50"
-                    >
-                      <Edit2 className="w-3.5 h-3.5 text-gray-500" />
-                      <span>Umbenennen</span>
-                    </button>
-                  )}
-
-                  {item.type === 'folder' && onShare && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setMenuOpen(false);
-                        onShare(item);
-                      }}
-                      disabled={isActionsDisabled}
-                      className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 text-left transition-colors disabled:opacity-50"
-                    >
-                      <Share2 className="w-3.5 h-3.5 text-emerald-500" />
-                      <span>Ordner teilen</span>
-                    </button>
-                  )}
-
-                  {item.type === 'folder' && onManageShares && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setMenuOpen(false);
-                        onManageShares(item);
-                      }}
-                      className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 text-left transition-colors"
-                    >
-                      <Share2 className="w-3.5 h-3.5 text-blue-500" />
-                      <span>Freigaben verwalten</span>
-                    </button>
-                  )}
-
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setMenuOpen(false);
-                      onDelete(item);
-                    }}
-                    disabled={isActionsDisabled}
-                    className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 text-left transition-colors disabled:opacity-50"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    <span>Löschen</span>
-                  </button>
-                </div>
-              )}
-            </div>
+            {/* Context Menu Button (Triggers Portal-based ContextMenu) */}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (onContextMenu) {
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  onContextMenu(item, rect.left, rect.bottom + 4, rect);
+                }
+              }}
+              className="p-1 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 opacity-80 group-hover:opacity-100 transition-opacity cursor-pointer"
+              aria-label="Optionen"
+              title="Optionen"
+            >
+              <MoreVertical className="w-4 h-4" />
+            </button>
           </div>
         </div>
 
@@ -344,10 +257,15 @@ export const FileItem: React.FC<FileItemProps> = ({
           <div className="min-w-0 flex-1">
             <h4
               className="text-xs sm:text-sm font-semibold text-gray-800 dark:text-gray-100 truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors"
-              title={item.name}
+              title={item.metadata?.description ? `${item.name} (${item.metadata.description})` : item.name}
             >
               {item.name}
             </h4>
+            {item.metadata?.description && (
+              <p className="text-[11px] text-gray-400 dark:text-gray-500 truncate mt-0.5" title={item.metadata.description}>
+                {item.metadata.description}
+              </p>
+            )}
             <div className="flex items-center gap-2 mt-1 text-[11px] text-gray-500 dark:text-gray-400 font-mono tabular-nums">
               <span>{item.type === 'folder' ? 'Ordner' : formatBytes(item.size)}</span>
               <span>·</span>
@@ -379,7 +297,11 @@ export const FileItem: React.FC<FileItemProps> = ({
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
-      className="group flex items-center justify-between px-3.5 py-2.5 rounded-xl border border-transparent hover:border-gray-200 dark:hover:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800/60 transition-all cursor-pointer select-none"
+      className={`group flex items-center justify-between px-3.5 py-2.5 rounded-xl border ${
+        isSelected
+          ? 'border-blue-500 ring-2 ring-blue-500/40 bg-blue-50/20 dark:bg-blue-950/20'
+          : 'border-transparent hover:border-gray-200 dark:hover:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800/60'
+      } ${isCut ? 'opacity-50' : ''} transition-all cursor-pointer select-none`}
     >
       <div className="flex items-center gap-3 flex-1 min-w-0 pr-4">
         {/* Thumbnail in list view for images, otherwise small icon */}
@@ -397,12 +319,19 @@ export const FileItem: React.FC<FileItemProps> = ({
           getSmallFileIcon(item)
         )}
 
-        <span
-          className="text-xs sm:text-sm font-semibold text-gray-800 dark:text-gray-200 truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors"
-          title={item.name}
-        >
-          {item.name}
-        </span>
+        <div className="flex flex-col min-w-0 flex-1">
+          <span
+            className="text-xs sm:text-sm font-semibold text-gray-800 dark:text-gray-200 truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors"
+            title={item.metadata?.description ? `${item.name} (${item.metadata.description})` : item.name}
+          >
+            {item.name}
+          </span>
+          {item.metadata?.description && (
+            <span className="text-[10px] text-gray-400 dark:text-gray-500 truncate" title={item.metadata.description}>
+              {item.metadata.description}
+            </span>
+          )}
+        </div>
 
         {/* Badges */}
         {isVid && (
@@ -438,105 +367,22 @@ export const FileItem: React.FC<FileItemProps> = ({
           </button>
         )}
 
-        {/* Row Context Menu */}
-        <div className="relative" ref={menuRef}>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              if (onContextMenu) {
-                const rect = e.currentTarget.getBoundingClientRect();
-                onContextMenu(item, rect.left, rect.bottom + 4);
-              } else {
-                setMenuOpen(!menuOpen);
-              }
-            }}
-            className="p-1 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-200/50 dark:hover:bg-gray-700 transition-colors"
-            aria-label="Optionen"
-          >
-            <MoreVertical className="w-4 h-4" />
-          </button>
-
-          {menuOpen && (
-            <div className="absolute right-0 top-full mt-1 w-44 rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-xl py-1.5 z-30 animate-in fade-in zoom-in-95 duration-100">
-              {item.type === 'file' && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setMenuOpen(false);
-                    onDownload(item);
-                  }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 text-left transition-colors"
-                >
-                  <Download className="w-3.5 h-3.5 text-blue-500" />
-                  <span>Herunterladen</span>
-                </button>
-              )}
-
-              {onRename && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setMenuOpen(false);
-                    onRename(item);
-                  }}
-                  disabled={isActionsDisabled}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 text-left transition-colors disabled:opacity-50"
-                >
-                  <Edit2 className="w-3.5 h-3.5 text-gray-500" />
-                  <span>Umbenennen</span>
-                </button>
-              )}
-
-              {item.type === 'folder' && onShare && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setMenuOpen(false);
-                    onShare(item);
-                  }}
-                  disabled={isActionsDisabled}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 text-left transition-colors disabled:opacity-50"
-                >
-                  <Share2 className="w-3.5 h-3.5 text-emerald-500" />
-                  <span>Ordner teilen</span>
-                </button>
-              )}
-
-              {item.type === 'folder' && onManageShares && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setMenuOpen(false);
-                    onManageShares(item);
-                  }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 text-left transition-colors"
-                >
-                  <Share2 className="w-3.5 h-3.5 text-blue-500" />
-                  <span>Freigaben verwalten</span>
-                </button>
-              )}
-
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setMenuOpen(false);
-                  onDelete(item);
-                }}
-                disabled={isActionsDisabled}
-                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 text-left transition-colors disabled:opacity-50"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                <span>Löschen</span>
-              </button>
-            </div>
-          )}
-        </div>
+        {/* Row Context Menu Button (Triggers Portal-based ContextMenu) */}
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            if (onContextMenu) {
+              const rect = e.currentTarget.getBoundingClientRect();
+              onContextMenu(item, rect.left, rect.bottom + 4, rect);
+            }
+          }}
+          className="p-1 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-200/50 dark:hover:bg-gray-700 transition-colors cursor-pointer"
+          aria-label="Optionen"
+          title="Optionen"
+        >
+          <MoreVertical className="w-4 h-4" />
+        </button>
       </div>
     </div>
   );

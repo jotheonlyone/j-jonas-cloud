@@ -1,16 +1,16 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   UploadCloud,
   FolderPlus,
   RefreshCw,
   FolderOpen,
   ArrowUp,
-  AlertCircle
+  AlertCircle,
 } from 'lucide-react';
 import type { FileItemData, ViewMode } from '../types';
 import { Breadcrumbs } from './Breadcrumbs';
 import { FileItem } from './FileItem';
-import { ContextMenu, type ContextMenuPosition } from './ContextMenu';
+import { ContextMenu, EmptyAreaContextMenu, type ContextMenuPosition } from './ContextMenu';
 
 interface FileExplorerProps {
   currentPath: string;
@@ -35,6 +35,11 @@ interface FileExplorerProps {
   isActionsDisabled?: boolean;
   rootLabel?: string;
   isSharedContext?: boolean;
+  clipboard?: { action: 'copy' | 'cut'; item: FileItemData; sourcePath: string } | null;
+  onCopyItem?: (item: FileItemData) => void;
+  onCutItem?: (item: FileItemData) => void;
+  onPaste?: () => void;
+  onUploadClick?: () => void;
 }
 
 export const FileExplorer: React.FC<FileExplorerProps> = ({
@@ -60,9 +65,43 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
   isActionsDisabled = false,
   rootLabel = 'Meine Ablage',
   isSharedContext = false,
+  clipboard = null,
+  onCopyItem,
+  onCutItem,
+  onPaste,
+  onUploadClick,
 }) => {
   const [isDraggingOver, setIsDraggingOver] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuPosition | null>(null);
+  const [emptyContextMenu, setEmptyContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [selectedItem, setSelectedItem] = useState<FileItemData | null>(null);
+
+  // Keyboard Shortcuts: Strg+C (Kopieren), Strg+X (Ausschneiden), Strg+V (Einfügen)
+  useEffect(() => {
+    const handleExplorerKeyDown = (e: KeyboardEvent) => {
+      // Ignore when user is typing inside an input or textarea
+      const isInput =
+        document.activeElement?.tagName === 'INPUT' ||
+        document.activeElement?.tagName === 'TEXTAREA';
+      if (isInput) return;
+
+      if (e.ctrlKey || e.metaKey) {
+        if ((e.key === 'c' || e.key === 'C') && selectedItem && onCopyItem) {
+          e.preventDefault();
+          onCopyItem(selectedItem);
+        } else if ((e.key === 'x' || e.key === 'X') && selectedItem && onCutItem && !isActionsDisabled) {
+          e.preventDefault();
+          onCutItem(selectedItem);
+        } else if ((e.key === 'v' || e.key === 'V') && clipboard && onPaste && !isActionsDisabled) {
+          e.preventDefault();
+          onPaste();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleExplorerKeyDown);
+    return () => window.removeEventListener('keydown', handleExplorerKeyDown);
+  }, [selectedItem, clipboard, onCopyItem, onCutItem, onPaste, isActionsDisabled]);
 
   // Filter items by search
   const filteredItems = items.filter((item) =>
@@ -104,6 +143,25 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
+      onClick={(e) => {
+        const target = e.target as HTMLElement;
+        if (!target.closest('[data-file-item="true"]')) {
+          setSelectedItem(null);
+        }
+      }}
+      onContextMenu={(e) => {
+        // If clicking on empty space (not a file item, button or input)
+        const target = e.target as HTMLElement;
+        const isItem =
+          target.closest('[data-file-item="true"]') ||
+          target.closest('button') ||
+          target.closest('input');
+        if (!isItem) {
+          e.preventDefault();
+          setContextMenu(null);
+          setEmptyContextMenu({ x: e.clientX, y: e.clientY });
+        }
+      }}
       className={`relative flex-1 flex flex-col h-full bg-white dark:bg-gray-900 rounded-2xl shadow-xs border border-gray-200 dark:border-gray-800 p-4 sm:p-6 transition-colors overflow-hidden ${
         isDraggingOver ? 'ring-2 ring-blue-500 ring-inset bg-blue-50/20 dark:bg-blue-950/20' : ''
       }`}
@@ -114,7 +172,7 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
           {currentPath && (
             <button
               onClick={navigateUp}
-              className="p-1.5 rounded-full text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+              className="p-1.5 rounded-full text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors cursor-pointer"
               title="Übergeordneter Ordner"
             >
               <ArrowUp className="w-4 h-4" />
@@ -130,7 +188,7 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
         <div className="flex items-center gap-2">
           <button
             onClick={onRefresh}
-            className="p-1.5 rounded-full text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+            className="p-1.5 rounded-full text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors cursor-pointer"
             title="Aktualisieren"
           >
             <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin text-blue-600' : ''}`} />
@@ -174,12 +232,8 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
             </div>
           </div>
         ) : filteredItems.length === 0 ? (
-          // EXACT EMPTY STATE PER USER SPECIFICATION:
-          // Dezentes Google-Drive-ähnliches Icon,
-          // Überschrift "Hier sind noch keine Dateien vorhanden"
-          // Untertitel "Klicke auf '+ Neu', um deine ersten Dateien oder Ordner hochzuladen."
+          // Empty State
           <div className="h-full min-h-[380px] flex flex-col items-center justify-center text-center p-8 select-none">
-            {/* Subtle Google Drive Folder Icon */}
             <div className="w-24 h-24 rounded-full bg-blue-50/80 dark:bg-blue-950/40 text-blue-500 dark:text-blue-400 flex items-center justify-center mb-5 shadow-xs">
               <svg
                 className="w-12 h-12 stroke-[1.4]"
@@ -208,7 +262,7 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
               <div className="flex items-center gap-3 mt-6">
                 <button
                   onClick={onNewFolder}
-                  className="flex items-center gap-2 px-4 py-2 rounded-full text-xs sm:text-sm font-semibold bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-800 dark:text-gray-200 transition-all shadow-xs"
+                  className="flex items-center gap-2 px-4 py-2 rounded-full text-xs sm:text-sm font-semibold bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-800 dark:text-gray-200 transition-all shadow-xs cursor-pointer"
                 >
                   <FolderPlus className="w-4 h-4 text-amber-500" />
                   <span>Neuer Ordner</span>
@@ -243,41 +297,69 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
                 {viewMode === 'grid' ? (
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
                     {folders.map((item) => (
-                      <FileItem
+                      <div
                         key={item.name}
-                        item={item}
-                        viewMode="grid"
-                        onOpen={onOpenFile}
-                        onDownload={onDownloadFile}
-                        onDelete={onDeleteItem}
-                        onRename={onRenameItem}
-                        onShare={onShareFolder}
-                        onManageShares={onManageShares}
-                        onContextMenu={(it, x, y) => setContextMenu({ item: it, x, y })}
-                        onMetadata={onMetadataItem}
-                        onPublicShare={onPublicShareItem}
-                        isActionsDisabled={isActionsDisabled}
-                      />
+                        data-file-item="true"
+                        onClick={() => setSelectedItem(item)}
+                      >
+                        <FileItem
+                          item={item}
+                          viewMode="grid"
+                          isSelected={selectedItem?.name === item.name}
+                          isCut={clipboard?.action === 'cut' && clipboard?.item.name === item.name}
+                          onOpen={(it) => {
+                            setSelectedItem(it);
+                            onOpenFile(it);
+                          }}
+                          onDownload={onDownloadFile}
+                          onDelete={onDeleteItem}
+                          onRename={onRenameItem}
+                          onShare={onShareFolder}
+                          onManageShares={onManageShares}
+                          onContextMenu={(it, x, y, rect) => {
+                            setSelectedItem(it);
+                            setEmptyContextMenu(null);
+                            setContextMenu({ item: it, x, y, triggerRect: rect });
+                          }}
+                          onMetadata={onMetadataItem}
+                          onPublicShare={onPublicShareItem}
+                          isActionsDisabled={isActionsDisabled}
+                        />
+                      </div>
                     ))}
                   </div>
                 ) : (
                   <div className="space-y-1">
                     {folders.map((item) => (
-                      <FileItem
+                      <div
                         key={item.name}
-                        item={item}
-                        viewMode="list"
-                        onOpen={onOpenFile}
-                        onDownload={onDownloadFile}
-                        onDelete={onDeleteItem}
-                        onRename={onRenameItem}
-                        onShare={onShareFolder}
-                        onManageShares={onManageShares}
-                        onContextMenu={(it, x, y) => setContextMenu({ item: it, x, y })}
-                        onMetadata={onMetadataItem}
-                        onPublicShare={onPublicShareItem}
-                        isActionsDisabled={isActionsDisabled}
-                      />
+                        data-file-item="true"
+                        onClick={() => setSelectedItem(item)}
+                      >
+                        <FileItem
+                          item={item}
+                          viewMode="list"
+                          isSelected={selectedItem?.name === item.name}
+                          isCut={clipboard?.action === 'cut' && clipboard?.item.name === item.name}
+                          onOpen={(it) => {
+                            setSelectedItem(it);
+                            onOpenFile(it);
+                          }}
+                          onDownload={onDownloadFile}
+                          onDelete={onDeleteItem}
+                          onRename={onRenameItem}
+                          onShare={onShareFolder}
+                          onManageShares={onManageShares}
+                          onContextMenu={(it, x, y, rect) => {
+                            setSelectedItem(it);
+                            setEmptyContextMenu(null);
+                            setContextMenu({ item: it, x, y, triggerRect: rect });
+                          }}
+                          onMetadata={onMetadataItem}
+                          onPublicShare={onPublicShareItem}
+                          isActionsDisabled={isActionsDisabled}
+                        />
+                      </div>
                     ))}
                   </div>
                 )}
@@ -294,19 +376,33 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
                 {viewMode === 'grid' ? (
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
                     {files.map((item) => (
-                      <FileItem
+                      <div
                         key={item.name}
-                        item={item}
-                        viewMode="grid"
-                        onOpen={onOpenFile}
-                        onDownload={onDownloadFile}
-                        onDelete={onDeleteItem}
-                        onRename={onRenameItem}
-                        onContextMenu={(it, x, y) => setContextMenu({ item: it, x, y })}
-                        onMetadata={onMetadataItem}
-                        onPublicShare={onPublicShareItem}
-                        isActionsDisabled={isActionsDisabled}
-                      />
+                        data-file-item="true"
+                        onClick={() => setSelectedItem(item)}
+                      >
+                        <FileItem
+                          item={item}
+                          viewMode="grid"
+                          isSelected={selectedItem?.name === item.name}
+                          isCut={clipboard?.action === 'cut' && clipboard?.item.name === item.name}
+                          onOpen={(it) => {
+                            setSelectedItem(it);
+                            onOpenFile(it);
+                          }}
+                          onDownload={onDownloadFile}
+                          onDelete={onDeleteItem}
+                          onRename={onRenameItem}
+                          onContextMenu={(it, x, y, rect) => {
+                            setSelectedItem(it);
+                            setEmptyContextMenu(null);
+                            setContextMenu({ item: it, x, y, triggerRect: rect });
+                          }}
+                          onMetadata={onMetadataItem}
+                          onPublicShare={onPublicShareItem}
+                          isActionsDisabled={isActionsDisabled}
+                        />
+                      </div>
                     ))}
                   </div>
                 ) : (
@@ -321,19 +417,33 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
                     </div>
 
                     {files.map((item) => (
-                      <FileItem
+                      <div
                         key={item.name}
-                        item={item}
-                        viewMode="list"
-                        onOpen={onOpenFile}
-                        onDownload={onDownloadFile}
-                        onDelete={onDeleteItem}
-                        onRename={onRenameItem}
-                        onContextMenu={(it, x, y) => setContextMenu({ item: it, x, y })}
-                        onMetadata={onMetadataItem}
-                        onPublicShare={onPublicShareItem}
-                        isActionsDisabled={isActionsDisabled}
-                      />
+                        data-file-item="true"
+                        onClick={() => setSelectedItem(item)}
+                      >
+                        <FileItem
+                          item={item}
+                          viewMode="list"
+                          isSelected={selectedItem?.name === item.name}
+                          isCut={clipboard?.action === 'cut' && clipboard?.item.name === item.name}
+                          onOpen={(it) => {
+                            setSelectedItem(it);
+                            onOpenFile(it);
+                          }}
+                          onDownload={onDownloadFile}
+                          onDelete={onDeleteItem}
+                          onRename={onRenameItem}
+                          onContextMenu={(it, x, y, rect) => {
+                            setSelectedItem(it);
+                            setEmptyContextMenu(null);
+                            setContextMenu({ item: it, x, y, triggerRect: rect });
+                          }}
+                          onMetadata={onMetadataItem}
+                          onPublicShare={onPublicShareItem}
+                          isActionsDisabled={isActionsDisabled}
+                        />
+                      </div>
                     ))}
                   </div>
                 )}
@@ -343,7 +453,7 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
         )}
       </div>
 
-      {/* Custom Context Menu */}
+      {/* Custom Context Menu for Items */}
       <ContextMenu
         position={contextMenu}
         onClose={() => setContextMenu(null)}
@@ -354,6 +464,24 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
         onMetadata={(it) => onMetadataItem?.(it)}
         onPublicShare={(it) => onPublicShareItem?.(it)}
         onDelete={(it) => onDeleteItem(it)}
+        onCopy={(it) => onCopyItem?.(it)}
+        onCut={(it) => onCutItem?.(it)}
+        onShare={(it) => onShareFolder?.(it)}
+        onManageShares={(it) => onManageShares?.(it)}
+        isActionsDisabled={isActionsDisabled}
+      />
+
+      {/* Empty Area Context Menu */}
+      <EmptyAreaContextMenu
+        position={emptyContextMenu}
+        onClose={() => setEmptyContextMenu(null)}
+        onPaste={() => onPaste?.()}
+        canPaste={Boolean(clipboard)}
+        clipboardItemName={clipboard?.item.name}
+        clipboardAction={clipboard?.action}
+        onNewFolder={onNewFolder}
+        onUploadClick={() => onUploadClick ? onUploadClick() : undefined}
+        onRefresh={onRefresh}
         isActionsDisabled={isActionsDisabled}
       />
     </div>

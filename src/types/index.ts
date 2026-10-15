@@ -19,6 +19,10 @@ export interface FileItemData {
   mime_type?: string;
   path?: string;
   owner?: string;
+  metadata?: {
+    description?: string;
+    [key: string]: any;
+  };
 }
 
 export interface StorageUsage {
