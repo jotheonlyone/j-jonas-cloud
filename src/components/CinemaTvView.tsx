@@ -107,6 +107,110 @@ const DEMO_CINEMA_VIDEOS: FileItemData[] = [
   },
 ];
 
+interface TvCardItemProps {
+  video: FileItemData;
+  category?: VideoCategory | null;
+  isFocused: boolean;
+  onSelect: (video: FileItemData, category?: VideoCategory | null) => void;
+  onDetails: (video: FileItemData) => void;
+  onHover?: () => void;
+  itemRef?: (el: HTMLDivElement | null) => void;
+  className?: string;
+}
+
+const TvCardItem = React.memo<TvCardItemProps>(
+  ({
+    video,
+    category,
+    isFocused,
+    onSelect,
+    onDetails,
+    onHover,
+    itemRef,
+    className = '',
+  }) => {
+    const streamUrl = getStreamUrl(video.path || video.name, video.owner);
+    const cleanTitle = formatCleanTitle(video.name);
+
+    return (
+      <div
+        ref={itemRef}
+        onClick={(e) => {
+          e.stopPropagation();
+          onSelect(video, category);
+        }}
+        onMouseEnter={onHover}
+        data-focused={isFocused ? 'true' : undefined}
+        className={`group relative flex flex-col rounded-xl overflow-hidden bg-neutral-900 border transition-transform duration-100 ease-out cursor-pointer select-none outline-none will-change-transform ${
+          isFocused
+            ? 'border-white ring-4 ring-white scale-105 z-30 shadow-2xl shadow-black/90'
+            : 'border-white/10 hover:border-white/30 hover:scale-105 hover:z-20 hover:shadow-2xl hover:shadow-black/90'
+        } ${className}`}
+      >
+        {/* 16:9 Thumbnail Area */}
+        <div className="relative w-full aspect-video bg-neutral-950 overflow-hidden flex items-center justify-center">
+          <video
+            src={streamUrl}
+            preload="metadata"
+            muted
+            playsInline
+            className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity duration-150"
+          />
+
+          {/* Gradient Overlay to dark bottom */}
+          <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-transparent pointer-events-none" />
+
+          {/* Play Button in Center on Hover / Focus */}
+          <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
+            <div
+              className={`w-11 h-11 rounded-full flex items-center justify-center shadow-2xl transition-transform duration-100 ${
+                isFocused
+                  ? 'bg-white text-black scale-110 opacity-100'
+                  : 'bg-white text-black scale-90 group-hover:scale-110 opacity-70 group-hover:opacity-100'
+              }`}
+            >
+              <Play className="w-5 h-5 fill-black translate-x-0.5" />
+            </div>
+          </div>
+        </div>
+
+        {/* Title & metadata */}
+        <div className="p-3 bg-neutral-900/95 flex flex-col justify-between">
+          <h3
+            className="text-xs sm:text-sm font-semibold text-white group-hover:text-gray-200 transition-colors truncate mb-1"
+            title={cleanTitle}
+          >
+            {cleanTitle}
+          </h3>
+
+          <div className="flex items-center justify-between text-[11px] text-gray-400 pt-1 border-t border-white/5">
+            <span>{formatBytes(video.size)}</span>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDetails(video);
+              }}
+              className="text-gray-400 hover:text-white flex items-center gap-1 transition-colors hover:underline cursor-pointer"
+            >
+              <Info className="w-3 h-3" />
+              <span>Info</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  },
+  (prev, next) => {
+    return (
+      prev.isFocused === next.isFocused &&
+      (prev.video.path || prev.video.name) === (next.video.path || next.video.name) &&
+      prev.category?.id === next.category?.id
+    );
+  }
+);
+TvCardItem.displayName = 'TvCardItem';
+
 export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
   user,
   items,
@@ -320,6 +424,10 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
   const [filterBarIdx, setFilterBarIdx] = useState<number>(0);
   const [gridIdx, setGridIdx] = useState<number>(0);
 
+  // TV Search Input State (Erst OK-Klick öffnet die Tastatur)
+  const [isEditingSearch, setIsEditingSearch] = useState<boolean>(false);
+  const lastKeyTimeRef = useRef<number>(0);
+
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchClearBtnRef = useRef<HTMLButtonElement>(null);
   const headerReloadBtnRef = useRef<HTMLButtonElement>(null);
@@ -330,51 +438,58 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
   const filterPillRefs = useRef<Map<number, HTMLButtonElement>>(new Map());
   const gridItemRefs = useRef<Map<number, HTMLDivElement>>(new Map());
 
-  // Calculate dynamic grid columns for vertical navigation
-  const getGridCols = (): number => {
-    if (typeof window === 'undefined') return 3;
+  // Calculate dynamic grid columns for vertical navigation matching Tailwind breakpoints
+  const getGridCols = useCallback((): number => {
+    if (typeof window === 'undefined') return 4;
     const w = window.innerWidth;
     if (w >= 1280) return 4;
     if (w >= 1024) return 3;
     if (w >= 640) return 2;
     return 1;
-  };
+  }, []);
 
-  // Scroll focused element into view smoothly
+  // Butterweiches, entkoppeltes Scrollen per requestAnimationFrame
+  const scrollRafRef = useRef<number | null>(null);
+
   useEffect(() => {
     if (activePlayerVideo || selectedDetailsVideo || descriptionOverlay) return;
 
-    if (focusedZone === 'header') {
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-      if (headerFocusIndex === 0) {
-        searchInputRef.current?.focus();
-      } else {
-        searchInputRef.current?.blur();
-      }
-    } else if (focusedZone === 'emptyState') {
-      emptyStateBtnRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    } else if (focusedZone === 'hero') {
-      if (heroIndex === 0)
-        heroPlayBtnRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      else
-        heroInfoBtnRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    } else if (focusedZone === 'carousels') {
-      const key = `${carouselRowIdx}-${carouselColIdx}`;
-      const el = carouselItemRefs.current.get(key);
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
-      }
-    } else if (focusedZone === 'filterBar') {
-      const btn = filterPillRefs.current.get(filterBarIdx);
-      if (btn) {
-        btn.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
-      }
-    } else if (focusedZone === 'grid') {
-      const el = gridItemRefs.current.get(gridIdx);
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      }
+    if (scrollRafRef.current) {
+      cancelAnimationFrame(scrollRafRef.current);
     }
+
+    scrollRafRef.current = requestAnimationFrame(() => {
+      if (focusedZone === 'header') {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      } else if (focusedZone === 'emptyState') {
+        emptyStateBtnRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+      } else if (focusedZone === 'hero') {
+        const btn = heroIndex === 0 ? heroPlayBtnRef.current : heroInfoBtnRef.current;
+        btn?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+      } else if (focusedZone === 'carousels') {
+        const key = `${carouselRowIdx}-${carouselColIdx}`;
+        const el = carouselItemRefs.current.get(key);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+        }
+      } else if (focusedZone === 'filterBar') {
+        const btn = filterPillRefs.current.get(filterBarIdx);
+        if (btn) {
+          btn.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+        }
+      } else if (focusedZone === 'grid') {
+        const el = gridItemRefs.current.get(gridIdx);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+        }
+      }
+    });
+
+    return () => {
+      if (scrollRafRef.current) {
+        cancelAnimationFrame(scrollRafRef.current);
+      }
+    };
   }, [
     focusedZone,
     heroIndex,
@@ -423,39 +538,53 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
   }, []);
 
   // Play a video exclusively in TV fullscreen player (prevent double modal)
-  const startPlayback = (video: FileItemData, category?: VideoCategory | null) => {
+  const startPlayback = useCallback((video: FileItemData, category?: VideoCategory | null) => {
     setCurrentPlayingCategory(category || null);
     setActivePlayerVideo(video);
-  };
+  }, []);
 
   // Check description and either show Info-Overlay or start playback
-  const handleSelectVideo = async (video: FileItemData, category?: VideoCategory | null) => {
-    setOverlayBtnIdx(1);
-    if (video.metadata?.description && video.metadata.description.trim()) {
-      setDescriptionOverlay({
-        video,
-        description: video.metadata.description.trim(),
-        category,
-      });
-      return;
-    }
-    const itemPath = video.path || video.name;
-    const itemOwner = video.owner || user.username;
-    try {
-      const meta = await getFileMetadata(itemPath, itemOwner);
-      if (meta.description && meta.description.trim()) {
+  const handleSelectVideo = useCallback(
+    async (video: FileItemData, category?: VideoCategory | null) => {
+      setOverlayBtnIdx(1);
+      if (video.metadata?.description && video.metadata.description.trim()) {
         setDescriptionOverlay({
           video,
-          description: meta.description.trim(),
+          description: video.metadata.description.trim(),
           category,
         });
-      } else {
+        return;
+      }
+      const itemPath = video.path || video.name;
+      const itemOwner = video.owner || user.username;
+      try {
+        const meta = await getFileMetadata(itemPath, itemOwner);
+        if (meta.description && meta.description.trim()) {
+          setDescriptionOverlay({
+            video,
+            description: meta.description.trim(),
+            category,
+          });
+        } else {
+          startPlayback(video, category);
+        }
+      } catch {
         startPlayback(video, category);
       }
-    } catch {
-      startPlayback(video, category);
-    }
-  };
+    },
+    [user.username, startPlayback]
+  );
+
+  const handleVideoSelect = useCallback(
+    (video: FileItemData, category?: VideoCategory | null) => {
+      handleSelectVideo(video, category);
+    },
+    [handleSelectVideo]
+  );
+
+  const handleVideoDetails = useCallback((video: FileItemData) => {
+    setSelectedDetailsVideo(video);
+  }, []);
 
   // Load details description when details modal opens
   useEffect(() => {
@@ -488,7 +617,7 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
   // Handle D-Pad Keyboard Navigation & Android TV Back Button
   useEffect(() => {
     const handleTvDpad = (e: KeyboardEvent) => {
-      const isInputActive =
+      const isInputFocused =
         document.activeElement === searchInputRef.current ||
         document.activeElement?.tagName === 'INPUT' ||
         document.activeElement?.tagName === 'TEXTAREA';
@@ -498,7 +627,7 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
       // -------------------------------------------------------------
       if (isTvBackEvent(e)) {
         // If user is editing text in search input, allow normal backspace to delete characters
-        if (isInputActive && (e.key === 'Backspace' || (e.keyCode || e.which) === 8)) {
+        if (isEditingSearch && (e.key === 'Backspace' || (e.keyCode || e.which) === 8)) {
           return;
         }
 
@@ -506,7 +635,16 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
         e.preventDefault();
         e.stopPropagation();
 
-        // a) If video player is active (safety fallback if player overlay bubbled)
+        // If search input is active/editing -> close keyboard, blur, but stay on search bar in TV
+        if (isEditingSearch || isInputFocused) {
+          searchInputRef.current?.blur();
+          setIsEditingSearch(false);
+          setFocusedZone('header');
+          setHeaderFocusIndex(0);
+          return;
+        }
+
+        // a) If video player is active
         if (activePlayerVideo) {
           setActivePlayerVideo(null);
           return;
@@ -524,15 +662,7 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
           return;
         }
 
-        // d) If search input is focused -> blur it and reset focus to header
-        if (isInputActive) {
-          searchInputRef.current?.blur();
-          setFocusedZone('header');
-          setHeaderFocusIndex(0);
-          return;
-        }
-
-        // e) If navigating content zones (carousels, filterBar, grid, emptyState) -> return focus to top header
+        // d) If navigating content zones (carousels, filterBar, grid, emptyState) -> return focus to top header
         if (focusedZone !== 'header') {
           setFocusedZone('header');
           setHeaderFocusIndex(0);
@@ -540,24 +670,22 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
           return;
         }
 
-        // f) In main header overview: strictly stay in Cinema/TV mode (never exit to normal cloud)
         return;
       }
 
+      // If description overlay is open, handle its D-pad controls
       if (descriptionOverlay) {
-        if (e.key === 'ArrowLeft') {
+        if (e.key === 'ArrowLeft' || e.keyCode === 37) {
           e.preventDefault();
           setOverlayBtnIdx(0);
-        } else if (e.key === 'ArrowRight') {
+        } else if (e.key === 'ArrowRight' || e.keyCode === 39) {
           e.preventDefault();
           setOverlayBtnIdx(1);
-        } else if (e.key === 'Enter') {
+        } else if (e.key === 'Enter' || e.keyCode === 13) {
           e.preventDefault();
           if (overlayBtnIdx === 0) {
-            // "Schließen" gewählt: Modal schließen, KEINE Wiedergabe starten!
             setDescriptionOverlay(null);
           } else {
-            // "Film abspielen" gewählt
             const vid = descriptionOverlay.video;
             const cat = descriptionOverlay.category;
             setDescriptionOverlay(null);
@@ -567,8 +695,9 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
         return;
       }
 
+      // Details modal
       if (selectedDetailsVideo) {
-        if (e.key === 'Enter') {
+        if (e.key === 'Enter' || e.keyCode === 13) {
           e.preventDefault();
           const vid = selectedDetailsVideo;
           setSelectedDetailsVideo(null);
@@ -579,188 +708,253 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
 
       if (activePlayerVideo) return;
 
+      // Event throttling for D-Pad navigation keys to prevent event queue buildup
+      const isNavKey =
+        e.key === 'ArrowUp' ||
+        e.key === 'ArrowDown' ||
+        e.key === 'ArrowLeft' ||
+        e.key === 'ArrowRight' ||
+        e.key === 'Up' ||
+        e.key === 'Down' ||
+        e.key === 'Left' ||
+        e.key === 'Right' ||
+        e.keyCode === 38 ||
+        e.keyCode === 40 ||
+        e.keyCode === 37 ||
+        e.keyCode === 39;
+
+      if (!isEditingSearch && isNavKey) {
+        const now = performance.now();
+        if (now - lastKeyTimeRef.current < 75) {
+          e.preventDefault();
+          return;
+        }
+        lastKeyTimeRef.current = now;
+      }
+
       const cols = getGridCols();
       const maxHeaderIdx = searchQuery ? 2 : 1;
+      const isUp = e.key === 'ArrowUp' || e.key === 'Up' || e.keyCode === 38;
+      const isDown = e.key === 'ArrowDown' || e.key === 'Down' || e.keyCode === 40;
+      const isLeft = e.key === 'ArrowLeft' || e.key === 'Left' || e.keyCode === 37;
+      const isRight = e.key === 'ArrowRight' || e.key === 'Right' || e.keyCode === 39;
+      const isEnter = e.key === 'Enter' || e.keyCode === 13;
 
-      switch (e.key) {
-        case 'ArrowUp': {
-          e.preventDefault();
-          if (focusedZone === 'grid') {
-            if (gridIdx < cols) {
-              setFocusedZone('filterBar');
-            } else {
-              setGridIdx((prev) => Math.max(0, prev - cols));
-            }
-          } else if (focusedZone === 'filterBar') {
-            if (featuredRows.length > 0) {
-              setFocusedZone('carousels');
-              setCarouselRowIdx(featuredRows.length - 1);
-              setCarouselColIdx(0);
-            } else if (heroVideo) {
+      if (isUp) {
+        e.preventDefault();
+        if (focusedZone === 'grid') {
+          if (gridIdx >= cols) {
+            // Strictly vertical navigation up inside the same column
+            setGridIdx((prev) => prev - cols);
+          } else {
+            // Reached top row of grid -> navigate up to filterBar
+            setFocusedZone('filterBar');
+            const targetPill = Math.min(filterOptions.length - 1, gridIdx % cols);
+            setFilterBarIdx(Math.max(0, targetPill));
+          }
+        } else if (focusedZone === 'filterBar') {
+          if (featuredRows.length > 0) {
+            setFocusedZone('carousels');
+            const targetRow = featuredRows.length - 1;
+            setCarouselRowIdx(targetRow);
+            const maxCol = Math.max(0, (featuredRows[targetRow]?.videos.length || 1) - 1);
+            setCarouselColIdx((prev) => Math.min(prev, maxCol));
+          } else if (heroVideo) {
+            setFocusedZone('hero');
+            setHeroIndex(0);
+          } else {
+            setFocusedZone('header');
+            setHeaderFocusIndex(0);
+          }
+        } else if (focusedZone === 'carousels') {
+          if (carouselRowIdx > 0) {
+            const nextRow = carouselRowIdx - 1;
+            const maxCol = Math.max(0, (featuredRows[nextRow]?.videos.length || 1) - 1);
+            setCarouselRowIdx(nextRow);
+            setCarouselColIdx((prev) => Math.min(prev, maxCol));
+          } else {
+            if (heroVideo) {
               setFocusedZone('hero');
               setHeroIndex(0);
             } else {
               setFocusedZone('header');
               setHeaderFocusIndex(0);
             }
-          } else if (focusedZone === 'carousels') {
-            if (carouselRowIdx > 0) {
-              const nextRow = carouselRowIdx - 1;
-              const maxCol = (featuredRows[nextRow]?.videos.length || 1) - 1;
-              setCarouselRowIdx(nextRow);
-              setCarouselColIdx((prev) => Math.min(prev, maxCol));
-            } else {
-              if (heroVideo) {
-                setFocusedZone('hero');
-                setHeroIndex(0);
-              } else {
-                setFocusedZone('header');
-                setHeaderFocusIndex(0);
-              }
-            }
-          } else if (focusedZone === 'hero') {
-            setFocusedZone('header');
-            setHeaderFocusIndex(0);
-          } else if (focusedZone === 'emptyState') {
-            setFocusedZone('header');
-            setHeaderFocusIndex(0);
           }
-          break;
+        } else if (focusedZone === 'hero') {
+          setFocusedZone('header');
+          setHeaderFocusIndex(0);
+        } else if (focusedZone === 'emptyState') {
+          setFocusedZone('header');
+          setHeaderFocusIndex(0);
         }
+        return;
+      }
 
-        case 'ArrowDown': {
-          e.preventDefault();
-          if (focusedZone === 'header') {
+      if (isDown) {
+        e.preventDefault();
+        if (focusedZone === 'header') {
+          if (isEditingSearch) {
             searchInputRef.current?.blur();
-            if (heroVideo) {
-              setFocusedZone('hero');
-              setHeroIndex(0);
-            } else if (displayVideos.length === 0) {
-              setFocusedZone('emptyState');
-            } else if (featuredRows.length > 0) {
-              setFocusedZone('carousels');
-              setCarouselRowIdx(0);
-              setCarouselColIdx(0);
-            } else {
-              setFocusedZone('filterBar');
-              setFilterBarIdx(0);
-            }
-          } else if (focusedZone === 'hero') {
-            if (featuredRows.length > 0) {
-              setFocusedZone('carousels');
-              setCarouselRowIdx(0);
-              setCarouselColIdx(0);
-            } else {
-              setFocusedZone('filterBar');
-            }
-          } else if (focusedZone === 'carousels') {
-            if (carouselRowIdx < featuredRows.length - 1) {
-              const nextRow = carouselRowIdx + 1;
-              const maxCol = (featuredRows[nextRow]?.videos.length || 1) - 1;
-              setCarouselRowIdx(nextRow);
-              setCarouselColIdx((prev) => Math.min(prev, maxCol));
-            } else {
-              setFocusedZone('filterBar');
-            }
-          } else if (focusedZone === 'filterBar') {
-            if (gridVideos.length > 0) {
-              setFocusedZone('grid');
-              setGridIdx(0);
-            }
-          } else if (focusedZone === 'grid') {
-            if (gridIdx + cols < gridVideos.length) {
-              setGridIdx((prev) => prev + cols);
-            }
+            setIsEditingSearch(false);
           }
-          break;
-        }
-
-        case 'ArrowLeft': {
-          e.preventDefault();
-          if (focusedZone === 'header') {
-            setHeaderFocusIndex((prev) => {
-              const next = Math.max(0, prev - 1);
-              if (next === 0) searchInputRef.current?.focus();
-              return next;
-            });
-          } else if (focusedZone === 'hero') {
+          if (heroVideo) {
+            setFocusedZone('hero');
             setHeroIndex(0);
-          } else if (focusedZone === 'carousels') {
-            setCarouselColIdx((prev) => Math.max(0, prev - 1));
-          } else if (focusedZone === 'filterBar') {
-            setFilterBarIdx((prev) => Math.max(0, prev - 1));
-          } else if (focusedZone === 'grid') {
-            setGridIdx((prev) => Math.max(0, prev - 1));
+          } else if (!isLoadingCategories && displayVideos.length === 0) {
+            setFocusedZone('emptyState');
+          } else if (featuredRows.length > 0) {
+            setFocusedZone('carousels');
+            setCarouselRowIdx(0);
+            setCarouselColIdx(0);
+          } else if (filterOptions.length > 0) {
+            setFocusedZone('filterBar');
+            setFilterBarIdx(0);
+          } else if (gridVideos.length > 0) {
+            setFocusedZone('grid');
+            setGridIdx(0);
           }
-          break;
-        }
-
-        case 'ArrowRight': {
-          e.preventDefault();
-          if (focusedZone === 'header') {
-            searchInputRef.current?.blur();
-            setHeaderFocusIndex((prev) => Math.min(maxHeaderIdx, prev + 1));
-          } else if (focusedZone === 'hero') {
-            setHeroIndex(1);
-          } else if (focusedZone === 'carousels') {
-            const currentCatVideos = featuredRows[carouselRowIdx]?.videos || [];
-            setCarouselColIdx((prev) => Math.min(currentCatVideos.length - 1, prev + 1));
-          } else if (focusedZone === 'filterBar') {
-            setFilterBarIdx((prev) => Math.min(filterOptions.length - 1, prev + 1));
-          } else if (focusedZone === 'grid') {
-            setGridIdx((prev) => Math.min(gridVideos.length - 1, prev + 1));
+        } else if (focusedZone === 'hero') {
+          if (featuredRows.length > 0) {
+            setFocusedZone('carousels');
+            setCarouselRowIdx(0);
+            setCarouselColIdx(0);
+          } else if (filterOptions.length > 0) {
+            setFocusedZone('filterBar');
+            setFilterBarIdx(0);
+          } else if (gridVideos.length > 0) {
+            setFocusedZone('grid');
+            setGridIdx(0);
           }
-          break;
+        } else if (focusedZone === 'carousels') {
+          if (carouselRowIdx < featuredRows.length - 1) {
+            const nextRow = carouselRowIdx + 1;
+            const maxCol = Math.max(0, (featuredRows[nextRow]?.videos.length || 1) - 1);
+            setCarouselRowIdx(nextRow);
+            setCarouselColIdx((prev) => Math.min(prev, maxCol));
+          } else if (filterOptions.length > 0) {
+            setFocusedZone('filterBar');
+            setFilterBarIdx(0);
+          } else if (gridVideos.length > 0) {
+            setFocusedZone('grid');
+            setGridIdx(0);
+          }
+        } else if (focusedZone === 'filterBar') {
+          if (gridVideos.length > 0) {
+            setFocusedZone('grid');
+            const targetCol = Math.min(filterBarIdx, cols - 1, gridVideos.length - 1);
+            setGridIdx(Math.max(0, targetCol));
+          }
+        } else if (focusedZone === 'grid') {
+          const total = gridVideos.length;
+          if (total === 0) return;
+          const targetIdx = gridIdx + cols;
+          if (targetIdx < total) {
+            // Strictly vertical navigation down inside the same column
+            setGridIdx(targetIdx);
+          } else {
+            // Element directly underneath does not exist. Check if there is an incomplete row below
+            const currentRow = Math.floor(gridIdx / cols);
+            const lastRow = Math.floor((total - 1) / cols);
+            if (currentRow < lastRow) {
+              // Jump strictly to the last element of the list, never changing direction arbitrarily
+              setGridIdx(total - 1);
+            }
+          }
         }
+        return;
+      }
 
-        case 'Enter': {
-          e.preventDefault();
-          if (focusedZone === 'header') {
-            if (headerFocusIndex === 0) {
-              if (document.activeElement === searchInputRef.current) {
-                // Confirm search, close on-screen keyboard, and focus results
-                searchInputRef.current?.blur();
-                if (gridVideos.length > 0) {
-                  setFocusedZone('grid');
-                  setGridIdx(0);
-                } else if (featuredRows.length > 0 && featuredRows[0].videos.length > 0) {
-                  setFocusedZone('carousels');
-                  setCarouselRowIdx(0);
-                  setCarouselColIdx(0);
-                }
-              } else {
+      if (isLeft) {
+        if (isEditingSearch) return; // Allow caret movement inside search input when actively editing
+        e.preventDefault();
+        if (focusedZone === 'header') {
+          setHeaderFocusIndex((prev) => Math.max(0, prev - 1));
+        } else if (focusedZone === 'hero') {
+          setHeroIndex(0);
+        } else if (focusedZone === 'carousels') {
+          setCarouselColIdx((prev) => Math.max(0, prev - 1));
+        } else if (focusedZone === 'filterBar') {
+          setFilterBarIdx((prev) => Math.max(0, prev - 1));
+        } else if (focusedZone === 'grid') {
+          setGridIdx((prev) => Math.max(0, prev - 1));
+        }
+        return;
+      }
+
+      if (isRight) {
+        if (isEditingSearch) return; // Allow caret movement inside search input when actively editing
+        e.preventDefault();
+        if (focusedZone === 'header') {
+          setHeaderFocusIndex((prev) => Math.min(maxHeaderIdx, prev + 1));
+        } else if (focusedZone === 'hero') {
+          setHeroIndex(1);
+        } else if (focusedZone === 'carousels') {
+          const currentCatVideos = featuredRows[carouselRowIdx]?.videos || [];
+          setCarouselColIdx((prev) => Math.min(Math.max(0, currentCatVideos.length - 1), prev + 1));
+        } else if (focusedZone === 'filterBar') {
+          setFilterBarIdx((prev) => Math.min(filterOptions.length - 1, prev + 1));
+        } else if (focusedZone === 'grid') {
+          setGridIdx((prev) => Math.min(gridVideos.length - 1, prev + 1));
+        }
+        return;
+      }
+
+      if (isEnter) {
+        e.preventDefault();
+        if (focusedZone === 'header') {
+          if (headerFocusIndex === 0) {
+            if (!isEditingSearch) {
+              // OK / Enter clicked on visually focused search bar: Activate input and open TV keyboard
+              setIsEditingSearch(true);
+              setTimeout(() => {
                 searchInputRef.current?.focus();
-              }
-            } else if (searchQuery && headerFocusIndex === 1) {
-              setSearchQuery('');
-              setHeaderFocusIndex(0);
-              searchInputRef.current?.focus();
+              }, 20);
             } else {
-              handleReload();
+              // Enter while editing search: blur input, close TV keyboard, and move focus to results
+              searchInputRef.current?.blur();
+              setIsEditingSearch(false);
+              if (gridVideos.length > 0) {
+                setFocusedZone('grid');
+                setGridIdx(0);
+              } else if (featuredRows.length > 0 && featuredRows[0].videos.length > 0) {
+                setFocusedZone('carousels');
+                setCarouselRowIdx(0);
+                setCarouselColIdx(0);
+              }
             }
-          } else if (focusedZone === 'emptyState') {
-            setUseDemoFallback((prev) => !prev);
-          } else if (focusedZone === 'hero' && heroVideo) {
-            if (heroIndex === 0) startPlayback(heroVideo);
-            else handleSelectVideo(heroVideo);
-          } else if (focusedZone === 'carousels') {
-            const curCat = featuredRows[carouselRowIdx];
-            if (curCat && curCat.videos[carouselColIdx]) {
-              handleSelectVideo(curCat.videos[carouselColIdx]);
-            }
-          } else if (focusedZone === 'filterBar') {
-            const chosen = filterOptions[filterBarIdx];
-            if (chosen) {
-              setActiveCategoryFilter(chosen.id);
-            }
-          } else if (focusedZone === 'grid') {
-            const vid = gridVideos[gridIdx];
-            if (vid) {
-              handleSelectVideo(vid);
-            }
+          } else if (searchQuery && headerFocusIndex === 1) {
+            setSearchQuery('');
+            setHeaderFocusIndex(0);
+            setIsEditingSearch(false);
+          } else {
+            handleReload();
           }
-          break;
+        } else if (focusedZone === 'emptyState') {
+          setUseDemoFallback((prev) => !prev);
+        } else if (focusedZone === 'hero' && heroVideo) {
+          if (heroIndex === 0) startPlayback(heroVideo);
+          else handleSelectVideo(heroVideo);
+        } else if (focusedZone === 'carousels') {
+          const curCat = featuredRows[carouselRowIdx];
+          if (curCat && curCat.videos[carouselColIdx]) {
+            handleSelectVideo(curCat.videos[carouselColIdx], curCat);
+          }
+        } else if (focusedZone === 'filterBar') {
+          const chosen = filterOptions[filterBarIdx];
+          if (chosen) {
+            setActiveCategoryFilter(chosen.id);
+          }
+        } else if (focusedZone === 'grid') {
+          const vid = gridVideos[gridIdx];
+          if (vid) {
+            const cat = allFolderCategories.find((c) =>
+              c.videos.some((v) => (v.path || v.name) === (vid.path || vid.name))
+            );
+            handleSelectVideo(vid, cat);
+          }
         }
+        return;
       }
     };
 
@@ -785,6 +979,11 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
     displayVideos,
     searchQuery,
     useDemoFallback,
+    isEditingSearch,
+    isLoadingCategories,
+    getGridCols,
+    startPlayback,
+    handleSelectVideo,
   ]);
 
   return (
@@ -813,11 +1012,12 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
 
         {/* Right: Controls mit Suchleiste & Demo-Modus Button */}
         <div className="flex items-center gap-3 flex-1 max-w-2xl ml-4 sm:ml-8 justify-end">
-          {/* Suchleiste */}
+          {/* Suchleiste: Erst Klick auf OK öffnet Tastatur */}
           <form
             onSubmit={(e) => {
               e.preventDefault();
               searchInputRef.current?.blur();
+              setIsEditingSearch(false);
               if (gridVideos.length > 0) {
                 setFocusedZone('grid');
                 setGridIdx(0);
@@ -829,22 +1029,33 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
             }}
             className="relative flex-1 max-w-md"
           >
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
             <input
               ref={searchInputRef}
               type="text"
-              placeholder="Videos, Filme oder Kategorien suchen..."
+              readOnly={!isEditingSearch}
+              placeholder={isEditingSearch ? "Videos oder Filme suchen..." : (searchQuery || "OK drücken zum Suchen...")}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
+              onClick={() => {
+                setFocusedZone('header');
+                setHeaderFocusIndex(0);
+                setIsEditingSearch(true);
+                searchInputRef.current?.focus();
+              }}
               onFocus={() => {
                 setFocusedZone('header');
                 setHeaderFocusIndex(0);
+              }}
+              onBlur={() => {
+                setIsEditingSearch(false);
               }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   e.preventDefault();
                   e.stopPropagation();
                   searchInputRef.current?.blur();
+                  setIsEditingSearch(false);
                   if (gridVideos.length > 0) {
                     setFocusedZone('grid');
                     setGridIdx(0);
@@ -857,6 +1068,7 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
                   e.preventDefault();
                   e.stopPropagation();
                   searchInputRef.current?.blur();
+                  setIsEditingSearch(false);
                   if (heroVideo) {
                     setFocusedZone('hero');
                     setHeroIndex(0);
@@ -870,17 +1082,23 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
                   }
                 }
               }}
-              className={`w-full pl-10 pr-9 py-2 text-xs sm:text-sm rounded-full bg-white/10 text-white placeholder-gray-400 focus:outline-none transition-all shadow-inner ${
+              className={`w-full pl-10 pr-9 py-2 text-xs sm:text-sm rounded-full text-white placeholder-gray-400 focus:outline-none transition-transform duration-100 shadow-inner cursor-pointer ${
                 focusedZone === 'header' && headerFocusIndex === 0
-                  ? 'border-[#E50914] ring-2 ring-[#E50914] bg-black/70'
-                  : 'border border-white/10 hover:bg-white/15'
+                  ? isEditingSearch
+                    ? 'border-[#E50914] ring-4 ring-[#E50914] bg-black/90'
+                    : 'border-white ring-4 ring-white bg-black/80 scale-105 shadow-2xl'
+                  : 'border border-white/10 bg-white/10 hover:bg-white/15'
               }`}
             />
             {searchQuery && (
               <button
                 type="button"
                 ref={searchClearBtnRef}
-                onClick={() => setSearchQuery('')}
+                onClick={() => {
+                  setSearchQuery('');
+                  setHeaderFocusIndex(0);
+                  setIsEditingSearch(false);
+                }}
                 onMouseEnter={() => {
                   setFocusedZone('header');
                   setHeaderFocusIndex(1);
@@ -1083,86 +1301,27 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
                       focusedZone === 'carousels' &&
                       carouselRowIdx === rowIdx &&
                       carouselColIdx === colIdx;
-                    const streamUrl = getStreamUrl(video.path || video.name, video.owner);
-                    const cleanTitle = formatCleanTitle(video.name);
 
                     return (
-                      <div
+                      <TvCardItem
                         key={`tv-card-${category.id}-${video.path || video.name}-${colIdx}`}
-                        ref={(el) => {
+                        video={video}
+                        category={category}
+                        isFocused={isFocused}
+                        className="flex-none w-64 sm:w-72 md:w-80 snap-start"
+                        itemRef={(el) => {
                           const key = `${rowIdx}-${colIdx}`;
                           if (el) carouselItemRefs.current.set(key, el);
                           else carouselItemRefs.current.delete(key);
                         }}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setFocusedZone('carousels');
-                          setCarouselRowIdx(rowIdx);
-                          setCarouselColIdx(colIdx);
-                          handleSelectVideo(video, category);
-                        }}
-                        onMouseEnter={() => {
+                        onSelect={handleVideoSelect}
+                        onDetails={handleVideoDetails}
+                        onHover={() => {
                           setFocusedZone('carousels');
                           setCarouselRowIdx(rowIdx);
                           setCarouselColIdx(colIdx);
                         }}
-                        className={`group relative flex-none w-64 sm:w-72 md:w-80 rounded-xl overflow-hidden bg-neutral-900 border transition-all duration-300 ease-out cursor-pointer select-none outline-none snap-start will-change-transform ${
-                          isFocused
-                            ? 'border-white ring-4 ring-white scale-105 z-30 shadow-2xl shadow-black/90'
-                            : 'border-white/10 hover:border-white/30 hover:scale-105 hover:z-20 hover:shadow-2xl hover:shadow-black/90'
-                        }`}
-                      >
-                        {/* 16:9 Thumbnail Area */}
-                        <div className="relative w-full aspect-video bg-neutral-950 overflow-hidden flex items-center justify-center">
-                          <video
-                            src={streamUrl}
-                            preload="metadata"
-                            muted
-                            playsInline
-                            className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity duration-300"
-                          />
-
-                          {/* Gradient Overlay to dark bottom */}
-                          <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-transparent pointer-events-none" />
-
-                          {/* Play Button in Center on Hover / Focus */}
-                          <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
-                            <div
-                              className={`w-11 h-11 rounded-full flex items-center justify-center shadow-2xl transition-all duration-300 ${
-                                isFocused
-                                  ? 'bg-white text-black scale-110 opacity-100'
-                                  : 'bg-white text-black scale-90 group-hover:scale-110 opacity-70 group-hover:opacity-100'
-                              }`}
-                            >
-                              <Play className="w-5 h-5 fill-black translate-x-0.5" />
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Title & metadata */}
-                        <div className="p-3 bg-neutral-900/95 flex flex-col justify-between">
-                          <h3
-                            className="text-xs sm:text-sm font-semibold text-white group-hover:text-gray-200 transition-colors truncate mb-1"
-                            title={cleanTitle}
-                          >
-                            {cleanTitle}
-                          </h3>
-
-                          <div className="flex items-center justify-between text-[11px] text-gray-400 pt-1 border-t border-white/5">
-                            <span>{formatBytes(video.size)}</span>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSelectedDetailsVideo(video);
-                              }}
-                              className="text-gray-400 hover:text-white flex items-center gap-1 transition-colors hover:underline"
-                            >
-                              <Info className="w-3 h-3" />
-                              <span>Info</span>
-                            </button>
-                          </div>
-                        </div>
-                      </div>
+                      />
                     );
                   })}
                 </div>
@@ -1247,86 +1406,27 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 sm:gap-6 py-2">
               {gridVideos.map((video, idx) => {
                 const isFocused = focusedZone === 'grid' && gridIdx === idx;
-                const streamUrl = getStreamUrl(video.path || video.name, video.owner);
-                const cleanTitle = formatCleanTitle(video.name);
+                const cat = allFolderCategories.find((c) =>
+                  c.videos.some((v) => (v.path || v.name) === (video.path || video.name))
+                );
 
                 return (
-                  <div
+                  <TvCardItem
                     key={`tv-grid-${video.path || video.name}-${idx}`}
-                    ref={(el) => {
+                    video={video}
+                    category={cat}
+                    isFocused={isFocused}
+                    itemRef={(el) => {
                       if (el) gridItemRefs.current.set(idx, el);
                       else gridItemRefs.current.delete(idx);
                     }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setFocusedZone('grid');
-                      setGridIdx(idx);
-                      const cat = allFolderCategories.find((c) =>
-                        c.videos.some((v) => (v.path || v.name) === (video.path || video.name))
-                      );
-                      handleSelectVideo(video, cat);
-                    }}
-                    onMouseEnter={() => {
+                    onSelect={handleVideoSelect}
+                    onDetails={handleVideoDetails}
+                    onHover={() => {
                       setFocusedZone('grid');
                       setGridIdx(idx);
                     }}
-                    className={`group relative flex flex-col rounded-xl overflow-hidden bg-neutral-900 border transition-all duration-300 ease-out cursor-pointer select-none outline-none will-change-transform ${
-                      isFocused
-                        ? 'border-white ring-4 ring-white scale-105 z-30 shadow-2xl shadow-black/90'
-                        : 'border-white/10 hover:border-white/30 hover:scale-105 hover:z-20 hover:shadow-2xl hover:shadow-black/90'
-                    }`}
-                  >
-                    {/* 16:9 Thumbnail Area */}
-                    <div className="relative w-full aspect-video bg-neutral-950 overflow-hidden flex items-center justify-center">
-                      <video
-                        src={streamUrl}
-                        preload="metadata"
-                        muted
-                        playsInline
-                        className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity duration-300"
-                      />
-
-                      {/* Gradient Overlay to dark bottom */}
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-transparent pointer-events-none" />
-
-                      {/* Play Button in Center on Hover / Focus */}
-                      <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
-                        <div
-                          className={`w-11 h-11 rounded-full flex items-center justify-center shadow-2xl transition-all duration-300 ${
-                            isFocused
-                              ? 'bg-white text-black scale-110 opacity-100'
-                              : 'bg-white text-black scale-90 group-hover:scale-110 opacity-70 group-hover:opacity-100'
-                          }`}
-                        >
-                          <Play className="w-5 h-5 fill-black translate-x-0.5" />
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Title & metadata */}
-                    <div className="p-3 bg-neutral-900/95 flex flex-col justify-between">
-                      <h3
-                        className="text-xs sm:text-sm font-semibold text-white group-hover:text-gray-200 transition-colors truncate mb-1"
-                        title={cleanTitle}
-                      >
-                        {cleanTitle}
-                      </h3>
-
-                      <div className="flex items-center justify-between text-[11px] text-gray-400 pt-1 border-t border-white/5">
-                        <span>{formatBytes(video.size)}</span>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedDetailsVideo(video);
-                          }}
-                          className="text-gray-400 hover:text-white flex items-center gap-1 transition-colors hover:underline"
-                        >
-                          <Info className="w-3 h-3" />
-                          <span>Info</span>
-                        </button>
-                      </div>
-                    </div>
-                  </div>
+                  />
                 );
               })}
             </div>
