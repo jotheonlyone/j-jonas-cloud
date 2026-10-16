@@ -13,7 +13,8 @@ import {
   EyeOff,
   UserCog,
   ShieldCheck,
-  ShieldAlert
+  ShieldAlert,
+  RefreshCw
 } from 'lucide-react';
 import type { FolderShare, SharedMember, UserAccount } from '../types';
 import {
@@ -58,13 +59,29 @@ export const ManageFolderSharesModal: React.FC<ManageFolderSharesModalProps> = (
   const actualOwner = (folderOwner || currentUser.username).trim().toLowerCase();
   const isOwner = actualOwner === currentUser.username.trim().toLowerCase();
 
-  // Load the folder's shared data
+  // Load the folder's shared data (always fresh from server, invalidating cache)
   const loadFolderMembers = async () => {
     setIsLoading(true);
     setErrorMsg('');
     try {
-      const share = await getSharedFolder(folderPath, actualOwner);
-      setFolderShare(share);
+      let freshShare: FolderShare | null = null;
+      // 1. Fresh server-side fetch with timestamp cache-buster
+      try {
+        const res = await fetch(`/api/shares?folderPath=${encodeURIComponent(folderPath)}&owner=${encodeURIComponent(actualOwner)}&_t=${Date.now()}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.share) {
+            freshShare = data.share;
+          }
+        }
+      } catch {}
+
+      // 2. Direct Firestore query fallback
+      if (!freshShare) {
+        freshShare = await getSharedFolder(folderPath, actualOwner);
+      }
+
+      setFolderShare(freshShare);
     } catch (err) {
       setErrorMsg('Fehler beim Laden der Mitgliederliste.');
     } finally {
@@ -268,12 +285,23 @@ export const ManageFolderSharesModal: React.FC<ManageFolderSharesModalProps> = (
               {canManageMembers ? 'Freigaben & Rechte verwalten' : 'Mitgliederliste'} – "{folderName}"
             </span>
           </div>
-          <button
-            onClick={onClose}
-            className="p-1 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={loadFolderMembers}
+              disabled={isLoading}
+              className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors cursor-pointer"
+              title="Mitgliederliste vom Server aktualisieren"
+            >
+              <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin text-blue-500' : ''}`} />
+            </button>
+            <button
+              onClick={onClose}
+              className="p-1 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
         {/* Error notification */}
@@ -362,210 +390,222 @@ export const ManageFolderSharesModal: React.FC<ManageFolderSharesModalProps> = (
               </label>
             </div>
           </form>
-        ) : (
+        ) : canSeeMembers ? (
           /* Hinweis für Nutzer mit reinem Leserecht */
           <div className="mt-3 p-3 rounded-xl bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200/60 dark:border-blue-900/40 flex items-center gap-2.5 text-xs text-blue-800 dark:text-blue-300">
             <ShieldCheck className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
             <span>Du hast Leserechte für die Mitgliederliste dieses geteilten Ordners.</span>
           </div>
-        )}
+        ) : null}
 
         {/* 2. Mitgliederliste */}
-        <div className="mt-4 flex-1 min-h-[160px] overflow-y-auto pr-1">
-          <div className="flex items-center justify-between mb-2">
-            <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-              Personen mit Zugriff ({membersList.length + 1})
-            </h4>
+        {!canSeeMembers ? (
+          <div className="py-12 text-center select-none space-y-3 flex-1 flex flex-col items-center justify-center">
+            <EyeOff className="w-10 h-10 text-gray-400 mx-auto" />
+            <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">
+              Keine Berechtigung zur Mitgliederansicht
+            </h3>
+            <p className="text-xs text-gray-500 max-w-xs mx-auto">
+              Der Eigentümer (@{actualOwner}) hat für dein Konto die Ansicht der Mitgliederliste dieses geteilten Ordners deaktiviert.
+            </p>
           </div>
-
-          <div className="space-y-2.5">
-            {/* Eigentümer (immer ganz oben) */}
-            <div className="flex items-center justify-between p-3 rounded-xl bg-gray-50 dark:bg-gray-800/60 border border-gray-200/60 dark:border-gray-700/60">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-300 flex items-center justify-center font-bold text-xs uppercase shrink-0">
-                  {actualOwner.slice(0, 2)}
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs sm:text-sm font-semibold text-gray-900 dark:text-gray-100">
-                      @{actualOwner}
-                    </span>
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300">
-                      Eigentümer
-                    </span>
-                  </div>
-                  <span className="text-[11px] text-gray-500 dark:text-gray-400">
-                    Physischer Speicherort & volle Administrationsrechte
-                  </span>
-                </div>
-              </div>
+        ) : (
+          <div className="mt-4 flex-1 min-h-[160px] overflow-y-auto pr-1">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                Personen mit Zugriff ({membersList.length + 1})
+              </h4>
             </div>
 
-            {/* Eingeladene Mitglieder */}
-            {isLoading ? (
-              <div className="py-8 flex items-center justify-center text-xs text-gray-400">
-                <Loader2 className="w-5 h-5 animate-spin mr-2" />
-                <span>Mitglieder werden geladen...</span>
-              </div>
-            ) : membersList.length === 0 ? (
-              <div className="py-6 text-center text-xs text-gray-400">
-                Dieser Ordner ist aktuell mit keinen weiteren Personen geteilt.
-              </div>
-            ) : (
-              membersList.map((member) => (
-                <div
-                  key={member.username}
-                  className="p-3 rounded-xl bg-white dark:bg-gray-800 border border-gray-200/80 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 transition-all flex flex-col gap-2.5"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-8 h-8 rounded-full bg-emerald-100 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold text-xs uppercase shrink-0">
-                        {member.username.slice(0, 2)}
-                      </div>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-xs sm:text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">
-                            @{member.username}
-                          </span>
-                          {member.status === 'accepted' ? (
-                            <span className="flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border border-emerald-200/60 dark:border-emerald-800/60">
-                              <CheckCircle className="w-2.5 h-2.5" />
-                              <span>Aktiv</span>
-                            </span>
-                          ) : member.status === 'pending' ? (
-                            <span className="flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 border border-amber-200/60 dark:border-amber-800/60">
-                              <Clock className="w-2.5 h-2.5" />
-                              <span>Ausstehend</span>
-                            </span>
-                          ) : (
-                            <span className="text-[10px] text-gray-400">
-                              Abgelehnt
-                            </span>
-                          )}
-                        </div>
-                        <span className="text-[10px] text-gray-400 font-mono">
-                          Hinzugefügt am {new Date(member.added_at).toLocaleDateString('de-DE')}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Entfernen Button (Nur für Nutzer mit can_manage_members) */}
-                    {canManageMembers && (
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveMember(member.username)}
-                        disabled={deletingMember === member.username}
-                        className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors disabled:opacity-50 shrink-0 cursor-pointer"
-                        title={`Zugriff für @${member.username} entfernen`}
-                      >
-                        {deletingMember === member.username ? (
-                          <Loader2 className="w-4 h-4 animate-spin text-red-500" />
-                        ) : (
-                          <Trash2 className="w-4 h-4" />
-                        )}
-                      </button>
-                    )}
+            <div className="space-y-2.5">
+              {/* Eigentümer (immer ganz oben) */}
+              <div className="flex items-center justify-between p-3 rounded-xl bg-gray-50 dark:bg-gray-800/60 border border-gray-200/60 dark:border-gray-700/60">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-300 flex items-center justify-center font-bold text-xs uppercase shrink-0">
+                    {actualOwner.slice(0, 2)}
                   </div>
-
-                  {/* 2 Schalter / Toggles für Berechtigungen */}
-                  <div className="pt-2 border-t border-gray-100 dark:border-gray-750 flex flex-wrap items-center gap-3 text-xs bg-gray-50/50 dark:bg-gray-850/40 p-2 rounded-lg">
-                    {/* Schalter 1: Darf Mitgliederliste sehen */}
+                  <div>
                     <div className="flex items-center gap-2">
-                      {canManageMembers ? (
-                        <label className="relative inline-flex items-center cursor-pointer select-none">
-                          <input
-                            type="checkbox"
-                            checked={member.can_see_members}
-                            disabled={updatingMember === member.username}
-                            onChange={(e) =>
-                              handleToggleMemberPermission(
-                                member,
-                                'can_see_members',
-                                e.target.checked
-                              )
-                            }
-                            className="sr-only peer"
-                          />
-                          <div className="w-7 h-4 bg-gray-300 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-blue-600"></div>
-                          <span className="ml-1.5 text-[11px] font-medium text-gray-700 dark:text-gray-300 flex items-center gap-1">
-                            {member.can_see_members ? (
-                              <Eye className="w-3 h-3 text-blue-500" />
-                            ) : (
-                              <EyeOff className="w-3 h-3 text-gray-400" />
-                            )}
-                            <span>Mitgliederliste sehen</span>
-                          </span>
-                        </label>
-                      ) : (
-                        <span className="text-[11px] text-gray-600 dark:text-gray-400 flex items-center gap-1">
-                          {member.can_see_members ? (
-                            <>
-                              <Eye className="w-3 h-3 text-blue-500" />
-                              <span className="font-semibold text-blue-600 dark:text-blue-400">Sieht Mitgliederliste</span>
-                            </>
-                          ) : (
-                            <>
-                              <EyeOff className="w-3 h-3 text-gray-400" />
-                              <span>Keine Mitglieder-Sicht</span>
-                            </>
-                          )}
-                        </span>
-                      )}
+                      <span className="text-xs sm:text-sm font-semibold text-gray-900 dark:text-gray-100">
+                        @{actualOwner}
+                      </span>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300">
+                        Eigentümer
+                      </span>
                     </div>
-
-                    {/* Schalter 2: Darf Personen hinzufügen/entfernen */}
-                    <div className="flex items-center gap-2">
-                      {canManageMembers ? (
-                        <label
-                          className={`relative inline-flex items-center select-none ${
-                            member.can_see_members
-                              ? 'cursor-pointer'
-                              : 'cursor-not-allowed opacity-40'
-                          }`}
-                          title={
-                            !member.can_see_members
-                              ? 'Schalter 2 setzt zwingend Schalter 1 („Mitgliederliste sehen“) voraus.'
-                              : ''
-                          }
-                        >
-                          <input
-                            type="checkbox"
-                            checked={member.can_manage_members}
-                            disabled={!member.can_see_members || updatingMember === member.username}
-                            onChange={(e) => {
-                              if (member.can_see_members) {
-                                handleToggleMemberPermission(
-                                  member,
-                                  'can_manage_members',
-                                  e.target.checked
-                                );
-                              }
-                            }}
-                            className="sr-only peer"
-                          />
-                          <div className="w-7 h-4 bg-gray-300 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-indigo-600"></div>
-                          <span className="ml-1.5 text-[11px] font-medium text-gray-700 dark:text-gray-300 flex items-center gap-1">
-                            <UserCog className={`w-3 h-3 ${member.can_manage_members ? 'text-indigo-500' : 'text-gray-400'}`} />
-                            <span>Personen verwalten</span>
-                          </span>
-                        </label>
-                      ) : (
-                        <span className="text-[11px] text-gray-600 dark:text-gray-400 flex items-center gap-1">
-                          <UserCog className={`w-3 h-3 ${member.can_manage_members ? 'text-indigo-500' : 'text-gray-400'}`} />
-                          {member.can_manage_members ? (
-                            <span className="font-semibold text-indigo-600 dark:text-indigo-400">Darf verwalten</span>
-                          ) : (
-                            <span>Keine Verwaltung</span>
-                          )}
-                        </span>
-                      )}
-                    </div>
+                    <span className="text-[11px] text-gray-500 dark:text-gray-400">
+                      Physischer Speicherort & volle Administrationsrechte
+                    </span>
                   </div>
                 </div>
-              ))
-            )}
+              </div>
+
+              {/* Eingeladene Mitglieder */}
+              {isLoading ? (
+                <div className="py-8 flex items-center justify-center text-xs text-gray-400">
+                  <Loader2 className="w-5 h-5 animate-spin mr-2" />
+                  <span>Mitglieder werden geladen...</span>
+                </div>
+              ) : membersList.length === 0 ? (
+                <div className="py-6 text-center text-xs text-gray-400">
+                  Dieser Ordner ist aktuell mit keinen weiteren Personen geteilt.
+                </div>
+              ) : (
+                membersList.map((member) => (
+                  <div
+                    key={member.username}
+                    className="p-3 rounded-xl bg-white dark:bg-gray-800 border border-gray-200/80 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 transition-all flex flex-col gap-2.5"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-8 h-8 rounded-full bg-emerald-100 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold text-xs uppercase shrink-0">
+                          {member.username.slice(0, 2)}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs sm:text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">
+                              @{member.username}
+                            </span>
+                            {member.status === 'accepted' || member.status === 'active' ? (
+                              <span className="flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border border-emerald-200/60 dark:border-emerald-800/60">
+                                <CheckCircle className="w-2.5 h-2.5" />
+                                <span>Aktiv</span>
+                              </span>
+                            ) : member.status === 'pending' ? (
+                              <span className="flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 border border-amber-200/60 dark:border-amber-800/60">
+                                <Clock className="w-2.5 h-2.5" />
+                                <span>Ausstehend</span>
+                              </span>
+                            ) : (
+                              <span className="text-[10px] text-gray-400">
+                                Abgelehnt
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-[10px] text-gray-400 font-mono">
+                            Hinzugefügt am {new Date(member.added_at).toLocaleDateString('de-DE')}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Entfernen Button (Nur für Nutzer mit can_manage_members) */}
+                      {canManageMembers && (
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveMember(member.username)}
+                          disabled={deletingMember === member.username}
+                          className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors disabled:opacity-50 shrink-0 cursor-pointer"
+                          title={`Zugriff für @${member.username} entfernen`}
+                        >
+                          {deletingMember === member.username ? (
+                            <Loader2 className="w-4 h-4 animate-spin text-red-500" />
+                          ) : (
+                            <Trash2 className="w-4 h-4" />
+                          )}
+                        </button>
+                      )}
+                    </div>
+
+                    {/* 2 Schalter / Toggles für Berechtigungen */}
+                    <div className="pt-2 border-t border-gray-100 dark:border-gray-750 flex flex-wrap items-center gap-3 text-xs bg-gray-50/50 dark:bg-gray-850/40 p-2 rounded-lg">
+                      {/* Schalter 1: Darf Mitgliederliste sehen */}
+                      <div className="flex items-center gap-2">
+                        {canManageMembers ? (
+                          <label className="relative inline-flex items-center cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              checked={member.can_see_members}
+                              disabled={updatingMember === member.username}
+                              onChange={(e) =>
+                                handleToggleMemberPermission(
+                                  member,
+                                  'can_see_members',
+                                  e.target.checked
+                                )
+                              }
+                              className="sr-only peer"
+                            />
+                            <div className="w-7 h-4 bg-gray-300 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-blue-600"></div>
+                            <span className="ml-1.5 text-[11px] font-medium text-gray-700 dark:text-gray-300 flex items-center gap-1">
+                              {member.can_see_members ? (
+                                <Eye className="w-3 h-3 text-blue-500" />
+                              ) : (
+                                <EyeOff className="w-3 h-3 text-gray-400" />
+                              )}
+                              <span>Mitgliederliste sehen</span>
+                            </span>
+                          </label>
+                        ) : (
+                          <span className="text-[11px] text-gray-600 dark:text-gray-400 flex items-center gap-1">
+                            {member.can_see_members ? (
+                              <>
+                                <Eye className="w-3 h-3 text-blue-500" />
+                                <span className="font-semibold text-blue-600 dark:text-blue-400">Sieht Mitgliederliste</span>
+                              </>
+                            ) : (
+                              <>
+                                <EyeOff className="w-3 h-3 text-gray-400" />
+                                <span>Keine Mitglieder-Sicht</span>
+                              </>
+                            )}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Schalter 2: Darf Personen hinzufügen/entfernen */}
+                      <div className="flex items-center gap-2">
+                        {canManageMembers ? (
+                          <label
+                            className={`relative inline-flex items-center select-none ${
+                              member.can_see_members
+                                ? 'cursor-pointer'
+                                : 'cursor-not-allowed opacity-40'
+                            }`}
+                            title={
+                              !member.can_see_members
+                                ? 'Schalter 2 setzt zwingend Schalter 1 („Mitgliederliste sehen“) voraus.'
+                                : ''
+                            }
+                          >
+                            <input
+                              type="checkbox"
+                              checked={member.can_manage_members}
+                              disabled={!member.can_see_members || updatingMember === member.username}
+                              onChange={(e) => {
+                                if (member.can_see_members) {
+                                  handleToggleMemberPermission(
+                                    member,
+                                    'can_manage_members',
+                                    e.target.checked
+                                  );
+                                }
+                              }}
+                              className="sr-only peer"
+                            />
+                            <div className="w-7 h-4 bg-gray-300 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-indigo-600"></div>
+                            <span className="ml-1.5 text-[11px] font-medium text-gray-700 dark:text-gray-300 flex items-center gap-1">
+                              <UserCog className={`w-3 h-3 ${member.can_manage_members ? 'text-indigo-500' : 'text-gray-400'}`} />
+                              <span>Personen verwalten</span>
+                            </span>
+                          </label>
+                        ) : (
+                          <span className="text-[11px] text-gray-600 dark:text-gray-400 flex items-center gap-1">
+                            <UserCog className={`w-3 h-3 ${member.can_manage_members ? 'text-indigo-500' : 'text-gray-400'}`} />
+                            {member.can_manage_members ? (
+                              <span className="font-semibold text-indigo-600 dark:text-indigo-400">Darf verwalten</span>
+                            ) : (
+                              <span>Keine Verwaltung</span>
+                            )}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Footer */}
         <div className="flex items-center justify-between pt-4 border-t border-gray-100 dark:border-gray-800 mt-4 shrink-0">

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   UploadCloud,
   FolderPlus,
@@ -35,10 +35,10 @@ interface FileExplorerProps {
   isActionsDisabled?: boolean;
   rootLabel?: string;
   isSharedContext?: boolean;
-  clipboard?: { action: 'copy' | 'cut'; item: FileItemData; sourcePath: string } | null;
+  clipboard?: { action: 'copy' | 'cut'; item: FileItemData; sourcePath: string; sourceOwner?: string } | null;
   onCopyItem?: (item: FileItemData) => void;
   onCutItem?: (item: FileItemData) => void;
-  onPaste?: () => void;
+  onPaste?: (targetSubPath?: string) => void;
   onUploadClick?: () => void;
 }
 
@@ -131,9 +131,47 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
     }
   };
 
+  // Local navigation lock to prevent accidental double-click / rapid tap duplication
+  const isNavigatingLocalRef = useRef(false);
+  const lastFolderClickRef = useRef<{ id: string; time: number } | null>(null);
+
+  useEffect(() => {
+    if (!isLoading) {
+      isNavigatingLocalRef.current = false;
+    }
+  }, [isLoading]);
+
+  const handleSafeOpenFile = useCallback((it: FileItemData) => {
+    if (it.type === 'folder') {
+      const now = Date.now();
+      const folderKey = it.id || it.path || it.name;
+
+      if (isLoading || isNavigatingLocalRef.current) {
+        return;
+      }
+
+      if (
+        lastFolderClickRef.current &&
+        lastFolderClickRef.current.id === folderKey &&
+        now - lastFolderClickRef.current.time < 350
+      ) {
+        return;
+      }
+
+      lastFolderClickRef.current = { id: folderKey, time: now };
+      isNavigatingLocalRef.current = true;
+      setTimeout(() => {
+        isNavigatingLocalRef.current = false;
+      }, 400);
+    }
+
+    setSelectedItem(it);
+    onOpenFile(it);
+  }, [isLoading, onOpenFile]);
+
   const navigateUp = () => {
     if (!currentPath) return;
-    const parts = currentPath.split('/');
+    const parts = currentPath.split('/').filter(Boolean);
     parts.pop();
     onNavigatePath(parts.join('/'));
   };
@@ -307,10 +345,7 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
                           viewMode="grid"
                           isSelected={selectedItem?.name === item.name}
                           isCut={clipboard?.action === 'cut' && clipboard?.item.name === item.name}
-                          onOpen={(it) => {
-                            setSelectedItem(it);
-                            onOpenFile(it);
-                          }}
+                          onOpen={handleSafeOpenFile}
                           onDownload={onDownloadFile}
                           onDelete={onDeleteItem}
                           onRename={onRenameItem}
@@ -341,10 +376,7 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
                           viewMode="list"
                           isSelected={selectedItem?.name === item.name}
                           isCut={clipboard?.action === 'cut' && clipboard?.item.name === item.name}
-                          onOpen={(it) => {
-                            setSelectedItem(it);
-                            onOpenFile(it);
-                          }}
+                          onOpen={handleSafeOpenFile}
                           onDownload={onDownloadFile}
                           onDelete={onDeleteItem}
                           onRename={onRenameItem}
@@ -457,7 +489,7 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
       <ContextMenu
         position={contextMenu}
         onClose={() => setContextMenu(null)}
-        onOpen={(it) => onOpenFile(it)}
+        onOpen={(it) => handleSafeOpenFile(it)}
         onOpenInNewTab={onOpenInNewTab}
         onDownload={(it) => onDownloadFile(it)}
         onRename={(it) => onRenameItem?.(it)}
@@ -468,6 +500,15 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
         onCut={(it) => onCutItem?.(it)}
         onShare={(it) => onShareFolder?.(it)}
         onManageShares={(it) => onManageShares?.(it)}
+        onPasteIntoFolder={(targetFolder) => {
+          if (onPaste) {
+            const nextSub = currentPath ? `${currentPath}/${targetFolder.name}` : targetFolder.name;
+            onPaste(nextSub);
+          }
+        }}
+        canPasteIntoFolder={Boolean(clipboard && onPaste && !isActionsDisabled)}
+        clipboardAction={clipboard?.action}
+        clipboardItemName={clipboard?.item.name}
         isActionsDisabled={isActionsDisabled}
       />
 

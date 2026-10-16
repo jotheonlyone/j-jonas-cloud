@@ -90,9 +90,10 @@ export function normalizeShareDoc(data: any): FolderShare {
   const rawInvited = (typeof data?.invited_user === 'string' ? data.invited_user : '')?.trim()?.toLowerCase() || '';
   if (rawInvited) {
     if (!shared_with.some(m => m?.username && m.username.toLowerCase() === rawInvited)) {
+      const invStatus = (data.status === 'accepted' || data.status === 'active') ? 'accepted' : (data.status || 'pending');
       shared_with.push({
         username: rawInvited,
-        status: data.status || 'pending',
+        status: invStatus,
         can_see_members: data.can_see_members ?? true,
         can_manage_members: data.can_manage_members ?? false,
         added_at: data.created_at || new Date().toISOString()
@@ -107,9 +108,18 @@ export function normalizeShareDoc(data: any): FolderShare {
     if (u && !memberMap.has(u)) {
       const can_see_members = m.can_see_members ?? true;
       const can_manage_members = can_see_members ? (m.can_manage_members ?? false) : false;
+      // Normalize 'active' or 'accepted' to 'accepted'
+      let memberStatus: 'pending' | 'accepted' | 'declined' = 'pending';
+      const rawStatus = m.status || (data.status && (data.invited_user?.toLowerCase() === u || shared_with.length === 1) ? data.status : 'pending');
+      if (rawStatus === 'accepted' || rawStatus === 'active') {
+        memberStatus = 'accepted';
+      } else if (rawStatus === 'declined') {
+        memberStatus = 'declined';
+      }
+
       memberMap.set(u, {
         username: u,
-        status: m.status || 'pending',
+        status: memberStatus,
         can_see_members,
         can_manage_members,
         added_at: m.added_at || new Date().toISOString()
@@ -117,14 +127,19 @@ export function normalizeShareDoc(data: any): FolderShare {
     }
   }
 
+  const finalMembers = Array.from(memberMap.values());
+  const rootStatus = data.status === 'active' || data.status === 'accepted'
+    ? 'accepted'
+    : (data.status === 'declined' ? 'declined' : (finalMembers.some(m => m.status === 'accepted') ? 'accepted' : 'pending'));
+
   return {
     id,
     folder_path,
     folder_name,
     owner,
-    shared_with: Array.from(memberMap.values()),
+    shared_with: finalMembers,
     invited_user: rawInvited || undefined,
-    status: data.status || 'pending',
+    status: rootStatus,
     created_at: data.created_at || new Date().toISOString(),
     updated_at: data.updated_at || data.created_at || new Date().toISOString(),
   };
@@ -137,21 +152,34 @@ export function consolidateFolderShares(shares: any[]): FolderShare[] {
     try {
       const normalized = normalizeShareDoc(raw);
       if (!normalized || !normalized.id) continue;
-      const key = `${(normalized.owner || '').toLowerCase()}::${normalized.folder_path || ''}`;
+      const normalizePath = (p: string) => (p || '').trim().replace(/^\/+|\/+$/g, '').toLowerCase();
+      const key = `${(normalized.owner || '').toLowerCase()}::${normalizePath(normalized.folder_path || '')}`;
       if (!map.has(key)) {
         map.set(key, normalized);
       } else {
-        // Merge members into existing single folder
         const existing = map.get(key)!;
-        for (const m of normalized.shared_with) {
-          if (!m || !m.username) continue;
-          const found = existing.shared_with.find(em => em && em.username?.toLowerCase() === m.username.toLowerCase());
-          if (!found) {
-            existing.shared_with.push(m);
-          } else {
-            if (m.status === 'accepted') found.status = 'accepted';
-            if (m.can_see_members !== undefined) found.can_see_members = m.can_see_members;
-            if (m.can_manage_members !== undefined) found.can_manage_members = m.can_manage_members;
+        const incomingTime = new Date(normalized.updated_at || normalized.created_at || 0).getTime();
+        const existingTime = new Date(existing.updated_at || existing.created_at || 0).getTime();
+        const incomingIsNewer = incomingTime >= existingTime;
+
+        if (incomingIsNewer) {
+          // Incoming from server or fresh update is newer: prioritize incoming
+          for (const oldM of existing.shared_with) {
+            if (oldM?.username && !normalized.shared_with.some(nm => nm?.username?.toLowerCase() === oldM.username.toLowerCase())) {
+              normalized.shared_with.push(oldM);
+            }
+          }
+          map.set(key, normalized);
+        } else {
+          // Existing is newer, but merge any accepted statuses
+          for (const m of normalized.shared_with) {
+            if (!m || !m.username) continue;
+            const found = existing.shared_with.find(em => em && em.username?.toLowerCase() === m.username.toLowerCase());
+            if (!found) {
+              existing.shared_with.push(m);
+            } else {
+              if (m.status === 'accepted') found.status = 'accepted';
+            }
           }
         }
       }
@@ -178,6 +206,24 @@ function saveLocalShares(shares: FolderShare[]) {
     localStorage.setItem(LOCAL_SHARES_KEY, JSON.stringify(consolidated));
   } catch (err) {
     console.error('Failed saving local shares fallback', err);
+  }
+}
+
+function updateLocalShare(share: FolderShare) {
+  try {
+    const local = getLocalShares();
+    const normalizePath = (p: string) => (p || '').trim().replace(/^\/+|\/+$/g, '').toLowerCase();
+    const key = `${share.owner.toLowerCase()}::${normalizePath(share.folder_path)}`;
+    const idx = local.findIndex(s => s && `${s.owner.toLowerCase()}::${normalizePath(s.folder_path)}` === key);
+    if (idx !== -1) {
+      local[idx] = share;
+    } else {
+      local.push(share);
+    }
+    // Directly save without letting older timestamp re-overwrite
+    localStorage.setItem(LOCAL_SHARES_KEY, JSON.stringify(local));
+  } catch (err) {
+    console.warn('Failed to update local share cache:', err);
   }
 }
 
@@ -658,7 +704,8 @@ export function subscribeMaintenanceMode(callback: (maintenance: boolean) => voi
 // ==========================================
 
 export function getSharedFolderDocId(owner: string, folder_path: string): string {
-  return `${owner.trim().toLowerCase()}__${encodeURIComponent(folder_path.trim())}`;
+  const cleanPath = (folder_path || '').trim().replace(/^\/+|\/+$/g, '');
+  return `${owner.trim().toLowerCase()}__${encodeURIComponent(cleanPath)}`;
 }
 
 export async function createFolderShare(
@@ -801,7 +848,9 @@ export async function updateMemberPermissions(
 ): Promise<{ success: boolean; error?: string; share?: FolderShare }> {
   const owner = ownerRaw.trim().toLowerCase();
   const targetUsername = targetUsernameRaw.trim().toLowerCase();
-  const shareDocId = getSharedFolderDocId(owner, folder_path);
+  const normalizePath = (p: string) => (p || '').trim().replace(/^\/+|\/+$/g, '').toLowerCase();
+  const normalizedFolderPath = normalizePath(folder_path);
+  const calculatedDocId = getSharedFolderDocId(owner, folder_path);
 
   // WICHTIGE ABHÄNGIGKEIT: Schalter 2 kann NUR aktiviert werden, wenn Schalter 1 aktiv ist!
   // Wird Schalter 1 deaktiviert, schaltet sich Schalter 2 automatisch mit aus.
@@ -809,23 +858,36 @@ export async function updateMemberPermissions(
   const can_manage_members = can_see_members ? Boolean(permissions.can_manage_members) : false;
 
   let currentShare: FolderShare | null = null;
-  const localShares = getLocalShares();
-  const localIdx = localShares.findIndex(
-    s => s.owner.toLowerCase() === owner && s.folder_path === folder_path
-  );
-  if (localIdx !== -1) {
-    currentShare = localShares[localIdx];
+  let targetDocId = calculatedDocId;
+
+  // 1. Fetch the freshest share document from Firestore first
+  try {
+    const snap = await getDoc(doc(db, 'shares', calculatedDocId));
+    if (snap.exists()) {
+      currentShare = normalizeShareDoc({ ...snap.data(), id: snap.id });
+      targetDocId = snap.id;
+    } else {
+      const q = query(collection(db, 'shares'), where('owner', '==', owner));
+      const qSnap = await getDocs(q);
+      for (const d of qSnap.docs) {
+        const dData = d.data();
+        if (normalizePath(dData.folder_path || '') === normalizedFolderPath) {
+          currentShare = normalizeShareDoc({ ...dData, id: d.id });
+          targetDocId = d.id;
+          break;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Firestore get share doc error:', err);
   }
 
+  // Fallback to local store if Firestore did not return the share
   if (!currentShare) {
-    try {
-      const snap = await getDoc(doc(db, 'shares', shareDocId));
-      if (snap.exists()) {
-        currentShare = normalizeShareDoc({ ...snap.data(), id: snap.id });
-      }
-    } catch (err) {
-      console.warn('Firestore get share doc error:', err);
-    }
+    const localShares = getLocalShares();
+    currentShare = localShares.find(
+      s => s.owner.toLowerCase() === owner && normalizePath(s.folder_path) === normalizedFolderPath
+    ) || null;
   }
 
   if (!currentShare) {
@@ -841,22 +903,48 @@ export async function updateMemberPermissions(
   member.can_manage_members = can_manage_members;
   currentShare.updated_at = new Date().toISOString();
 
+  // 2. Persist immediately to Firestore
   try {
-    const shareDocRef = doc(db, 'shares', shareDocId);
+    const shareDocRef = doc(db, 'shares', targetDocId);
     await setDoc(shareDocRef, {
       ...currentShare,
       shared_users: currentShare.shared_with.filter(m => m && m.username).map(m => m.username.toLowerCase()),
+      updated_at: currentShare.updated_at,
     }, { merge: true });
+
+    if (targetDocId !== calculatedDocId) {
+      try {
+        await setDoc(doc(db, 'shares', calculatedDocId), {
+          ...currentShare,
+          shared_users: currentShare.shared_with.filter(m => m && m.username).map(m => m.username.toLowerCase()),
+          updated_at: currentShare.updated_at,
+        }, { merge: true });
+      } catch {}
+    }
   } catch (err) {
     console.warn('Firestore update member permissions error:', err);
   }
 
-  if (localIdx !== -1) {
-    localShares[localIdx] = currentShare;
-  } else {
-    localShares.push(currentShare);
+  // 3. Persist to local store
+  updateLocalShare(currentShare);
+
+  // 4. Also notify backend API (PATCH /api/shares/permissions) if in browser
+  if (typeof window !== 'undefined') {
+    try {
+      fetch('/api/shares/permissions', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          folderPath: folder_path,
+          owner,
+          username: targetUsername,
+          permissions: { can_see_members, can_manage_members },
+        }),
+      }).catch((apiErr) => {
+        console.warn('Backend API permissions sync warning (non-fatal):', apiErr);
+      });
+    } catch {}
   }
-  saveLocalShares(localShares);
 
   return { success: true, share: currentShare };
 }
@@ -1132,87 +1220,204 @@ export async function respondToShare(
   status: 'accepted' | 'declined',
   usernameRaw?: string
 ): Promise<boolean> {
-  const localShares = getLocalShares();
-  let currentShare = localShares.find(s => s.id === shareId) || null;
+  const targetUser = (usernameRaw || '').trim().toLowerCase();
+  const normalizePath = (p: string) => (p || '').trim().replace(/^\/+|\/+$/g, '').toLowerCase();
+  let currentShare: FolderShare | null = null;
+  let targetDocId = shareId;
 
-  if (!currentShare) {
+  // 1. Fetch document directly from Firestore by shareId
+  try {
+    const snap = await getDoc(doc(db, 'shares', shareId));
+    if (snap.exists()) {
+      currentShare = normalizeShareDoc({ ...snap.data(), id: snap.id });
+      targetDocId = snap.id;
+    }
+  } catch (err) {
+    console.warn('Firestore get share to respond error:', err);
+  }
+
+  // 2. If shareId has owner__path format, try fetching by normalized calculated doc id
+  if (!currentShare && shareId.includes('__')) {
+    const [ownerPart, ...pathParts] = shareId.split('__');
+    const rawPath = pathParts.join('__');
+    let decodedPath = rawPath;
+    try { decodedPath = decodeURIComponent(rawPath); } catch {}
+    const calcId = getSharedFolderDocId(ownerPart, decodedPath);
+    if (calcId !== shareId) {
+      try {
+        const snap = await getDoc(doc(db, 'shares', calcId));
+        if (snap.exists()) {
+          currentShare = normalizeShareDoc({ ...snap.data(), id: snap.id });
+          targetDocId = snap.id;
+        }
+      } catch {}
+    }
+  }
+
+  // 3. Search Firestore by query (shared_users array-contains targetUser)
+  if (!currentShare && targetUser) {
     try {
-      const snap = await getDoc(doc(db, 'shares', shareId));
-      if (snap.exists()) {
-        currentShare = normalizeShareDoc({ ...snap.data(), id: snap.id });
+      const q = query(collection(db, 'shares'), where('shared_users', 'array-contains', targetUser));
+      const qSnap = await getDocs(q);
+      for (const d of qSnap.docs) {
+        const dData = d.data();
+        if (
+          d.id === shareId ||
+          (shareId.includes('__') && d.id.toLowerCase().includes(shareId.toLowerCase()))
+        ) {
+          currentShare = normalizeShareDoc({ ...dData, id: d.id });
+          targetDocId = d.id;
+          break;
+        }
       }
-    } catch (err) {
-      console.warn('Firestore get share to respond error:', err);
+    } catch {}
+  }
+
+  // 4. Fallback to local shares if Firestore fetch failed or offline
+  if (!currentShare) {
+    const localShares = getLocalShares();
+    currentShare = localShares.find(s => s.id === shareId) || null;
+    if (!currentShare && shareId.includes('__')) {
+      const [ownerPart, ...pathParts] = shareId.split('__');
+      const rawPath = pathParts.join('__');
+      let decodedPath = rawPath;
+      try { decodedPath = decodeURIComponent(rawPath); } catch {}
+      currentShare = localShares.find(
+        s => (s.owner || '').toLowerCase() === ownerPart.toLowerCase() &&
+             normalizePath(s.folder_path) === normalizePath(decodedPath)
+      ) || null;
     }
   }
 
   if (!currentShare) return false;
 
-  const targetUser = usernameRaw ? usernameRaw.trim().toLowerCase() : '';
-  const member = currentShare.shared_with.find(m =>
-    targetUser ? m.username.toLowerCase() === targetUser : m.status === 'pending'
+  let member = currentShare.shared_with.find(m =>
+    m && m.username && (targetUser ? m.username.toLowerCase() === targetUser : m.status === 'pending')
   );
+
+  if (!member && targetUser && currentShare.invited_user && currentShare.invited_user.toLowerCase() === targetUser) {
+    member = {
+      username: targetUser,
+      status: 'pending',
+      can_see_members: true,
+      can_manage_members: false,
+      added_at: currentShare.created_at || new Date().toISOString(),
+    };
+    currentShare.shared_with.push(member);
+  }
 
   if (member) {
     if (status === 'declined') {
-      currentShare.shared_with = currentShare.shared_with.filter(m => m !== member);
+      currentShare.shared_with = currentShare.shared_with.filter(m => m !== member && m.username.toLowerCase() !== targetUser);
+      currentShare.status = 'declined';
     } else {
       member.status = 'accepted';
+      currentShare.status = 'accepted';
     }
     currentShare.updated_at = new Date().toISOString();
   }
 
+  const calculatedDocId = getSharedFolderDocId(currentShare.owner, currentShare.folder_path);
+
   if (currentShare.shared_with.length === 0) {
     try {
-      await deleteDoc(doc(db, 'shares', shareId));
+      await deleteDoc(doc(db, 'shares', targetDocId));
     } catch (err) {
       console.warn('Firestore delete empty share on decline error:', err);
     }
-    const idx = localShares.findIndex(s => s.id === shareId);
-    if (idx !== -1) {
-      localShares.splice(idx, 1);
+    if (targetDocId !== calculatedDocId) {
+      try {
+        await deleteDoc(doc(db, 'shares', calculatedDocId));
+      } catch {}
     }
+    const localShares = getLocalShares().filter(s => s.id !== shareId && s.id !== targetDocId && s.id !== calculatedDocId);
+    saveLocalShares(localShares);
   } else {
     try {
-      await setDoc(doc(db, 'shares', shareId), {
+      const updatedData = {
         ...currentShare,
-        shared_users: currentShare.shared_with.map(m => m.username.toLowerCase()),
-      });
+        status: currentShare.status,
+        shared_users: currentShare.shared_with.filter(m => m && m.username).map(m => m.username.toLowerCase()),
+        updated_at: currentShare.updated_at,
+      };
+      await setDoc(doc(db, 'shares', targetDocId), updatedData, { merge: true });
+
+      if (targetDocId !== calculatedDocId) {
+        try {
+          await setDoc(doc(db, 'shares', calculatedDocId), updatedData, { merge: true });
+        } catch {}
+      }
     } catch (err) {
       console.warn('Firestore update share on response error:', err);
     }
-    const idx = localShares.findIndex(s => s.id === shareId);
-    if (idx !== -1) {
-      localShares[idx] = currentShare;
-    } else {
-      localShares.push(currentShare);
-    }
+    updateLocalShare(currentShare);
   }
 
-  saveLocalShares(localShares);
+  // 5. Also notify backend API (POST /api/shares/respond) if in browser
+  if (typeof window !== 'undefined') {
+    try {
+      fetch('/api/shares/respond', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shareId, status, username: targetUser }),
+      }).catch((apiErr) => {
+        console.warn('Backend API share respond sync warning (non-fatal):', apiErr);
+      });
+    } catch {}
+  }
+
   return true;
 }
 
 export async function getSharedFolder(folder_path: string, ownerRaw: string): Promise<FolderShare | null> {
   const owner = ownerRaw.trim().toLowerCase();
+  const normalizePath = (p: string) => (p || '').trim().replace(/^\/+|\/+$/g, '').toLowerCase();
+  const normalizedFolderPath = normalizePath(folder_path);
   const shareDocId = getSharedFolderDocId(owner, folder_path);
 
-  // Check local first
-  const local = getLocalShares().find(
-    s => s.owner.toLowerCase() === owner && s.folder_path === folder_path
-  );
-  if (local) return local;
-
+  // 1. Always query Firestore first for fresh statuses & permissions!
   try {
     const snap = await getDoc(doc(db, 'shares', shareDocId));
     if (snap.exists()) {
-      return normalizeShareDoc({ ...snap.data(), id: snap.id });
+      const fresh = normalizeShareDoc({ ...snap.data(), id: snap.id });
+      updateLocalShare(fresh);
+      return fresh;
+    }
+
+    const q = query(collection(db, 'shares'), where('owner', '==', owner));
+    const snapQ = await getDocs(q);
+    for (const d of snapQ.docs) {
+      const data = d.data();
+      if (normalizePath(data.folder_path || '') === normalizedFolderPath) {
+        const fresh = normalizeShareDoc({ ...data, id: d.id });
+        updateLocalShare(fresh);
+        return fresh;
+      }
+    }
+
+    // Additional scan across shares
+    const qAll = query(collection(db, 'shares'));
+    const allSnap = await getDocs(qAll);
+    for (const d of allSnap.docs) {
+      const data = d.data();
+      if (
+        (data.owner || '').toLowerCase() === owner &&
+        normalizePath(data.folder_path || '') === normalizedFolderPath
+      ) {
+        const fresh = normalizeShareDoc({ ...data, id: d.id });
+        updateLocalShare(fresh);
+        return fresh;
+      }
     }
   } catch (err) {
-    console.warn('Firestore getSharedFolder error:', err);
+    console.warn('Firestore getSharedFolder error, falling back to local cache:', err);
   }
 
-  return null;
+  // 2. Fallback to local cache
+  const local = getLocalShares().find(
+    s => s.owner.toLowerCase() === owner && normalizePath(s.folder_path) === normalizedFolderPath
+  );
+  return local || null;
 }
 
 export async function getSharesForFolder(folder_path: string, owner: string): Promise<FolderShare[]> {
@@ -1223,15 +1428,17 @@ export async function getSharesForFolder(folder_path: string, owner: string): Pr
 export async function getSharesForInvitedUser(usernameRaw: string): Promise<FolderShare[]> {
   const normalized = (usernameRaw || '').trim().toLowerCase();
   if (!normalized) return [];
-  const allResults: FolderShare[] = [];
+  const serverResults: FolderShare[] = [];
+  let firestoreSuccess = false;
 
   try {
     const q1 = query(collection(db, 'shares'), where('shared_users', 'array-contains', normalized));
     const snap1 = await getDocs(q1);
     snap1.docs.forEach(d => {
       const docData = d.data();
-      if (docData) allResults.push(normalizeShareDoc({ ...docData, id: d.id }));
+      if (docData) serverResults.push(normalizeShareDoc({ ...docData, id: d.id }));
     });
+    firestoreSuccess = true;
   } catch (err) {
     console.warn('Firestore get shares for user (array-contains) error:', err);
   }
@@ -1242,10 +1449,20 @@ export async function getSharesForInvitedUser(usernameRaw: string): Promise<Fold
     const snap2 = await getDocs(q2);
     snap2.docs.forEach(d => {
       const docData = d.data();
-      if (docData) allResults.push(normalizeShareDoc({ ...docData, id: d.id }));
+      if (docData) serverResults.push(normalizeShareDoc({ ...docData, id: d.id }));
     });
+    firestoreSuccess = true;
   } catch {
     // ignore
+  }
+
+  if (firestoreSuccess) {
+    const consolidated = consolidateFolderShares(serverResults);
+    const normalizePath = (p: string) => (p || '').trim().replace(/^\/+|\/+$/g, '').toLowerCase();
+    const serverKeys = new Set(consolidated.map(s => `${s.owner.toLowerCase()}::${normalizePath(s.folder_path)}`));
+    const remainingLocal = getLocalShares().filter(s => !serverKeys.has(`${s.owner.toLowerCase()}::${normalizePath(s.folder_path)}`));
+    saveLocalShares([...remainingLocal, ...consolidated]);
+    return consolidated;
   }
 
   // Local store fallback
@@ -1255,32 +1472,37 @@ export async function getSharesForInvitedUser(usernameRaw: string): Promise<Fold
       (Array.isArray(s.shared_with) && s.shared_with.some(m => m?.username && m.username?.toLowerCase() === normalized))
     )
   );
-  allResults.push(...local);
-
-  return consolidateFolderShares(allResults);
+  return consolidateFolderShares(local);
 }
 
 export async function getSharesByOwner(usernameRaw: string): Promise<FolderShare[]> {
   const normalized = (usernameRaw || '').trim().toLowerCase();
   if (!normalized) return [];
-  const allResults: FolderShare[] = [];
+  const serverResults: FolderShare[] = [];
+  let firestoreSuccess = false;
 
   try {
     const q = query(collection(db, 'shares'), where('owner', '==', normalized));
     const snap = await getDocs(q);
     snap.docs.forEach(d => {
       const docData = d.data();
-      if (docData) allResults.push(normalizeShareDoc({ ...docData, id: d.id }));
+      if (docData) serverResults.push(normalizeShareDoc({ ...docData, id: d.id }));
     });
+    firestoreSuccess = true;
   } catch (err) {
     console.warn('Firestore get shares by owner error:', err);
   }
 
+  if (firestoreSuccess) {
+    const consolidated = consolidateFolderShares(serverResults);
+    const remainingLocal = getLocalShares().filter(s => s && s.owner && s.owner.toLowerCase() !== normalized);
+    saveLocalShares([...remainingLocal, ...consolidated]);
+    return consolidated;
+  }
+
   // Local store fallback
   const local = getLocalShares().filter(s => s && s.owner && s.owner?.toLowerCase() === normalized);
-  allResults.push(...local);
-
-  return consolidateFolderShares(allResults);
+  return consolidateFolderShares(local);
 }
 
 

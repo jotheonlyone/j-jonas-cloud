@@ -113,6 +113,7 @@ export async function listFiles(owner: string, relativePath = ''): Promise<{ ite
           item.is_dir === true;
 
         return {
+          id: item.id || itemPath || itemName,
           name: itemName,
           type: isFolder ? 'folder' : 'file',
           size: Number(item.size || 0),
@@ -585,34 +586,119 @@ export async function renameItem(
   }
 }
 
+export interface FileTransferOptions {
+  sourceOwner?: string;
+  targetOwner?: string;
+  targetFolderId?: string;
+  actingUser?: string;
+  canWrite?: boolean;
+}
+
 /**
- * POST /copy
- * Body: { "user": "<username>", "sourcePath": "<relativer-quellpfad>", "destinationPath": "<relativer-zielpfad>" }
+ * POST /api/files/copy or POST /copy
+ * Supports options for sourceOwner, targetOwner, targetFolderId, actingUser, and canWrite.
  */
 export async function copyItem(
   user: string,
   sourcePath: string,
-  destinationPath: string
+  destinationPath: string,
+  options?: FileTransferOptions
 ): Promise<{ success: boolean; error?: string }> {
   const cleanSource = sourcePath.trim().replace(/^\/+/, '');
   const cleanDest = destinationPath.trim().replace(/^\/+/, '');
+  const targetOwner = options?.targetOwner || user.trim();
+  const sourceOwner = options?.sourceOwner || user.trim();
+  const actingUser = options?.actingUser || user.trim();
+
+  // 1. Try local full-stack endpoint /api/files/copy with authorization check
+  try {
+    const localRes = await fetch('/api/files/copy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user: targetOwner,
+        sourcePath: cleanSource,
+        destinationPath: cleanDest,
+        sourceOwner,
+        targetOwner,
+        targetFolderId: options?.targetFolderId,
+        actingUser,
+        canWrite: options?.canWrite ?? true,
+      }),
+    });
+    if (localRes.ok) {
+      const data = await localRes.json().catch(() => ({}));
+      if (data.success !== false) {
+        return { success: true };
+      }
+    } else if (localRes.status === 403) {
+      const errData = await localRes.json().catch(() => ({}));
+      return {
+        success: false,
+        error: errData.error || 'Zugriff verweigert: Keine Schreibrechte auf den Zielordner.',
+      };
+    }
+  } catch {
+    // Local route fallback
+  }
+
+  // 2. Direct remote backend POST /copy (or /files/copy)
   try {
     const payload = {
-      user: user.trim(),
+      user: targetOwner,
+      owner: targetOwner,
+      targetUser: targetOwner,
+      targetOwner,
+      sourceUser: sourceOwner,
+      sourceOwner,
       sourcePath: cleanSource,
       destinationPath: cleanDest,
       source_path: cleanSource,
       destination_path: cleanDest,
+      targetFolderId: options?.targetFolderId,
+      target_folder_id: options?.targetFolderId,
+      actingUser,
+      acting_user: actingUser,
+      canWrite: options?.canWrite ?? true,
+      can_write: options?.canWrite ?? true,
     };
 
-    const res = await fetch(`${STORAGE_BASE_URL}/copy`, {
+    let res = await fetch(`${STORAGE_BASE_URL}/copy`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
 
+    if (!res.ok && (res.status === 404 || res.status === 405)) {
+      res = await fetch(`${STORAGE_BASE_URL}/files/copy`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    }
+
     if (res.ok) {
       return { success: true };
+    }
+
+    // 3. Fallback for cross-user copy: download source stream and upload to target
+    if (sourceOwner.toLowerCase() !== targetOwner.toLowerCase()) {
+      try {
+        const streamUrl = getStreamUrl(cleanSource, sourceOwner);
+        const fileRes = await fetch(streamUrl);
+        if (fileRes.ok) {
+          const blob = await fileRes.blob();
+          const fileName = cleanDest.split('/').pop() || cleanSource.split('/').pop() || 'file';
+          const targetDir = cleanDest.includes('/') ? cleanDest.substring(0, cleanDest.lastIndexOf('/')) : '';
+          const fileObj = new File([blob], fileName, { type: blob.type });
+          const uploadRes = await uploadFile(fileObj, targetOwner, targetDir, 0, 999999);
+          if (uploadRes.success) {
+            return { success: true };
+          }
+        }
+      } catch (streamErr) {
+        console.warn('Fallback stream copy failed:', streamErr);
+      }
     }
 
     const errData = await res.json().catch(() => ({}));
@@ -629,33 +715,113 @@ export async function copyItem(
 }
 
 /**
- * POST /move
- * Body: { "user": "<username>", "sourcePath": "<relativer-quellpfad>", "destinationPath": "<relativer-zielpfad>" }
+ * POST /api/files/move or POST /move
+ * Supports options for sourceOwner, targetOwner, targetFolderId, actingUser, and canWrite.
  */
 export async function moveItem(
   user: string,
   sourcePath: string,
-  destinationPath: string
+  destinationPath: string,
+  options?: FileTransferOptions
 ): Promise<{ success: boolean; error?: string }> {
   const cleanSource = sourcePath.trim().replace(/^\/+/, '');
   const cleanDest = destinationPath.trim().replace(/^\/+/, '');
+  const targetOwner = options?.targetOwner || user.trim();
+  const sourceOwner = options?.sourceOwner || user.trim();
+  const actingUser = options?.actingUser || user.trim();
+
+  // 1. Try local full-stack endpoint /api/files/move with authorization check
+  try {
+    const localRes = await fetch('/api/files/move', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user: targetOwner,
+        sourcePath: cleanSource,
+        destinationPath: cleanDest,
+        sourceOwner,
+        targetOwner,
+        targetFolderId: options?.targetFolderId,
+        actingUser,
+        canWrite: options?.canWrite ?? true,
+      }),
+    });
+    if (localRes.ok) {
+      const data = await localRes.json().catch(() => ({}));
+      if (data.success !== false) {
+        return { success: true };
+      }
+    } else if (localRes.status === 403) {
+      const errData = await localRes.json().catch(() => ({}));
+      return {
+        success: false,
+        error: errData.error || 'Zugriff verweigert: Keine Schreibrechte auf den Zielordner.',
+      };
+    }
+  } catch {
+    // Local route fallback
+  }
+
+  // 2. Direct remote backend POST /move (or /files/move)
   try {
     const payload = {
-      user: user.trim(),
+      user: targetOwner,
+      owner: targetOwner,
+      targetUser: targetOwner,
+      targetOwner,
+      sourceUser: sourceOwner,
+      sourceOwner,
       sourcePath: cleanSource,
       destinationPath: cleanDest,
       source_path: cleanSource,
       destination_path: cleanDest,
+      targetFolderId: options?.targetFolderId,
+      target_folder_id: options?.targetFolderId,
+      actingUser,
+      acting_user: actingUser,
+      canWrite: options?.canWrite ?? true,
+      can_write: options?.canWrite ?? true,
     };
 
-    const res = await fetch(`${STORAGE_BASE_URL}/move`, {
+    let res = await fetch(`${STORAGE_BASE_URL}/move`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
 
+    if (!res.ok && (res.status === 404 || res.status === 405)) {
+      res = await fetch(`${STORAGE_BASE_URL}/files/move`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    }
+
     if (res.ok) {
       return { success: true };
+    }
+
+    // 3. Fallback for cross-user move: copy then delete source
+    if (sourceOwner.toLowerCase() !== targetOwner.toLowerCase()) {
+      try {
+        const streamUrl = getStreamUrl(cleanSource, sourceOwner);
+        const fileRes = await fetch(streamUrl);
+        if (fileRes.ok) {
+          const blob = await fileRes.blob();
+          const fileName = cleanDest.split('/').pop() || cleanSource.split('/').pop() || 'file';
+          const targetDir = cleanDest.includes('/') ? cleanDest.substring(0, cleanDest.lastIndexOf('/')) : '';
+          const fileObj = new File([blob], fileName, { type: blob.type });
+          const uploadRes = await uploadFile(fileObj, targetOwner, targetDir, 0, 999999);
+          if (uploadRes.success) {
+            const delDir = cleanSource.includes('/') ? cleanSource.substring(0, cleanSource.lastIndexOf('/')) : '';
+            const delName = cleanSource.split('/').pop() || cleanSource;
+            await deleteItem(sourceOwner, delDir, delName).catch(() => {});
+            return { success: true };
+          }
+        }
+      } catch (streamErr) {
+        console.warn('Fallback stream move failed:', streamErr);
+      }
     }
 
     const errData = await res.json().catch(() => ({}));

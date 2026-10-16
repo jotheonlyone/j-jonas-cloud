@@ -61,6 +61,7 @@ import {
   logoutAllAccounts,
   CURRENT_USER_KEY,
 } from './services/accountManager';
+import { resolveFolderPath } from './utils/pathResolver';
 
 const DARK_MODE_KEY = 'jjcloud_dark_mode';
 const VIEW_MODE_KEY = 'jjcloud_view_mode';
@@ -453,8 +454,10 @@ function MainApp() {
   useEffect(() => {
     if (user && currentTab === 'my-drive') {
       loadDirectoryFiles(user.username, currentPath);
+    } else if (user && currentTab === 'shared') {
+      loadShares(user.username);
     }
-  }, [user, currentPath, currentTab, loadDirectoryFiles]);
+  }, [user, currentPath, currentTab, loadDirectoryFiles, loadShares]);
 
   const handleLoginSuccess = (loggedInUser: UserAccount, targetTabOverride?: NavigationTab) => {
     const updatedAccounts = saveAndActivateAccount(loggedInUser);
@@ -648,71 +651,97 @@ function MainApp() {
     action: 'copy' | 'cut';
     item: FileItemData;
     sourcePath: string;
+    sourceOwner?: string;
   } | null>(null);
 
-  const handleCopyItem = (item: FileItemData) => {
-    const itemPath = item.path || (currentPath ? `${currentPath}/${item.name}` : item.name);
+  const handleCopyItem = (item: FileItemData, customSourcePath?: string) => {
+    const itemPath = customSourcePath || item.path || (currentPath ? `${currentPath}/${item.name}` : item.name);
     setClipboard({
       action: 'copy',
       item,
       sourcePath: itemPath,
+      sourceOwner: item.owner || user?.username,
     });
     addToast('info', 'In Zwischenablage kopiert', `"${item.name}" kopiert. Füge es per Rechtsklick ("Einfügen") oder Strg+V ein.`);
   };
 
-  const handleCutItem = (item: FileItemData) => {
+  const handleCutItem = (item: FileItemData, customSourcePath?: string) => {
     if (maintenanceMode && user?.role !== 'master') {
       addToast('error', 'Wartungsmodus', 'Aktion im Wartungsmodus pausiert.');
       return;
     }
-    const itemPath = item.path || (currentPath ? `${currentPath}/${item.name}` : item.name);
+    const itemPath = customSourcePath || item.path || (currentPath ? `${currentPath}/${item.name}` : item.name);
     setClipboard({
       action: 'cut',
       item,
       sourcePath: itemPath,
+      sourceOwner: item.owner || user?.username,
     });
     addToast('info', 'Ausgeschnitten', `"${item.name}" ausgeschnitten. Füge es per Rechtsklick ("Einfügen") oder Strg+V ein.`);
   };
 
-  const handlePasteItem = async () => {
+  const handlePasteItem = async (
+    customDestPath?: string,
+    customDestOwner?: string,
+    targetFolderId?: string
+  ) => {
     if (!user || !clipboard) return;
     if (maintenanceMode && user.role !== 'master') {
       addToast('error', 'Wartungsmodus', 'Einfügen ist während der Wartungsarbeiten deaktiviert.');
       return;
     }
 
-    const cleanCurrentPath = currentPath.trim().replace(/^\/+|\/+$/g, '');
+    const effectiveDestOwner = customDestOwner || user.username;
+    const effectiveSourceOwner = clipboard.sourceOwner || user.username;
+
+    const baseDestDir = (customDestPath !== undefined ? customDestPath : currentPath).trim().replace(/^\/+|\/+$/g, '');
     const cleanSourcePath = clipboard.sourcePath.trim().replace(/^\/+/, '');
-    const destPath = (cleanCurrentPath ? `${cleanCurrentPath}/${clipboard.item.name}` : clipboard.item.name).replace(/^\/+/, '');
+    const destPath = (baseDestDir ? `${baseDestDir}/${clipboard.item.name}` : clipboard.item.name).replace(/^\/+/, '');
 
     let targetDestPath = destPath;
-    if (clipboard.action === 'copy' && cleanSourcePath === destPath) {
+    if (
+      clipboard.action === 'copy' &&
+      cleanSourcePath === destPath &&
+      effectiveSourceOwner.toLowerCase() === effectiveDestOwner.toLowerCase()
+    ) {
       const lastDot = clipboard.item.name.lastIndexOf('.');
       if (clipboard.item.type === 'file' && lastDot > 0) {
         const base = clipboard.item.name.slice(0, lastDot);
         const ext = clipboard.item.name.slice(lastDot);
-        targetDestPath = cleanCurrentPath ? `${cleanCurrentPath}/${base} - Kopie${ext}` : `${base} - Kopie${ext}`;
+        targetDestPath = baseDestDir ? `${baseDestDir}/${base} - Kopie${ext}` : `${base} - Kopie${ext}`;
       } else {
-        targetDestPath = cleanCurrentPath ? `${cleanCurrentPath}/${clipboard.item.name} - Kopie` : `${clipboard.item.name} - Kopie`;
+        targetDestPath = baseDestDir ? `${baseDestDir}/${clipboard.item.name} - Kopie` : `${clipboard.item.name} - Kopie`;
       }
     }
 
+    const transferOptions = {
+      sourceOwner: effectiveSourceOwner,
+      targetOwner: effectiveDestOwner,
+      targetFolderId,
+      actingUser: user.username,
+      canWrite: true,
+    };
+
     try {
       if (clipboard.action === 'copy') {
-        const res = await copyItem(user.username, cleanSourcePath, targetDestPath);
+        const res = await copyItem(effectiveDestOwner, cleanSourcePath, targetDestPath, transferOptions);
         if (res.success) {
           addToast('success', 'Datei kopiert', `"${clipboard.item.name}" wurde erfolgreich kopiert.`);
-          loadDirectoryFiles(user.username, currentPath);
+          if (currentTab === 'my-drive') {
+            loadDirectoryFiles(user.username, currentPath);
+          }
           loadUsage(user.username);
         } else {
           addToast('error', 'Kopieren fehlgeschlagen', res.error || 'Aktion fehlgeschlagen.');
         }
       } else {
-        const res = await moveItem(user.username, cleanSourcePath, targetDestPath);
+        const res = await moveItem(effectiveDestOwner, cleanSourcePath, targetDestPath, transferOptions);
         if (res.success) {
           addToast('success', 'Datei verschoben', `"${clipboard.item.name}" wurde erfolgreich verschoben.`);
           setClipboard(null);
-          loadDirectoryFiles(user.username, currentPath);
+          if (currentTab === 'my-drive') {
+            loadDirectoryFiles(user.username, currentPath);
+          }
           loadUsage(user.username);
         } else {
           addToast('error', 'Verschieben fehlgeschlagen', res.error || 'Aktion fehlgeschlagen.');
@@ -745,15 +774,65 @@ function MainApp() {
     window.open(`/view?${searchParams.toString()}`, '_blank');
   }, [currentPath, user]);
 
+  // Navigation lock & State-Schutz against duplicate folder triggers
+  const [isNavigating, setIsNavigating] = useState(false);
+  const isNavigatingRef = useRef(false);
+  const lastFolderClickRef = useRef<{ id: string; time: number } | null>(null);
+
+  // Sync navigation lock with file loading completion
+  useEffect(() => {
+    if (!isLoadingItems) {
+      isNavigatingRef.current = false;
+      setIsNavigating(false);
+    }
+  }, [isLoadingItems]);
+
+  // Open folder handler with navigation lock, debouncing, and absolute path validation
+  const handleOpenFolder = useCallback((folder: FileItemData) => {
+    const now = Date.now();
+    const folderKey = folder.id || folder.path || folder.name;
+
+    // 1. State-Schutz: Ignore further clicks if currently navigating or loading items
+    if (isNavigatingRef.current || isLoadingItems) {
+      return;
+    }
+
+    // 2. Debouncing: Ignore rapid duplicate clicks on the same folder within 350ms
+    if (
+      lastFolderClickRef.current &&
+      lastFolderClickRef.current.id === folderKey &&
+      now - lastFolderClickRef.current.time < 350
+    ) {
+      return;
+    }
+
+    // 3. Absolute path resolution & duplicate prevention
+    const nextPath = resolveFolderPath(currentPath, folder);
+    if (nextPath === currentPath) {
+      return;
+    }
+
+    lastFolderClickRef.current = { id: folderKey, time: now };
+    isNavigatingRef.current = true;
+    setIsNavigating(true);
+
+    setCurrentPath(nextPath);
+
+    // Timeout fallback to release lock if loading settles
+    setTimeout(() => {
+      isNavigatingRef.current = false;
+      setIsNavigating(false);
+    }, 400);
+  }, [currentPath, isLoadingItems]);
+
   // Open item (files open preview modal or new tab according to setting, folders navigate)
-  const handleOpenItem = (item: FileItemData) => {
+  const handleOpenItem = useCallback((item: FileItemData) => {
     // In Cinema or Cinema/TV mode, standard preview modal must not be opened
     if (isCinemaMode || isTvMode) {
       return;
     }
     if (item.type === 'folder') {
-      const nextPath = currentPath ? `${currentPath}/${item.name}` : item.name;
-      setCurrentPath(nextPath);
+      handleOpenFolder(item);
     } else {
       if (openFilesInNewTab) {
         handleOpenFileInNewTab(item);
@@ -762,21 +841,21 @@ function MainApp() {
         setViewerItemsList(items);
       }
     }
-  };
+  }, [isCinemaMode, isTvMode, handleOpenFolder, openFilesInNewTab, handleOpenFileInNewTab, items]);
 
   // Share handlers
   const handleAcceptShare = async (shareId: string) => {
     if (!user) return;
     await respondToShare(shareId, 'accepted', user.username);
     addToast('success', 'Einladung angenommen', 'Der Ordner wurde zum Geteilten Bereich hinzugefügt.');
-    loadShares(user.username);
+    await loadShares(user.username);
   };
 
   const handleDeclineShare = async (shareId: string) => {
     if (!user) return;
     await respondToShare(shareId, 'declined', user.username);
     addToast('info', 'Einladung abgelehnt');
-    loadShares(user.username);
+    await loadShares(user.username);
   };
 
 
@@ -1103,6 +1182,20 @@ function MainApp() {
                     }
                   }}
                   onUploadTaskChange={setUploadTask}
+                  clipboard={clipboard}
+                  onCopyItem={handleCopyItem}
+                  onCutItem={handleCutItem}
+                  onPaste={async (targetShare, subPath) => {
+                    if (targetShare) {
+                      const fullTargetDir = subPath
+                        ? `${targetShare.folder_path}/${subPath}`
+                        : targetShare.folder_path;
+                      await handlePasteItem(fullTargetDir, targetShare.owner, targetShare.id);
+                    } else {
+                      await handlePasteItem();
+                    }
+                  }}
+                  onTriggerFileInput={handleTriggerFileInput}
                 />
               )}
 

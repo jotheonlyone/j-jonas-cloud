@@ -1,4 +1,5 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import { resolveFolderPath } from '../utils/pathResolver';
 import {
   Users,
   Check,
@@ -15,7 +16,8 @@ import {
   Trash2,
   FolderOpen,
   LogOut,
-  AlertTriangle
+  AlertTriangle,
+  Clipboard,
 } from 'lucide-react';
 import type { FolderShare, UserAccount, ViewMode, FileItemData } from '../types';
 import { FileExplorer } from './FileExplorer';
@@ -33,9 +35,11 @@ import type { UploadTaskState } from './UploadProgressWidget';
 import {
   deleteFolderShare,
   deleteFolderShareMember,
-  renameSharedFolder
+  renameSharedFolder,
+  getSharedFolder
 } from '../services/firebase';
 import { useToast } from './Toast';
+import { hasFolderWritePermission } from '../utils/permissions';
 
 interface SharedSectionProps {
   user: UserAccount;
@@ -49,6 +53,11 @@ interface SharedSectionProps {
   onManageFolderShares?: (folderPath: string, folderName: string, folderOwner?: string) => void;
   onOpenFilePreview?: (item: FileItemData, allItems: FileItemData[]) => void;
   onUploadTaskChange?: (updater: UploadTaskState | null | ((prev: UploadTaskState | null) => UploadTaskState | null)) => void;
+  clipboard?: { action: 'copy' | 'cut'; item: FileItemData; sourcePath: string; sourceOwner?: string } | null;
+  onCopyItem?: (item: FileItemData) => void;
+  onCutItem?: (item: FileItemData) => void;
+  onPaste?: (targetShare?: FolderShare, subPath?: string) => Promise<void>;
+  onTriggerFileInput?: () => void;
 }
 
 export const SharedSection: React.FC<SharedSectionProps> = ({
@@ -63,6 +72,11 @@ export const SharedSection: React.FC<SharedSectionProps> = ({
   onManageFolderShares,
   onOpenFilePreview,
   onUploadTaskChange,
+  clipboard = null,
+  onCopyItem,
+  onCutItem,
+  onPaste,
+  onTriggerFileInput,
 }) => {
   const { addToast } = useToast();
   const [activeFolderShare, setActiveFolderShare] = useState<FolderShare | null>(null);
@@ -88,15 +102,15 @@ export const SharedSection: React.FC<SharedSectionProps> = ({
   // 2. Aktive geteilte Ordner:
   // - Jeder Ordner existiert GENAU EINMAL (keine doppelten Ordner mehr für verschiedene Personen)
   // - Besitzer sieht alle seine geteilten Ordner
-  // - Eingeladene Personen sehen den Ordner, sobald ihr Status 'accepted' ist
+  // - Eingeladene Personen sehen den Ordner, sobald ihr Status 'accepted' oder 'active' ist
   const acceptedShares = useMemo(() => {
     const userNorm = (user?.username || '').toLowerCase();
     const list = shares.filter((s) => {
       if (!s) return false;
       const isOwner = (s.owner?.toLowerCase() || '') === userNorm;
-      const isAcceptedLegacy = s.invited_user && s.invited_user?.toLowerCase() === userNorm && s.status === 'accepted';
+      const isAcceptedLegacy = s.invited_user && s.invited_user?.toLowerCase() === userNorm && (s.status === 'accepted' || s.status === 'active');
       const isAcceptedMember = Array.isArray(s.shared_with) && s.shared_with.some(
-        (m) => m?.username && m.username?.toLowerCase() === userNorm && m.status === 'accepted'
+        (m) => m?.username && m.username?.toLowerCase() === userNorm && (m.status === 'accepted' || m.status === 'active')
       );
       return (isOwner && Array.isArray(s.shared_with)) || isAcceptedLegacy || isAcceptedMember;
     });
@@ -133,11 +147,27 @@ export const SharedSection: React.FC<SharedSectionProps> = ({
     }
   };
 
-  const handleOpenSharedFolder = (share: FolderShare) => {
+  const handleOpenSharedFolder = async (share: FolderShare) => {
     setActiveFolderShare(share);
     setSharedSubPath('');
     loadSharedFolderItems(share, '');
+    // Asynchronously fetch fresh share document to ensure permissions & member statuses are up to date
+    try {
+      const fresh = await getSharedFolder(share.folder_path, share.owner);
+      if (fresh) {
+        setActiveFolderShare(fresh);
+      }
+    } catch {}
   };
+
+  const isNavigatingSharedRef = useRef(false);
+  const lastSharedFolderClickRef = useRef<{ id: string; time: number } | null>(null);
+
+  useEffect(() => {
+    if (!isLoadingItems) {
+      isNavigatingSharedRef.current = false;
+    }
+  }, [isLoadingItems]);
 
   const handleNavigateSubPath = (newPath: string) => {
     if (!activeFolderShare) return;
@@ -440,6 +470,7 @@ export const SharedSection: React.FC<SharedSectionProps> = ({
     );
     const activeCanSeeMembers = activeIsOwner || (activeCurrentMember?.can_see_members ?? false);
     const activeCanManageMembers = activeIsOwner || (activeCurrentMember?.can_manage_members ?? false);
+    const activeCanWrite = activeIsOwner || hasFolderWritePermission(activeFolderShare, user.username);
 
     return (
       <div className="h-full flex flex-col bg-white dark:bg-gray-900 rounded-2xl shadow-xs border border-gray-200 dark:border-gray-800 overflow-hidden">
@@ -497,12 +528,45 @@ export const SharedSection: React.FC<SharedSectionProps> = ({
             isLoading={isLoadingItems}
             serverError={serverError}
             viewMode={viewMode}
-            onRefresh={() => loadSharedFolderItems(activeFolderShare, sharedSubPath)}
+            onRefresh={async () => {
+              loadSharedFolderItems(activeFolderShare, sharedSubPath);
+              try {
+                const fresh = await getSharedFolder(activeFolderShare.folder_path, activeFolderShare.owner);
+                if (fresh) {
+                  setActiveFolderShare(fresh);
+                }
+              } catch {}
+            }}
             onUploadFiles={handleUploadToShared}
             onNewFolder={handleCreateSubFolder}
             onOpenFile={(item) => {
               if (item.type === 'folder') {
-                const next = sharedSubPath ? `${sharedSubPath}/${item.name}` : item.name;
+                const now = Date.now();
+                const folderKey = item.id || item.path || item.name;
+
+                if (isLoadingItems || isNavigatingSharedRef.current) {
+                  return;
+                }
+
+                if (
+                  lastSharedFolderClickRef.current &&
+                  lastSharedFolderClickRef.current.id === folderKey &&
+                  now - lastSharedFolderClickRef.current.time < 350
+                ) {
+                  return;
+                }
+
+                const next = resolveFolderPath(sharedSubPath, item);
+                if (next === sharedSubPath) {
+                  return;
+                }
+
+                lastSharedFolderClickRef.current = { id: folderKey, time: now };
+                isNavigatingSharedRef.current = true;
+                setTimeout(() => {
+                  isNavigatingSharedRef.current = false;
+                }, 400);
+
                 handleNavigateSubPath(next);
               } else if (onOpenFilePreview) {
                 const currentDir = sharedSubPath
@@ -554,7 +618,12 @@ export const SharedSection: React.FC<SharedSectionProps> = ({
             }
             rootLabel={activeFolderShare.folder_name}
             isSharedContext={true}
-            isActionsDisabled={maintenanceMode && user.role !== 'master'}
+            isActionsDisabled={(maintenanceMode && user.role !== 'master') || !activeCanWrite}
+            clipboard={clipboard}
+            onCopyItem={onCopyItem}
+            onCutItem={activeCanWrite ? onCutItem : undefined}
+            onPaste={activeCanWrite && onPaste ? (sub) => onPaste(activeFolderShare, sub ?? sharedSubPath) : undefined}
+            onUploadClick={activeCanWrite ? onTriggerFileInput : undefined}
           />
         </div>
       </div>
@@ -765,10 +834,10 @@ export const SharedSection: React.FC<SharedSectionProps> = ({
               left: `${Math.min(Math.max(12, contextMenu.x), (typeof window !== 'undefined' ? window.innerWidth : 800) - 240)}px`,
               top: `${Math.min(Math.max(12, contextMenu.y), (typeof window !== 'undefined' ? window.innerHeight : 600) - 250)}px`,
             }}
-            className="fixed z-50 w-56 rounded-2xl bg-white/95 dark:bg-gray-900/95 backdrop-blur-md border border-gray-200/80 dark:border-gray-800 shadow-2xl py-1.5 text-xs text-gray-700 dark:text-gray-200 animate-in fade-in zoom-in-95 duration-100 select-none divide-y divide-gray-100 dark:divide-gray-800/80"
+            className="fixed z-50 w-56 rounded-2xl bg-white/95 dark:bg-gray-900/95 backdrop-blur-md border border-gray-200/80 dark:border-gray-800 shadow-2xl py-1 text-xs text-gray-700 dark:text-gray-200 animate-in fade-in zoom-in-95 duration-100 select-none divide-y divide-gray-100 dark:divide-gray-800/80 max-h-[85vh] overflow-y-auto slim-scrollbar overscroll-contain"
           >
             {/* Kopfzeile Kontextmenü */}
-            <div className="px-3.5 py-2">
+            <div className="px-3 py-1.5">
               <div className="flex items-center gap-2 min-w-0">
                 <Folder className="w-4 h-4 text-amber-500 fill-amber-500/20 shrink-0" />
                 <p className="font-semibold text-gray-900 dark:text-gray-100 truncate">
@@ -783,7 +852,7 @@ export const SharedSection: React.FC<SharedSectionProps> = ({
             </div>
 
             {/* Aktionen */}
-            <div className="py-1">
+            <div className="py-0.5">
               <button
                 type="button"
                 onClick={() => {
@@ -791,11 +860,34 @@ export const SharedSection: React.FC<SharedSectionProps> = ({
                   setContextMenu(null);
                   handleOpenSharedFolder(sh);
                 }}
-                className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-blue-50 dark:hover:bg-blue-950/40 hover:text-blue-600 dark:hover:text-blue-400 text-left transition-colors font-medium cursor-pointer"
+                className="w-full flex items-center gap-2.5 px-3 py-1.5 hover:bg-blue-50 dark:hover:bg-blue-950/40 hover:text-blue-600 dark:hover:text-blue-400 text-left transition-colors font-medium cursor-pointer"
               >
                 <FolderOpen className="w-4 h-4 text-amber-500" />
                 <span>Ordner öffnen</span>
               </button>
+
+              {/* Berechtigungsprüfung für Einfügen / Hierhin kopieren / Hierhin verschieben */}
+              {clipboard && onPaste && hasFolderWritePermission(contextMenu.share, user.username) && !(maintenanceMode && user.role !== 'master') && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const sh = contextMenu.share;
+                    setContextMenu(null);
+                    onPaste(sh, '');
+                  }}
+                  className="w-full flex items-center justify-between px-3 py-1.5 hover:bg-blue-50 dark:hover:bg-blue-950/40 text-blue-600 dark:text-blue-400 text-left transition-colors font-medium cursor-pointer"
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <Clipboard className="w-4 h-4 text-blue-500 shrink-0" />
+                    <span className="truncate">
+                      {clipboard.action === 'cut' ? 'Hierhin verschieben' : 'Hierhin kopieren'}
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-gray-400 font-mono ml-2 shrink-0 truncate max-w-[80px]">
+                    {clipboard.item.name}
+                  </span>
+                </button>
+              )}
 
               {(((contextMenu.share.owner?.toLowerCase() || '') === (user.username || '').toLowerCase()) ||
                 contextMenu.share.shared_with?.find(
@@ -809,10 +901,15 @@ export const SharedSection: React.FC<SharedSectionProps> = ({
                       setContextMenu(null);
                       onManageFolderShares(sh.folder_path, sh.folder_name, sh.owner);
                     }}
-                    className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-800 text-left transition-colors font-medium cursor-pointer"
+                    className="w-full flex items-center gap-2.5 px-3 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-800 text-left transition-colors font-medium cursor-pointer"
                   >
                     <Users className="w-4 h-4 text-blue-500" />
-                    <span>Mitglieder & Freigaben</span>
+                    <span>
+                      {((contextMenu.share.owner?.toLowerCase() || '') === (user.username || '').toLowerCase()) ||
+                       contextMenu.share.shared_with?.find((m) => m?.username && m.username.toLowerCase() === (user.username || '').toLowerCase())?.can_manage_members
+                        ? 'Freigaben & Rechte'
+                        : 'Mitglieder ansehen'}
+                    </span>
                   </button>
                 )}
 
@@ -823,7 +920,7 @@ export const SharedSection: React.FC<SharedSectionProps> = ({
                   setContextMenu(null);
                   handleRenameSharedFolder(sh);
                 }}
-                className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-800 text-left transition-colors font-medium cursor-pointer"
+                className="w-full flex items-center gap-2.5 px-3 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-800 text-left transition-colors font-medium cursor-pointer"
               >
                 <Edit2 className="w-4 h-4 text-indigo-500" />
                 <span>Umbenennen</span>
@@ -831,7 +928,7 @@ export const SharedSection: React.FC<SharedSectionProps> = ({
             </div>
 
             {/* Löschen / Freigabe beenden / Verlassen & entfernen */}
-            <div className="py-1">
+            <div className="py-0.5">
               <button
                 type="button"
                 onClick={() => {
@@ -839,7 +936,7 @@ export const SharedSection: React.FC<SharedSectionProps> = ({
                   setContextMenu(null);
                   handleDeleteSharedFolder(sh);
                 }}
-                className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-red-50 dark:hover:bg-red-950/40 text-red-600 dark:text-red-400 text-left transition-colors font-medium cursor-pointer"
+                className="w-full flex items-center gap-2.5 px-3 py-1.5 hover:bg-red-50 dark:hover:bg-red-950/40 text-red-600 dark:text-red-400 text-left transition-colors font-medium cursor-pointer"
               >
                 {(contextMenu.share.owner?.toLowerCase() || '') === (user.username || '').toLowerCase() ? (
                   <>
