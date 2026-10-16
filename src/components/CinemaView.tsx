@@ -24,13 +24,14 @@ import {
 } from '../services/storageApi';
 import { isVideoFile } from './MediaViewerModal';
 import { isTvBackEvent } from './CinemaTvView';
+import { CinemaPlayerOverlay } from './CinemaPlayerOverlay';
 
 interface CinemaViewProps {
   user: UserAccount;
   items: FileItemData[];
   onBackToFiles: () => void;
   onPlayVideo: (item: FileItemData) => void;
-  onDownloadVideo: (item: FileItemData) => void;
+  onDownloadVideo?: (item: FileItemData) => void;
   onUploadClick?: () => void;
   darkMode?: boolean;
 }
@@ -88,7 +89,8 @@ export const CinemaView: React.FC<CinemaViewProps> = ({
   // Dynamic directory categories
   const [allFolderCategories, setAllFolderCategories] = useState<VideoCategory[]>([]);
   const [allUserVideos, setAllUserVideos] = useState<FileItemData[]>([]);
-  const [isLoadingCategories, setIsLoadingCategories] = useState(false);
+  const [isLoadingCategories, setIsLoadingCategories] = useState(true);
+  const [currentPlayingCategory, setCurrentPlayingCategory] = useState<VideoCategory | null>(null);
 
   // Selected Category filter for the 16:9 Grid section
   const [activeCategoryFilter, setActiveCategoryFilter] = useState<string>('all');
@@ -97,6 +99,7 @@ export const CinemaView: React.FC<CinemaViewProps> = ({
   const [descriptionOverlay, setDescriptionOverlay] = useState<{
     video: FileItemData;
     description: string;
+    category?: VideoCategory | null;
   } | null>(null);
 
   // Load directory structure from server
@@ -249,16 +252,18 @@ export const CinemaView: React.FC<CinemaViewProps> = ({
   }, [displayVideos, allFolderCategories, activeCategoryFilter, searchQuery]);
 
   // Play a video exclusively in Cinema fullscreen player (prevent double modal)
-  const startPlayback = (video: FileItemData) => {
+  const startPlayback = (video: FileItemData, category?: VideoCategory | null) => {
+    setCurrentPlayingCategory(category || null);
     setActiveFullscreenVideo(video);
   };
 
   // Check description and either show Info-Overlay or start playback
-  const handleSelectVideo = async (video: FileItemData) => {
+  const handleSelectVideo = async (video: FileItemData, category?: VideoCategory | null) => {
     if (video.metadata?.description && video.metadata.description.trim()) {
       setDescriptionOverlay({
         video,
         description: video.metadata.description.trim(),
+        category,
       });
       return;
     }
@@ -270,12 +275,13 @@ export const CinemaView: React.FC<CinemaViewProps> = ({
         setDescriptionOverlay({
           video,
           description: meta.description.trim(),
+          category,
         });
       } else {
-        startPlayback(video);
+        startPlayback(video, category);
       }
     } catch {
-      startPlayback(video);
+      startPlayback(video, category);
     }
   };
 
@@ -409,7 +415,12 @@ export const CinemaView: React.FC<CinemaViewProps> = ({
       </header>
 
       {/* 2. HERO BANNER: IDENTISCHER FADE & BLEND-IN MIT DER SEITE */}
-      {heroVideo ? (
+      {isLoadingCategories ? (
+        <div className="w-full h-[45vh] min-h-[340px] max-h-[550px] flex flex-col items-center justify-center gap-3 select-none mb-8">
+          <Loader2 className="w-10 h-10 animate-spin text-[#E50914]" />
+          <span className="text-xs text-gray-400 font-medium">Mediathek wird geladen...</span>
+        </div>
+      ) : heroVideo ? (
         <section className="relative w-full h-[55vh] min-h-[380px] max-h-[640px] flex items-end overflow-hidden mb-8 select-none">
           {/* Ambient Video / Artwork Background */}
           <div className="absolute inset-0 bg-[#0a0a0a] overflow-hidden pointer-events-none">
@@ -471,7 +482,7 @@ export const CinemaView: React.FC<CinemaViewProps> = ({
             </div>
           </div>
         </section>
-      ) : (
+      ) : !isLoadingCategories && displayVideos.length === 0 ? (
         /* Empty State */
         <div className="w-full max-w-4xl mx-auto my-12 px-6 py-12 rounded-3xl bg-neutral-900/60 border border-white/10 text-center shadow-2xl">
           <div
@@ -487,13 +498,13 @@ export const CinemaView: React.FC<CinemaViewProps> = ({
 
           <button
             onClick={() => setUseDemoFallback(!useDemoFallback)}
-            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-gray-200 text-sm font-semibold border border-white/10 transition-all active:scale-95"
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-gray-200 text-sm font-semibold border border-white/10 transition-all active:scale-95 cursor-pointer"
           >
             <Sparkles className="w-4 h-4 text-amber-400" />
             {useDemoFallback ? 'Demo-Videos ausblenden' : 'Demo-Trailerschau aktivieren'}
           </button>
         </div>
-      )}
+      ) : null}
 
       {/* 3. HORIZONTAL SCROLLING ROWS: "ZULETZT HINZUGEFÜGT" + 2-3 ZUFÄLLIGE ORDNERKATEGORIEN (DURCHLAUF BIS ZUM RAND) */}
       <div className="w-full max-w-7xl mx-auto px-4 sm:px-8 space-y-10">
@@ -547,9 +558,8 @@ export const CinemaView: React.FC<CinemaViewProps> = ({
                     >
                       <VideoCard
                         video={video}
-                        onPlay={() => handleSelectVideo(video)}
+                        onPlay={() => handleSelectVideo(video, category)}
                         onDetails={() => setSelectedDetailsVideo(video)}
-                        onDownload={() => onDownloadVideo(video)}
                       />
                     </div>
                   ))}
@@ -645,9 +655,13 @@ export const CinemaView: React.FC<CinemaViewProps> = ({
                 >
                   <VideoCard
                     video={video}
-                    onPlay={() => handleSelectVideo(video)}
+                    onPlay={() => {
+                      const cat = allFolderCategories.find((c) =>
+                        c.videos.some((v) => (v.path || v.name) === (video.path || video.name))
+                      );
+                      handleSelectVideo(video, cat);
+                    }}
                     onDetails={() => setSelectedDetailsVideo(video)}
-                    onDownload={() => onDownloadVideo(video)}
                   />
                 </div>
               ))}
@@ -660,7 +674,11 @@ export const CinemaView: React.FC<CinemaViewProps> = ({
       {descriptionOverlay && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-150"
-          onClick={() => setDescriptionOverlay(null)}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setDescriptionOverlay(null);
+          }}
         >
           <div
             className="relative w-full max-w-lg bg-neutral-900 border border-white/20 rounded-3xl p-6 shadow-2xl space-y-4"
@@ -676,8 +694,14 @@ export const CinemaView: React.FC<CinemaViewProps> = ({
                 </h3>
               </div>
               <button
-                onClick={() => setDescriptionOverlay(null)}
-                className="p-1.5 rounded-full text-gray-400 hover:text-white hover:bg-white/10 transition-colors"
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setDescriptionOverlay(null);
+                }}
+                className="p-1.5 rounded-full text-gray-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+                title="Schließen"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -697,18 +721,27 @@ export const CinemaView: React.FC<CinemaViewProps> = ({
             {/* Action buttons */}
             <div className="flex items-center justify-end gap-3 pt-3 border-t border-white/10">
               <button
-                onClick={() => setDescriptionOverlay(null)}
-                className="px-4 py-2.5 rounded-xl text-xs font-semibold text-gray-300 hover:text-white hover:bg-white/10 transition-colors"
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setDescriptionOverlay(null);
+                }}
+                className="px-4 py-2.5 rounded-xl text-xs font-semibold text-gray-300 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
               >
                 Schließen
               </button>
               <button
-                onClick={() => {
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
                   const v = descriptionOverlay.video;
+                  const cat = descriptionOverlay.category;
                   setDescriptionOverlay(null);
-                  startPlayback(v);
+                  startPlayback(v, cat);
                 }}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-white font-bold text-xs transition-colors shadow-lg active:scale-95"
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-white font-bold text-xs transition-colors shadow-lg active:scale-95 cursor-pointer"
                 style={{ backgroundColor: '#E50914' }}
                 onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.backgroundColor = '#B80710')}
                 onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.backgroundColor = '#E50914')}
@@ -791,23 +824,21 @@ export const CinemaView: React.FC<CinemaViewProps> = ({
 
             <div className="flex items-center justify-end gap-3 pt-3 border-t border-white/10">
               <button
-                onClick={() => {
-                  onDownloadVideo(selectedDetailsVideo);
-                  setSelectedDetailsVideo(null);
-                }}
-                className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs transition-colors"
+                type="button"
+                onClick={() => setSelectedDetailsVideo(null)}
+                className="px-4 py-2.5 rounded-xl text-xs font-semibold text-gray-300 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
               >
-                <Download className="w-3.5 h-3.5" />
-                Herunterladen
+                Schließen
               </button>
 
               <button
+                type="button"
                 onClick={() => {
                   const vid = selectedDetailsVideo;
                   setSelectedDetailsVideo(null);
                   startPlayback(vid);
                 }}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-white font-bold text-xs transition-colors active:scale-95"
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-white font-bold text-xs transition-colors active:scale-95 cursor-pointer"
                 style={{ backgroundColor: '#E50914' }}
                 onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.backgroundColor = '#B80710')}
                 onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.backgroundColor = '#E50914')}
@@ -820,23 +851,17 @@ export const CinemaView: React.FC<CinemaViewProps> = ({
         </div>
       )}
 
-      {/* 7. FULLSCREEN MEDIA PLAYER */}
+      {/* 7. FULLSCREEN MEDIA PLAYER MIT NEXT-VIDEO & TV-STEUERUNG */}
       {activeFullscreenVideo && (
-        <div className="fixed inset-0 z-50 bg-black flex items-center justify-center select-none overflow-hidden">
-          <video
-            src={getStreamUrl(activeFullscreenVideo.path || activeFullscreenVideo.name, activeFullscreenVideo.owner)}
-            autoPlay
-            controls
-            className="w-full h-full object-contain"
-          />
-          <button
-            onClick={() => setActiveFullscreenVideo(null)}
-            className="absolute top-4 left-4 z-50 p-2.5 rounded-full bg-black/60 hover:bg-black/90 text-white transition-colors border border-white/10"
-            title="Schließen"
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </button>
-        </div>
+        <CinemaPlayerOverlay
+          video={activeFullscreenVideo}
+          allVideos={displayVideos}
+          categories={allFolderCategories}
+          currentCategory={currentPlayingCategory}
+          onClose={() => setActiveFullscreenVideo(null)}
+          onVideoChange={(v) => setActiveFullscreenVideo(v)}
+          darkMode={darkMode}
+        />
       )}
     </div>
   );
@@ -847,10 +872,9 @@ interface VideoCardProps {
   video: FileItemData;
   onPlay: () => void;
   onDetails: () => void;
-  onDownload: () => void;
 }
 
-const VideoCard: React.FC<VideoCardProps> = ({ video, onPlay, onDetails, onDownload }) => {
+const VideoCard: React.FC<VideoCardProps> = ({ video, onPlay, onDetails }) => {
   const streamUrl = getStreamUrl(video.path || video.name, video.owner);
 
   return (
@@ -880,19 +904,6 @@ const VideoCard: React.FC<VideoCardProps> = ({ video, onPlay, onDetails, onDownl
             <Play className="w-6 h-6 fill-black translate-x-0.5" />
           </div>
         </div>
-
-        {/* Discrete bottom right Quick Download Button */}
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onDownload();
-          }}
-          className="absolute bottom-2.5 right-2.5 p-2 rounded-full bg-black/70 hover:bg-[#E50914] text-white/80 hover:text-white backdrop-blur-sm border border-white/15 opacity-0 group-hover:opacity-100 transition-all duration-200 z-20 hover:scale-110"
-          title="Video direkt herunterladen"
-          aria-label="Video herunterladen"
-        >
-          <Download className="w-3.5 h-3.5" />
-        </button>
       </div>
 
       {/* Info beneath Thumbnail: White Title & Discrete File Size */}

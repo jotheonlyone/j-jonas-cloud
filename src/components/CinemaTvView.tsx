@@ -30,6 +30,7 @@ import {
   type VideoCategory,
 } from '../services/storageApi';
 import { isVideoFile } from './MediaViewerModal';
+import { CinemaPlayerOverlay } from './CinemaPlayerOverlay';
 
 /**
  * Detects whether a keydown event corresponds to the Back / Return button
@@ -65,7 +66,7 @@ interface CinemaTvViewProps {
   items: FileItemData[];
   onBackToFiles: () => void;
   onPlayVideo: (item: FileItemData) => void;
-  onDownloadVideo: (item: FileItemData) => void;
+  onDownloadVideo?: (item: FileItemData) => void;
   onUploadClick?: () => void;
   darkMode?: boolean;
 }
@@ -123,7 +124,9 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
   // Dynamic directory categories
   const [allFolderCategories, setAllFolderCategories] = useState<VideoCategory[]>([]);
   const [allUserVideos, setAllUserVideos] = useState<FileItemData[]>([]);
-  const [isLoadingCategories, setIsLoadingCategories] = useState(false);
+  const [isLoadingCategories, setIsLoadingCategories] = useState(true);
+  const [currentPlayingCategory, setCurrentPlayingCategory] = useState<VideoCategory | null>(null);
+  const [overlayBtnIdx, setOverlayBtnIdx] = useState<number>(1);
 
   // Selected Category filter for the 16:9 Grid section
   const [activeCategoryFilter, setActiveCategoryFilter] = useState<string>('all');
@@ -132,6 +135,7 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
   const [descriptionOverlay, setDescriptionOverlay] = useState<{
     video: FileItemData;
     description: string;
+    category?: VideoCategory | null;
   } | null>(null);
 
   // Reload & Refresh trigger
@@ -419,16 +423,19 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
   }, []);
 
   // Play a video exclusively in TV fullscreen player (prevent double modal)
-  const startPlayback = (video: FileItemData) => {
+  const startPlayback = (video: FileItemData, category?: VideoCategory | null) => {
+    setCurrentPlayingCategory(category || null);
     setActivePlayerVideo(video);
   };
 
   // Check description and either show Info-Overlay or start playback
-  const handleSelectVideo = async (video: FileItemData) => {
+  const handleSelectVideo = async (video: FileItemData, category?: VideoCategory | null) => {
+    setOverlayBtnIdx(1);
     if (video.metadata?.description && video.metadata.description.trim()) {
       setDescriptionOverlay({
         video,
         description: video.metadata.description.trim(),
+        category,
       });
       return;
     }
@@ -440,12 +447,13 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
         setDescriptionOverlay({
           video,
           description: meta.description.trim(),
+          category,
         });
       } else {
-        startPlayback(video);
+        startPlayback(video, category);
       }
     } catch {
-      startPlayback(video);
+      startPlayback(video, category);
     }
   };
 
@@ -537,11 +545,24 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
       }
 
       if (descriptionOverlay) {
-        if (e.key === 'Enter') {
+        if (e.key === 'ArrowLeft') {
           e.preventDefault();
-          const vid = descriptionOverlay.video;
-          setDescriptionOverlay(null);
-          startPlayback(vid);
+          setOverlayBtnIdx(0);
+        } else if (e.key === 'ArrowRight') {
+          e.preventDefault();
+          setOverlayBtnIdx(1);
+        } else if (e.key === 'Enter') {
+          e.preventDefault();
+          if (overlayBtnIdx === 0) {
+            // "Schließen" gewählt: Modal schließen, KEINE Wiedergabe starten!
+            setDescriptionOverlay(null);
+          } else {
+            // "Film abspielen" gewählt
+            const vid = descriptionOverlay.video;
+            const cat = descriptionOverlay.category;
+            setDescriptionOverlay(null);
+            startPlayback(vid, cat);
+          }
         }
         return;
       }
@@ -760,6 +781,7 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
     activePlayerVideo,
     selectedDetailsVideo,
     descriptionOverlay,
+    overlayBtnIdx,
     displayVideos,
     searchQuery,
     useDemoFallback,
@@ -899,7 +921,12 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
       </header>
 
       {/* 2. HERO FEATURED BANNER (IDENTISCHER FADE & BLEND-IN MIT /CINEMA) */}
-      {heroVideo ? (
+      {isLoadingCategories ? (
+        <div className="w-full h-[45vh] min-h-[340px] max-h-[550px] flex flex-col items-center justify-center gap-3 select-none mb-8">
+          <Loader2 className="w-10 h-10 animate-spin text-[#E50914]" />
+          <span className="text-xs text-gray-400 font-medium">Mediathek wird geladen...</span>
+        </div>
+      ) : heroVideo ? (
         <section className="relative w-full h-[55vh] min-h-[380px] max-h-[640px] flex items-end overflow-hidden mb-8 select-none">
           {/* Ambient Video Background */}
           <div className="absolute inset-0 bg-[#0a0a0a] overflow-hidden pointer-events-none">
@@ -978,7 +1005,7 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
             </div>
           </div>
         </section>
-      ) : (
+      ) : !isLoadingCategories && displayVideos.length === 0 ? (
         /* Empty State */
         <div className="w-full max-w-4xl mx-auto my-12 px-6 py-12 rounded-3xl bg-neutral-900/60 border border-white/10 text-center shadow-2xl">
           <div
@@ -1006,7 +1033,7 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
             {useDemoFallback ? 'Demo-Videos ausblenden' : 'Demo-Trailerschau aktivieren'}
           </button>
         </div>
-      )}
+      ) : null}
 
       {/* 3. HORIZONTAL SCROLLING ROWS: "ZULETZT HINZUGEFÜGT" + 2-3 ZUFÄLLIGE ORDNERKATEGORIEN (DURCHLAUF BIS ZUM RAND) */}
       <div className="w-full max-w-7xl mx-auto px-4 sm:px-8 space-y-10">
@@ -1072,7 +1099,7 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
                           setFocusedZone('carousels');
                           setCarouselRowIdx(rowIdx);
                           setCarouselColIdx(colIdx);
-                          handleSelectVideo(video);
+                          handleSelectVideo(video, category);
                         }}
                         onMouseEnter={() => {
                           setFocusedZone('carousels');
@@ -1110,18 +1137,6 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
                               <Play className="w-5 h-5 fill-black translate-x-0.5" />
                             </div>
                           </div>
-
-                          {/* Quick Download Button */}
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onDownloadVideo(video);
-                            }}
-                            className="absolute bottom-2.5 right-2.5 p-2 rounded-full bg-black/70 hover:bg-[#E50914] text-white/80 hover:text-white backdrop-blur-sm border border-white/15 opacity-0 group-hover:opacity-100 transition-all duration-200 z-20 hover:scale-110"
-                            title="Video herunterladen"
-                          >
-                            <Download className="w-3.5 h-3.5" />
-                          </button>
                         </div>
 
                         {/* Title & metadata */}
@@ -1246,7 +1261,10 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
                       e.stopPropagation();
                       setFocusedZone('grid');
                       setGridIdx(idx);
-                      handleSelectVideo(video);
+                      const cat = allFolderCategories.find((c) =>
+                        c.videos.some((v) => (v.path || v.name) === (video.path || video.name))
+                      );
+                      handleSelectVideo(video, cat);
                     }}
                     onMouseEnter={() => {
                       setFocusedZone('grid');
@@ -1283,18 +1301,6 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
                           <Play className="w-5 h-5 fill-black translate-x-0.5" />
                         </div>
                       </div>
-
-                      {/* Quick Download Button */}
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onDownloadVideo(video);
-                        }}
-                        className="absolute bottom-2.5 right-2.5 p-2 rounded-full bg-black/70 hover:bg-[#E50914] text-white/80 hover:text-white backdrop-blur-sm border border-white/15 opacity-0 group-hover:opacity-100 transition-all duration-200 z-20 hover:scale-110"
-                        title="Video herunterladen"
-                      >
-                        <Download className="w-3.5 h-3.5" />
-                      </button>
                     </div>
 
                     {/* Title & metadata */}
@@ -1332,7 +1338,11 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
       {descriptionOverlay && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-150"
-          onClick={() => setDescriptionOverlay(null)}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setDescriptionOverlay(null);
+          }}
         >
           <div
             className="relative w-full max-w-lg bg-neutral-900 border border-white/20 rounded-3xl p-6 shadow-2xl space-y-4"
@@ -1348,8 +1358,14 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
                 </h3>
               </div>
               <button
-                onClick={() => setDescriptionOverlay(null)}
-                className="p-1.5 rounded-full text-gray-400 hover:text-white hover:bg-white/10 transition-colors"
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setDescriptionOverlay(null);
+                }}
+                className="p-1.5 rounded-full text-gray-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+                title="Schließen"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -1369,18 +1385,33 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
             {/* Action buttons */}
             <div className="flex items-center justify-end gap-3 pt-3 border-t border-white/10">
               <button
-                onClick={() => setDescriptionOverlay(null)}
-                className="px-4 py-2.5 rounded-xl text-xs font-semibold text-gray-300 hover:text-white hover:bg-white/10 transition-colors"
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setDescriptionOverlay(null);
+                }}
+                className={`px-4 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                  overlayBtnIdx === 0
+                    ? 'ring-4 ring-white bg-white text-black font-bold scale-105 shadow-xl'
+                    : 'text-gray-300 hover:text-white hover:bg-white/10'
+                }`}
               >
                 Schließen
               </button>
               <button
-                onClick={() => {
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
                   const v = descriptionOverlay.video;
+                  const cat = descriptionOverlay.category;
                   setDescriptionOverlay(null);
-                  startPlayback(v);
+                  startPlayback(v, cat);
                 }}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-white font-bold text-xs transition-colors shadow-lg active:scale-95"
+                className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-white font-bold text-xs transition-all shadow-lg active:scale-95 cursor-pointer ${
+                  overlayBtnIdx === 1 ? 'ring-4 ring-white scale-105 shadow-2xl' : ''
+                }`}
                 style={{ backgroundColor: '#E50914' }}
                 onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.backgroundColor = '#B80710')}
                 onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.backgroundColor = '#E50914')}
@@ -1413,8 +1444,10 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
                 </h3>
               </div>
               <button
+                type="button"
                 onClick={() => setSelectedDetailsVideo(null)}
-                className="p-1 rounded-full text-gray-400 hover:text-white hover:bg-white/10 transition-colors"
+                className="p-1 rounded-full text-gray-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+                title="Schließen"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -1463,23 +1496,21 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
 
             <div className="flex items-center justify-end gap-3 pt-3 border-t border-white/10">
               <button
-                onClick={() => {
-                  onDownloadVideo(selectedDetailsVideo);
-                  setSelectedDetailsVideo(null);
-                }}
-                className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs transition-colors"
+                type="button"
+                onClick={() => setSelectedDetailsVideo(null)}
+                className="px-4 py-2.5 rounded-xl text-xs font-semibold text-gray-300 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
               >
-                <Download className="w-3.5 h-3.5" />
-                Herunterladen
+                Schließen
               </button>
 
               <button
+                type="button"
                 onClick={() => {
                   const vid = selectedDetailsVideo;
                   setSelectedDetailsVideo(null);
                   startPlayback(vid);
                 }}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-white font-bold text-xs transition-colors active:scale-95"
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-white font-bold text-xs transition-colors active:scale-95 cursor-pointer"
                 style={{ backgroundColor: '#E50914' }}
                 onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.backgroundColor = '#B80710')}
                 onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.backgroundColor = '#E50914')}
@@ -1494,390 +1525,16 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
 
       {/* 7. FERNBEDIENUNGS-OPTIMIERTER VOLLBILD MEDIA-PLAYER */}
       {activePlayerVideo && (
-        <TvMediaPlayerOverlay
+        <CinemaPlayerOverlay
           video={activePlayerVideo}
+          allVideos={displayVideos}
+          categories={allFolderCategories}
+          currentCategory={currentPlayingCategory}
           onClose={() => setActivePlayerVideo(null)}
-          onDownload={() => onDownloadVideo(activePlayerVideo)}
+          onVideoChange={(v) => setActivePlayerVideo(v)}
           darkMode={darkMode}
         />
       )}
-    </div>
-  );
-};
-
-// -------------------------------------------------------------
-// FERNBEDIENUNGS-OPTIMIERTER VOLLBILD MEDIA-PLAYER
-// -------------------------------------------------------------
-interface TvMediaPlayerOverlayProps {
-  video: FileItemData;
-  onClose: () => void;
-  onDownload: () => void;
-  darkMode?: boolean;
-}
-
-const TvMediaPlayerOverlay: React.FC<TvMediaPlayerOverlayProps> = ({
-  video,
-  onClose,
-  onDownload,
-  darkMode,
-}) => {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  const [isPlaying, setIsPlaying] = useState(true);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
-  const [volume, setVolume] = useState(1);
-  const [isMuted, setIsMuted] = useState(false);
-  const [isFullscreen, setIsFullscreen] = useState(false);
-
-  // OSD timeout (Overlay blendet sich nach Inaktivität aus)
-  const [showOsd, setShowOsd] = useState(true);
-  const osdTimerRef = useRef<NodeJS.Timeout | null>(null);
-
-  // HUD feedback toast (-10s / +10s / Play / Pause)
-  const [hudFeedback, setHudFeedback] = useState<string | null>(null);
-  const hudTimerRef = useRef<NodeJS.Timeout | null>(null);
-
-  const triggerHud = (text: string) => {
-    setHudFeedback(text);
-    if (hudTimerRef.current) clearTimeout(hudTimerRef.current);
-    hudTimerRef.current = setTimeout(() => {
-      setHudFeedback(null);
-    }, 1200);
-  };
-
-  const resetOsdTimer = useCallback(() => {
-    setShowOsd(true);
-    if (osdTimerRef.current) clearTimeout(osdTimerRef.current);
-    osdTimerRef.current = setTimeout(() => {
-      if (isPlaying) {
-        setShowOsd(false);
-      }
-    }, 3500);
-  }, [isPlaying]);
-
-  useEffect(() => {
-    if (!isPlaying) {
-      setShowOsd(true);
-      if (osdTimerRef.current) clearTimeout(osdTimerRef.current);
-    } else {
-      resetOsdTimer();
-    }
-  }, [isPlaying, resetOsdTimer]);
-
-  const togglePlayPause = useCallback(() => {
-    if (!videoRef.current) return;
-    if (videoRef.current.paused) {
-      videoRef.current.play();
-      setIsPlaying(true);
-      triggerHud('Wiedergabe');
-    } else {
-      videoRef.current.pause();
-      setIsPlaying(false);
-      triggerHud('Pause');
-    }
-    resetOsdTimer();
-  }, [resetOsdTimer]);
-
-  const skipTime = useCallback((seconds: number) => {
-    if (!videoRef.current) return;
-    const newTime = Math.max(0, Math.min(videoRef.current.duration || 0, videoRef.current.currentTime + seconds));
-    videoRef.current.currentTime = newTime;
-    setCurrentTime(newTime);
-    triggerHud(seconds > 0 ? `+${seconds}s Vor` : `${seconds}s Zurück`);
-    resetOsdTimer();
-  }, [resetOsdTimer]);
-
-  const changeVolume = useCallback((delta: number) => {
-    if (!videoRef.current) return;
-    const newVol = Math.max(0, Math.min(1, videoRef.current.volume + delta));
-    videoRef.current.volume = newVol;
-    setVolume(newVol);
-    if (newVol > 0 && isMuted) {
-      videoRef.current.muted = false;
-      setIsMuted(false);
-    }
-    triggerHud(`Lautstärke: ${Math.round(newVol * 100)}%`);
-    resetOsdTimer();
-  }, [isMuted, resetOsdTimer]);
-
-  const toggleMute = useCallback(() => {
-    if (!videoRef.current) return;
-    const nextMuted = !videoRef.current.muted;
-    videoRef.current.muted = nextMuted;
-    setIsMuted(nextMuted);
-    triggerHud(nextMuted ? 'Stumm' : 'Ton an');
-    resetOsdTimer();
-  }, [resetOsdTimer]);
-
-  const toggleFullscreen = useCallback(() => {
-    if (!containerRef.current) return;
-    if (!document.fullscreenElement) {
-      containerRef.current.requestFullscreen().catch(() => {});
-      setIsFullscreen(true);
-    } else {
-      document.exitFullscreen().catch(() => {});
-      setIsFullscreen(false);
-    }
-    resetOsdTimer();
-  }, [resetOsdTimer]);
-
-  // Safe player close: pauses video, exits fullscreen, and closes overlay
-  const handleClosePlayer = useCallback(() => {
-    if (videoRef.current) {
-      try {
-        videoRef.current.pause();
-      } catch {}
-    }
-    if (document.fullscreenElement) {
-      document.exitFullscreen().catch(() => {});
-    }
-    onClose();
-  }, [onClose]);
-
-  // Ensure video stream pauses on component unmount
-  useEffect(() => {
-    return () => {
-      if (videoRef.current) {
-        try {
-          videoRef.current.pause();
-        } catch {}
-      }
-    };
-  }, []);
-
-  // Fernbedienungs-Tastensteuerung im Player
-  useEffect(() => {
-    const handlePlayerKeyDown = (e: KeyboardEvent) => {
-      // 1. Android TV Remote Back / Escape / Backspace / GoBack / KeyCode 4
-      if (isTvBackEvent(e)) {
-        e.preventDefault();
-        e.stopPropagation();
-        handleClosePlayer();
-        return;
-      }
-
-      switch (e.key) {
-        case ' ':
-        case 'Enter':
-          e.preventDefault();
-          togglePlayPause();
-          break;
-        case 'ArrowLeft':
-          e.preventDefault();
-          skipTime(-10);
-          break;
-        case 'ArrowRight':
-          e.preventDefault();
-          skipTime(10);
-          break;
-        case 'ArrowUp':
-          e.preventDefault();
-          changeVolume(0.05);
-          break;
-        case 'ArrowDown':
-          e.preventDefault();
-          changeVolume(-0.05);
-          break;
-        case 'm':
-        case 'M':
-          e.preventDefault();
-          toggleMute();
-          break;
-        case 'f':
-        case 'F':
-          e.preventDefault();
-          toggleFullscreen();
-          break;
-      }
-    };
-
-    window.addEventListener('keydown', handlePlayerKeyDown, { capture: true });
-    return () => window.removeEventListener('keydown', handlePlayerKeyDown, { capture: true });
-  }, [togglePlayPause, skipTime, changeVolume, toggleMute, toggleFullscreen, handleClosePlayer]);
-
-  const formatPlayerTime = (seconds: number) => {
-    if (isNaN(seconds) || seconds < 0) return '00:00';
-    const hrs = Math.floor(seconds / 3600);
-    const mins = Math.floor((seconds % 3600) / 60);
-    const secs = Math.floor(seconds % 60);
-    if (hrs > 0) {
-      return `${hrs}:${mins < 10 ? '0' : ''}${mins}:${secs < 10 ? '0' : ''}${secs}`;
-    }
-    return `${mins < 10 ? '0' : ''}${mins}:${secs < 10 ? '0' : ''}${secs}`;
-  };
-
-  const progressPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
-  const streamUrl = getStreamUrl(video.path || video.name, video.owner);
-
-  return (
-    <div
-      ref={containerRef}
-      onMouseMove={resetOsdTimer}
-      onClick={resetOsdTimer}
-      className="fixed inset-0 z-50 bg-black flex items-center justify-center select-none overflow-hidden"
-    >
-      <video
-        ref={videoRef}
-        src={streamUrl}
-        autoPlay
-        playsInline
-        onTimeUpdate={() => {
-          if (videoRef.current) setCurrentTime(videoRef.current.currentTime);
-        }}
-        onLoadedMetadata={() => {
-          if (videoRef.current) setDuration(videoRef.current.duration);
-        }}
-        onPlay={() => setIsPlaying(true)}
-        onPause={() => setIsPlaying(false)}
-        onEnded={() => setIsPlaying(false)}
-        onClick={togglePlayPause}
-        className="w-full h-full object-contain cursor-pointer"
-      />
-
-      {/* HUD Quick Notification Pill */}
-      {hudFeedback && (
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-40 px-6 py-3 rounded-2xl bg-black/85 text-white font-bold text-lg sm:text-xl border border-white/20 shadow-2xl backdrop-blur-md pointer-events-none animate-in fade-in zoom-in-95 duration-100">
-          {hudFeedback}
-        </div>
-      )}
-
-      {/* Top Bar OSD */}
-      <div
-        className={`absolute top-0 inset-x-0 z-30 p-4 sm:p-6 bg-gradient-to-b from-black/90 via-black/50 to-transparent flex items-center justify-between transition-opacity duration-300 ${
-          showOsd ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
-        }`}
-      >
-        <div className="flex items-center gap-3">
-          <button
-            onClick={handleClosePlayer}
-            className="p-2 sm:p-2.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors"
-            title="Wiedergabe schließen (Zurück / Esc)"
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </button>
-          <div>
-            <h2 className="text-sm sm:text-base font-bold text-white tracking-wide">
-              {formatCleanTitle(video.name)}
-            </h2>
-            <p className="text-[11px] text-gray-400">
-              {formatBytes(video.size)}
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <button
-            onClick={onDownload}
-            className="p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors"
-            title="Herunterladen"
-          >
-            <Download className="w-4 h-4" />
-          </button>
-          <button
-            onClick={onClose}
-            className="p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors"
-            title="Schließen"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-      </div>
-
-      {/* Bottom Controls Bar OSD */}
-      <div
-        className={`absolute bottom-0 inset-x-0 z-30 p-4 sm:p-8 bg-gradient-to-t from-black/95 via-black/60 to-transparent flex flex-col gap-3 transition-opacity duration-300 ${
-          showOsd ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
-        }`}
-      >
-        {/* Progress Bar */}
-        <div
-          onClick={(e) => {
-            const rect = e.currentTarget.getBoundingClientRect();
-            const pos = (e.clientX - rect.left) / rect.width;
-            if (videoRef.current && duration) {
-              const newTime = pos * duration;
-              videoRef.current.currentTime = newTime;
-              setCurrentTime(newTime);
-            }
-          }}
-          className="relative w-full h-2 sm:h-2.5 bg-white/20 rounded-full cursor-pointer overflow-hidden group hover:h-3.5 transition-all"
-        >
-          <div
-            className="h-full rounded-full transition-all duration-100"
-            style={{ width: `${progressPercent}%`, backgroundColor: '#E50914' }}
-          />
-        </div>
-
-        {/* Playback Controls Row */}
-        <div className="flex items-center justify-between text-white pt-1">
-          <div className="flex items-center gap-4 sm:gap-6">
-            <button
-              onClick={togglePlayPause}
-              className="p-2.5 rounded-full hover:bg-white/15 text-white transition-transform active:scale-95"
-            >
-              {isPlaying ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6 fill-white" />}
-            </button>
-
-            <button
-              onClick={() => skipTime(-10)}
-              className="p-2 rounded-full hover:bg-white/15 text-gray-300 hover:text-white transition-colors"
-              title="-10 Sekunden"
-            >
-              <RotateCcw className="w-5 h-5" />
-            </button>
-
-            <button
-              onClick={() => skipTime(10)}
-              className="p-2 rounded-full hover:bg-white/15 text-gray-300 hover:text-white transition-colors"
-              title="+10 Sekunden"
-            >
-              <RotateCw className="w-5 h-5" />
-            </button>
-
-            <div className="flex items-center gap-2">
-              <button
-                onClick={toggleMute}
-                className="p-2 rounded-full hover:bg-white/15 text-gray-300 hover:text-white transition-colors"
-              >
-                {isMuted || volume === 0 ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
-              </button>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.05"
-                value={isMuted ? 0 : volume}
-                onChange={(e) => {
-                  const val = parseFloat(e.target.value);
-                  setVolume(val);
-                  if (videoRef.current) {
-                    videoRef.current.volume = val;
-                    videoRef.current.muted = val === 0;
-                  }
-                  setIsMuted(val === 0);
-                }}
-                className="w-16 sm:w-24 accent-[#E50914] cursor-pointer"
-              />
-            </div>
-
-            <span className="text-xs sm:text-sm font-mono text-gray-300">
-              {formatPlayerTime(currentTime)} / {formatPlayerTime(duration)}
-            </span>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <button
-              onClick={toggleFullscreen}
-              className="p-2 rounded-full hover:bg-white/15 text-gray-300 hover:text-white transition-colors"
-              title="Vollbild umschalten (F)"
-            >
-              {isFullscreen ? <Minimize className="w-5 h-5" /> : <Maximize className="w-5 h-5" />}
-            </button>
-          </div>
-        </div>
-      </div>
     </div>
   );
 };
