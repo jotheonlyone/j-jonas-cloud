@@ -256,6 +256,49 @@ export const CinemaView: React.FC<CinemaViewProps> = ({
     return cleanTitle.includes(q) || rawName.includes(q) || path.includes(q) || desc.includes(q);
   }, []);
 
+  // Autocomplete-Kandidaten: Eindeutige Kategorien- und Video-Titel
+  const autocompleteCandidates = useMemo(() => {
+    const set = new Set<string>();
+    allFolderCategories.forEach((cat) => {
+      if (cat.title) set.add(cat.title.trim());
+    });
+    displayVideos.forEach((vid) => {
+      const clean = formatCleanTitle(vid.name).trim();
+      if (clean) set.add(clean);
+    });
+    return Array.from(set);
+  }, [allFolderCategories, displayVideos]);
+
+  // Live Auto-Completion (Ghost-Text & Enter-Übernahme)
+  const autocompleteMatch = useMemo(() => {
+    const trimmed = searchQuery.trim();
+    if (trimmed.length < 1) return null;
+    const lower = trimmed.toLowerCase();
+
+    // 1. Priorität: Titel / Kategorie beginnt mit der Eingabe (Prefix-Match)
+    const prefixMatch = autocompleteCandidates.find(
+      (c) => c.toLowerCase().startsWith(lower) && c.toLowerCase() !== lower
+    );
+    if (prefixMatch) return prefixMatch;
+
+    // 2. Priorität: Wort innerhalb des Titels beginnt mit der Eingabe
+    const wordMatch = autocompleteCandidates.find((c) => {
+      if (c.toLowerCase() === lower) return false;
+      const words = c.toLowerCase().split(/[\s-_]+/);
+      return words.some((w) => w.startsWith(lower));
+    });
+    return wordMatch || null;
+  }, [searchQuery, autocompleteCandidates]);
+
+  // Grauer Suffix, der direkt hinter dem getippten Text angezeigt wird
+  const ghostSuffix = useMemo(() => {
+    if (!autocompleteMatch) return '';
+    if (autocompleteMatch.toLowerCase().startsWith(searchQuery.toLowerCase())) {
+      return autocompleteMatch.slice(searchQuery.length);
+    }
+    return '';
+  }, [searchQuery, autocompleteMatch]);
+
   // Featured rows: "Zuletzt hinzugefügt" is ALWAYS first, followed by 2 or 3 randomly selected folder categories
   const featuredRows = useMemo(() => {
     const rows: VideoCategory[] = [];
@@ -456,33 +499,69 @@ export const CinemaView: React.FC<CinemaViewProps> = ({
           </div>
         </div>
 
-        {/* Right: Größeres, prominentes Suchfeld (ohne Upload-Button) */}
+        {/* Right: Größeres, prominentes Suchfeld mit intelligenter Auto-Completion */}
         <div className="flex-1 max-w-xl ml-4 sm:ml-8">
           <form
             onSubmit={(e) => {
               e.preventDefault();
+              if (autocompleteMatch) {
+                setSearchQuery(autocompleteMatch);
+              }
               (document.activeElement as HTMLElement)?.blur();
             }}
             className="relative"
           >
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Videos, Filme oder Kategorien suchen..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-9 py-2 text-xs sm:text-sm rounded-full bg-white/10 hover:bg-white/15 focus:bg-black/60 focus:ring-1 focus:ring-[#E50914] border border-white/10 focus:border-[#E50914] text-white placeholder-gray-400 focus:outline-none transition-all shadow-inner"
-            />
-            {searchQuery && (
-              <button
-                type="button"
-                onClick={() => setSearchQuery('')}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white cursor-pointer"
-                title="Suche zurücksetzen"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
+            <div className="relative flex items-center w-full rounded-full bg-white/10 hover:bg-white/15 focus-within:bg-black/60 focus-within:ring-1 focus-within:ring-[#E50914] border border-white/10 focus-within:border-[#E50914] shadow-inner transition-all">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none z-10" />
+
+              {/* Ghost Auto-Complete Suggestion (in dezent grauer Schrift) */}
+              {ghostSuffix && (
+                <div
+                  className="absolute inset-0 flex items-center pl-10 pr-9 text-xs sm:text-sm font-sans pointer-events-none overflow-hidden select-none whitespace-pre"
+                  aria-hidden="true"
+                >
+                  <span className="invisible opacity-0">{searchQuery}</span>
+                  <span className="text-gray-400/80 font-normal">{ghostSuffix}</span>
+                </div>
+              )}
+
+              <input
+                type="text"
+                placeholder="Videos, Filme oder Kategorien suchen..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    if (autocompleteMatch) {
+                      e.preventDefault();
+                      setSearchQuery(autocompleteMatch);
+                      (e.currentTarget as HTMLInputElement).blur();
+                    }
+                  } else if (
+                    e.key === 'Tab' ||
+                    (e.key === 'ArrowRight' &&
+                      e.currentTarget.selectionStart === searchQuery.length)
+                  ) {
+                    if (autocompleteMatch) {
+                      e.preventDefault();
+                      setSearchQuery(autocompleteMatch);
+                    }
+                  }
+                }}
+                className="relative z-10 w-full pl-10 pr-9 py-2 text-xs sm:text-sm bg-transparent text-white placeholder-gray-400 focus:outline-none transition-all font-sans"
+              />
+
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white cursor-pointer z-20"
+                  title="Suche zurücksetzen"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
           </form>
         </div>
       </header>
@@ -966,7 +1045,7 @@ export const CinemaView: React.FC<CinemaViewProps> = ({
         );
       })()}
 
-      {/* 7. FULLSCREEN MEDIA PLAYER MIT NEXT-VIDEO & TV-STEUERUNG */}
+      {/* 7. FULLSCREEN MEDIA PLAYER MIT NEXT-VIDEO & DESKTOP-STEUERUNG */}
       {activeFullscreenVideo && (
         <CinemaPlayerOverlay
           video={activeFullscreenVideo}
@@ -976,6 +1055,7 @@ export const CinemaView: React.FC<CinemaViewProps> = ({
           onClose={() => setActiveFullscreenVideo(null)}
           onVideoChange={(v) => setActiveFullscreenVideo(v)}
           darkMode={darkMode}
+          isTvMode={false}
         />
       )}
     </div>

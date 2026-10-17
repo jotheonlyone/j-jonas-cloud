@@ -437,6 +437,49 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
     return cleanTitle.includes(q) || rawName.includes(q) || path.includes(q) || desc.includes(q);
   }, []);
 
+  // Autocomplete-Kandidaten: Eindeutige Kategorien- und Video-Titel
+  const autocompleteCandidates = useMemo(() => {
+    const set = new Set<string>();
+    allFolderCategories.forEach((cat) => {
+      if (cat.title) set.add(cat.title.trim());
+    });
+    displayVideos.forEach((vid) => {
+      const clean = formatCleanTitle(vid.name).trim();
+      if (clean) set.add(clean);
+    });
+    return Array.from(set);
+  }, [allFolderCategories, displayVideos]);
+
+  // Live Auto-Completion (Ghost-Text & Enter-Übernahme)
+  const autocompleteMatch = useMemo(() => {
+    const trimmed = searchQuery.trim();
+    if (trimmed.length < 1) return null;
+    const lower = trimmed.toLowerCase();
+
+    // 1. Priorität: Titel / Kategorie beginnt mit der Eingabe (Prefix-Match)
+    const prefixMatch = autocompleteCandidates.find(
+      (c) => c.toLowerCase().startsWith(lower) && c.toLowerCase() !== lower
+    );
+    if (prefixMatch) return prefixMatch;
+
+    // 2. Priorität: Wort innerhalb des Titels beginnt mit der Eingabe
+    const wordMatch = autocompleteCandidates.find((c) => {
+      if (c.toLowerCase() === lower) return false;
+      const words = c.toLowerCase().split(/[\s-_]+/);
+      return words.some((w) => w.startsWith(lower));
+    });
+    return wordMatch || null;
+  }, [searchQuery, autocompleteCandidates]);
+
+  // Grauer Suffix, der direkt hinter dem getippten Text angezeigt wird
+  const ghostSuffix = useMemo(() => {
+    if (!autocompleteMatch) return '';
+    if (autocompleteMatch.toLowerCase().startsWith(searchQuery.toLowerCase())) {
+      return autocompleteMatch.slice(searchQuery.length);
+    }
+    return '';
+  }, [searchQuery, autocompleteMatch]);
+
   // SEKTION 2: Reihe "Zuletzt hinzugefügt"
   const recentRow = useMemo<VideoCategory | null>(() => {
     const recentFiltered = sortVideosByTagDate(
@@ -1241,10 +1284,13 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
 
         {/* Right: Controls mit Suchleiste & Demo-Modus Button */}
         <div className="flex items-center gap-3 flex-1 max-w-2xl ml-4 sm:ml-8 justify-end">
-          {/* Suchleiste: Erst Klick auf OK öffnet Tastatur */}
+          {/* Suchleiste mit intelligenter Auto-Completion (Ghost-Text & Enter-Übernahme) */}
           <form
             onSubmit={(e) => {
               e.preventDefault();
+              if (autocompleteMatch) {
+                setSearchQuery(autocompleteMatch);
+              }
               searchInputRef.current?.blur();
               setIsEditingSearch(false);
               if (gridVideos.length > 0) {
@@ -1258,90 +1304,123 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
             }}
             className="relative flex-1 max-w-md"
           >
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-            <input
-              ref={searchInputRef}
-              type="text"
-              readOnly={!isEditingSearch}
-              placeholder={isEditingSearch ? "Videos oder Filme suchen..." : (searchQuery || "OK drücken zum Suchen...")}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              onClick={() => {
-                setFocusedZone('header');
-                setHeaderFocusIndex(0);
-                setIsEditingSearch(true);
-                searchInputRef.current?.focus();
-              }}
-              onFocus={() => {
-                setFocusedZone('header');
-                setHeaderFocusIndex(0);
-              }}
-              onBlur={() => {
-                setIsEditingSearch(false);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  searchInputRef.current?.blur();
-                  setIsEditingSearch(false);
-                  if (gridVideos.length > 0) {
-                    setFocusedZone('grid');
-                    setGridIdx(0);
-                  } else if (featuredRows.length > 0 && featuredRows[0].videos.length > 0) {
-                    setFocusedZone('carousels');
-                    setCarouselRowIdx(0);
-                    setCarouselColIdx(0);
-                  }
-                } else if (e.key === 'ArrowDown') {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  searchInputRef.current?.blur();
-                  setIsEditingSearch(false);
-                  if (heroVideo) {
-                    setFocusedZone('hero');
-                    setHeroIndex(0);
-                  } else if (featuredRows.length > 0) {
-                    setFocusedZone('carousels');
-                    setCarouselRowIdx(0);
-                    setCarouselColIdx(0);
-                  } else if (gridVideos.length > 0) {
-                    setFocusedZone('grid');
-                    setGridIdx(0);
-                  }
-                }
-              }}
-              className={`w-full pl-10 pr-9 py-2 text-xs sm:text-sm rounded-full text-white placeholder-gray-400 focus:outline-none transition-transform duration-100 shadow-inner cursor-pointer ${
+            <div
+              className={`relative flex items-center w-full rounded-full transition-transform duration-100 shadow-inner cursor-pointer ${
                 focusedZone === 'header' && headerFocusIndex === 0
                   ? isEditingSearch
                     ? 'border-[#E50914] ring-4 ring-[#E50914] bg-black/90'
                     : 'border-white ring-4 ring-white bg-black/80 scale-105 shadow-2xl'
                   : 'border border-white/10 bg-white/10 hover:bg-white/15'
               }`}
-            />
-            {searchQuery && (
-              <button
-                type="button"
-                ref={searchClearBtnRef}
+            >
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none z-10" />
+
+              {/* Ghost Auto-Complete Suggestion (in dezent grauer Schrift) */}
+              {ghostSuffix && (
+                <div
+                  className="absolute inset-0 flex items-center pl-10 pr-9 text-xs sm:text-sm font-sans pointer-events-none overflow-hidden select-none whitespace-pre"
+                  aria-hidden="true"
+                >
+                  <span className="invisible opacity-0">{searchQuery}</span>
+                  <span className="text-gray-400/80 font-normal">{ghostSuffix}</span>
+                </div>
+              )}
+
+              <input
+                ref={searchInputRef}
+                type="text"
+                readOnly={!isEditingSearch}
+                placeholder={
+                  isEditingSearch
+                    ? 'Videos oder Filme suchen...'
+                    : searchQuery || 'OK drücken zum Suchen...'
+                }
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
                 onClick={() => {
-                  setSearchQuery('');
+                  setFocusedZone('header');
                   setHeaderFocusIndex(0);
+                  setIsEditingSearch(true);
+                  searchInputRef.current?.focus();
+                }}
+                onFocus={() => {
+                  setFocusedZone('header');
+                  setHeaderFocusIndex(0);
+                }}
+                onBlur={() => {
                   setIsEditingSearch(false);
                 }}
-                onMouseEnter={() => {
-                  setFocusedZone('header');
-                  setHeaderFocusIndex(1);
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (autocompleteMatch) {
+                      setSearchQuery(autocompleteMatch);
+                    }
+                    searchInputRef.current?.blur();
+                    setIsEditingSearch(false);
+                    if (gridVideos.length > 0) {
+                      setFocusedZone('grid');
+                      setGridIdx(0);
+                    } else if (featuredRows.length > 0 && featuredRows[0].videos.length > 0) {
+                      setFocusedZone('carousels');
+                      setCarouselRowIdx(0);
+                      setCarouselColIdx(0);
+                    }
+                  } else if (
+                    e.key === 'Tab' ||
+                    (e.key === 'ArrowRight' &&
+                      e.currentTarget.selectionStart === searchQuery.length)
+                  ) {
+                    if (autocompleteMatch) {
+                      e.preventDefault();
+                      setSearchQuery(autocompleteMatch);
+                    }
+                  } else if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    searchInputRef.current?.blur();
+                    setIsEditingSearch(false);
+                    if (heroVideo) {
+                      setFocusedZone('hero');
+                      setHeroIndex(0);
+                    } else if (featuredRows.length > 0) {
+                      setFocusedZone('carousels');
+                      setCarouselRowIdx(0);
+                      setCarouselColIdx(0);
+                    } else if (gridVideos.length > 0) {
+                      setFocusedZone('grid');
+                      setGridIdx(0);
+                    }
+                  }
                 }}
-                className={`absolute right-2.5 top-1/2 -translate-y-1/2 p-1 rounded-full text-gray-400 hover:text-white transition-all cursor-pointer ${
-                  focusedZone === 'header' && headerFocusIndex === 1
-                    ? 'ring-2 ring-white text-white bg-white/20'
-                    : ''
-                }`}
-                title="Suche zurücksetzen"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
+                className="relative z-10 w-full pl-10 pr-9 py-2 text-xs sm:text-sm bg-transparent text-white placeholder-gray-400 focus:outline-none cursor-pointer font-sans"
+              />
+
+              {searchQuery && (
+                <button
+                  type="button"
+                  ref={searchClearBtnRef}
+                  onClick={() => {
+                    setSearchQuery('');
+                    setHeaderFocusIndex(0);
+                    setIsEditingSearch(false);
+                  }}
+                  onMouseEnter={() => {
+                    setFocusedZone('header');
+                    setHeaderFocusIndex(1);
+                  }}
+                  className={`absolute right-2.5 top-1/2 -translate-y-1/2 p-1 rounded-full text-gray-400 hover:text-white transition-all cursor-pointer z-20 ${
+                    focusedZone === 'header' && headerFocusIndex === 1
+                      ? 'ring-2 ring-white text-white bg-white/20'
+                      : 'hover:bg-white/10'
+                  }`}
+                  title="Suche zurücksetzen"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
           </form>
 
           {/* Kleiner Reload-Knopf im Header zum Aktualisieren und Prüfen auf neue Dateien */}
@@ -2006,6 +2085,7 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
           onClose={() => setActivePlayerVideo(null)}
           onVideoChange={(v) => setActivePlayerVideo(v)}
           darkMode={darkMode}
+          isTvMode={true}
         />
       )}
     </div>
