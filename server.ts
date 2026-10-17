@@ -60,14 +60,6 @@ app.use('/api/stream', (req, res) => {
   res.redirect(targetUrl);
 });
 
-/**
- * Proxy für /api/thumbnail -> https://storage.j-jonas.com/thumbnail
- * Liefert das serverseitig generierte WebP-Vorschaubild (FFmpeg).
- */
-app.use('/api/thumbnail', (req, res) => {
-  const targetUrl = `https://storage.j-jonas.com/thumbnail${req.url}`;
-  res.redirect(targetUrl);
-});
 
 /**
  * PATCH /api/shares/permissions

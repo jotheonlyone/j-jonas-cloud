@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Film } from 'lucide-react';
 import type { FileItemData } from '../types';
 import { getThumbnailUrl } from '../services/storageApi';
@@ -10,6 +10,7 @@ export interface VideoThumbnailProps {
   placeholderClassName?: string;
   iconClassName?: string;
   loading?: 'lazy' | 'eager';
+  user?: string;
 }
 
 /**
@@ -17,7 +18,7 @@ export interface VideoThumbnailProps {
  * - Ruft serverseitig generierte Thumbnails (FFmpeg / WebP) direkt per <img> ab
  * - Verwendet loading="lazy" für performantes Laden
  * - Zeigt ein neutrales Video-Icon/Placeholder bei 404 (onError) oder während des Ladevorgangs
- * - Enthält kein clientseitiges <video>- oder <canvas>-Rendering
+ * - Verwendet direkt die URL aus getThumbnailUrl(video, user)
  */
 export const VideoThumbnail: React.FC<VideoThumbnailProps> = ({
   video,
@@ -26,12 +27,18 @@ export const VideoThumbnail: React.FC<VideoThumbnailProps> = ({
   placeholderClassName = 'w-full h-full flex items-center justify-center bg-neutral-950',
   iconClassName = 'w-10 h-10 text-white/30',
   loading = 'lazy',
+  user,
 }) => {
   const [hasError, setHasError] = useState(false);
   const [isLoaded, setIsLoaded] = useState(false);
 
-  const thumbUrl = getThumbnailUrl(video);
+  const thumbUrl = getThumbnailUrl(video, user);
   const cleanTitle = alt || video.name;
+
+  useEffect(() => {
+    setHasError(false);
+    setIsLoaded(false);
+  }, [thumbUrl]);
 
   if (hasError || !thumbUrl) {
     return (

@@ -218,7 +218,7 @@ export const FileItem: React.FC<FileItemProps> = ({
           ) : isVid && !thumbError ? (
             <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-xl bg-gray-100 dark:bg-gray-700 overflow-hidden shrink-0 border border-gray-200/60 dark:border-gray-600/50 flex items-center justify-center group-hover:scale-105 transition-transform">
               <img
-                src={getThumbnailUrl(item)}
+                src={getThumbnailUrl(item, item.owner)}
                 alt={item.name}
                 loading="lazy"
                 onError={() => setThumbError(true)}
@@ -329,7 +329,7 @@ export const FileItem: React.FC<FileItemProps> = ({
         ) : isVid && !thumbError ? (
           <div className="w-7 h-7 rounded-lg bg-gray-100 dark:bg-gray-700 overflow-hidden shrink-0 border border-gray-200/60 dark:border-gray-600/50 flex items-center justify-center">
             <img
-              src={getThumbnailUrl(item)}
+              src={getThumbnailUrl(item, item.owner)}
               alt={item.name}
               loading="lazy"
               onError={() => setThumbError(true)}

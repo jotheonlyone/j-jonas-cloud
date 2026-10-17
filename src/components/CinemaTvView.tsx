@@ -172,6 +172,7 @@ const TvCardItem = React.memo<TvCardItemProps>(
         <div className="relative w-full aspect-video bg-neutral-950 overflow-hidden flex items-center justify-center">
           <VideoThumbnail
             video={video}
+            user={video.owner}
             alt={video.name}
             className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity duration-150"
             placeholderClassName="w-full h-full flex items-center justify-center bg-neutral-950"
@@ -1383,6 +1384,7 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
           <div className="absolute inset-0 bg-[#0a0a0a] overflow-hidden pointer-events-none">
             <VideoThumbnail
               video={heroVideo}
+              user={heroVideo.owner || user.username}
               alt={heroVideo.name}
               className="w-full h-full object-cover opacity-60"
               placeholderClassName="w-full h-full flex items-center justify-center bg-[#0a0a0a]"
@@ -1912,6 +1914,7 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
               <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-neutral-950 border border-white/10 flex items-center justify-center">
                 <VideoThumbnail
                   video={selectedDetailsVideo}
+                  user={selectedDetailsVideo.owner || user.username}
                   alt={selectedDetailsVideo.name}
                   className="w-full h-full object-contain"
                   placeholderClassName="w-full h-full flex items-center justify-center bg-neutral-950"
