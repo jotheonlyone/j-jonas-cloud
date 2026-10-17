@@ -993,7 +993,7 @@ function MainApp() {
 
       {/* FULL-SCREEN CINEMA / TV MODE: Replaces entire standard Jonas Cloud interface */}
       {currentTab === 'cinema-tv' ? (
-        <div className="fixed inset-0 z-50 bg-[#141414] overflow-y-auto">
+        <div className="fixed inset-0 z-50 bg-[#141414] overflow-hidden">
           <CinemaTvView
             user={user}
             items={allCinemaVideos.length > 0 ? allCinemaVideos : items}

@@ -259,8 +259,12 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
 
   // Dynamic directory categories
   const [allFolderCategories, setAllFolderCategories] = useState<VideoCategory[]>([]);
-  const [allUserVideos, setAllUserVideos] = useState<FileItemData[]>([]);
-  const [isLoadingCategories, setIsLoadingCategories] = useState(true);
+  const [allUserVideos, setAllUserVideos] = useState<FileItemData[]>(() => {
+    const directVids = items.filter(isVideoFile);
+    return directVids.length > 0 ? sortVideosByTagDate(directVids) : [];
+  });
+  // Wenn Videos bereits über Props übergeben wurden, keinen vollflächigen Ladespinner erzwingen
+  const [isLoadingCategories, setIsLoadingCategories] = useState(() => items.filter(isVideoFile).length === 0);
   const [currentPlayingCategory, setCurrentPlayingCategory] = useState<VideoCategory | null>(null);
   const [overlayBtnIdx, setOverlayBtnIdx] = useState<number>(1);
 
@@ -281,8 +285,24 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
 
   const handleReload = () => {
     setIsReloading(true);
+    setIsLoadingCategories(true);
     setReloadTrigger((prev) => prev + 1);
+    // Robuster Fallback: Spinner verschwindet nach maximal 3,5 Sekunden garantiert
+    setTimeout(() => {
+      setIsReloading(false);
+      setIsLoadingCategories(false);
+    }, 3500);
   };
+
+  // Robuster Fallback-Timer: Ladebildschirm niemals dauerhaft stehen lassen
+  useEffect(() => {
+    if (!isLoadingCategories) return;
+    const safetyTimer = setTimeout(() => {
+      setIsLoadingCategories(false);
+      setIsReloading(false);
+    }, 3500);
+    return () => clearTimeout(safetyTimer);
+  }, [isLoadingCategories]);
 
   // Fetch dynamic categories from the account's directory structure
   useEffect(() => {
@@ -358,6 +378,11 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
           setIsLoadingCategories(false);
           setIsReloading(false);
         }
+      } finally {
+        if (isMounted) {
+          setIsLoadingCategories(false);
+          setIsReloading(false);
+        }
       }
     };
 
@@ -411,51 +436,63 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
     return cleanTitle.includes(q) || rawName.includes(q) || path.includes(q) || desc.includes(q);
   }, []);
 
-  // Featured rows: "Zuletzt hinzugefügt" is ALWAYS first, followed by folder categories
-  const featuredRows = useMemo(() => {
-    const rows: VideoCategory[] = [];
-    const q = searchQuery.trim().toLowerCase();
-
-    // Row 1: "Zuletzt hinzugefügt"
+  // SEKTION 2: Reihe "Zuletzt hinzugefügt"
+  const recentRow = useMemo<VideoCategory | null>(() => {
     const recentFiltered = sortVideosByTagDate(
       displayVideos.filter((v) => matchesQuery(v, searchQuery))
     );
-    if (recentFiltered.length > 0) {
-      rows.push({
-        id: 'recent',
-        title: 'Zuletzt hinzugefügt',
-        folderPath: '',
-        videos: recentFiltered,
-      });
-    }
+    if (recentFiltered.length === 0) return null;
+    return {
+      id: 'recent',
+      title: 'Zuletzt hinzugefügt',
+      folderPath: '',
+      videos: recentFiltered,
+    };
+  }, [displayVideos, searchQuery, matchesQuery]);
 
-    // Category rows: if category title matches q, show its videos; or show videos matching q
-    if (allFolderCategories.length > 0) {
-      if (q) {
-        allFolderCategories.forEach((cat) => {
+  // SEKTION 3: Reale Kategorien (maximal 3 zufällig ausgewählte Kategorien aus den vorhandenen Ordnern, KEINE generierten Empfehlungen!)
+  const categoryRows = useMemo<VideoCategory[]>(() => {
+    const q = searchQuery.trim().toLowerCase();
+
+    if (q) {
+      // Wenn gesucht wird: passende Kategorien mit Suchtreffern anzeigen (bis zu 3)
+      return allFolderCategories
+        .map((cat) => {
           const catMatches = cat.title.toLowerCase().includes(q);
           const matchingVideos = sortVideosByTagDate(
             cat.videos.filter((v) => catMatches || matchesQuery(v, searchQuery))
           );
-          if (matchingVideos.length > 0) {
-            rows.push({
-              ...cat,
-              videos: matchingVideos,
-            });
-          }
-        });
-      } else {
-        const shuffled = [...allFolderCategories].sort(() => 0.5 - Math.random());
-        const selectedRandom = shuffled.slice(0, 3).map((cat) => ({
-          ...cat,
-          videos: sortVideosByTagDate(cat.videos),
-        }));
-        rows.push(...selectedRandom);
-      }
+          return matchingVideos.length > 0 ? { ...cat, videos: matchingVideos } : null;
+        })
+        .filter((c): c is VideoCategory => c !== null)
+        .slice(0, 3);
     }
 
-    return rows;
-  }, [displayVideos, allFolderCategories, searchQuery, matchesQuery]);
+    // Wenn nicht gesucht wird: Nur echte Kategorien (maximal 3 zufällig ausgewählte Kategorien)
+    const validCategories = allFolderCategories.filter((c) => c.videos.length > 0);
+    if (validCategories.length <= 3) {
+      return validCategories.map((cat) => ({
+        ...cat,
+        videos: sortVideosByTagDate(cat.videos),
+      }));
+    }
+
+    const shuffled = [...validCategories].sort(() => 0.5 - Math.random());
+    return shuffled.slice(0, 3).map((cat) => ({
+      ...cat,
+      videos: sortVideosByTagDate(cat.videos),
+    }));
+  }, [allFolderCategories, searchQuery, matchesQuery]);
+
+  // Kombinierte Karussell-Reihen: Index 0 = Sektion 2 ("Zuletzt hinzugefügt"), Index 1..3 = Sektion 3 (nur echte Kategorien)
+  const featuredRows = useMemo<VideoCategory[]>(() => {
+    const list: VideoCategory[] = [];
+    if (recentRow) {
+      list.push(recentRow);
+    }
+    list.push(...categoryRows);
+    return list;
+  }, [recentRow, categoryRows]);
 
   // Category filter options for interactive pill bar
   const filterOptions = useMemo(() => {
@@ -508,6 +545,14 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
   const [isEditingSearch, setIsEditingSearch] = useState<boolean>(false);
   const lastKeyTimeRef = useRef<number>(0);
 
+  // TV Scroll-Container & Sektionen-Refs für sauberes Scrollen
+  const tvScrollContainerRef = useRef<HTMLDivElement>(null);
+  const sectionHeroRef = useRef<HTMLElement>(null);
+  const sectionRecentRef = useRef<HTMLElement>(null);
+  const sectionCategoriesRef = useRef<HTMLDivElement>(null);
+  const sectionAllRef = useRef<HTMLElement>(null);
+  const carouselRowSectionRefs = useRef<Map<number, HTMLElement>>(new Map());
+
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchClearBtnRef = useRef<HTMLButtonElement>(null);
   const headerReloadBtnRef = useRef<HTMLButtonElement>(null);
@@ -528,7 +573,7 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
     return 1;
   }, []);
 
-  // Butterweiches, entkoppeltes Scrollen per requestAnimationFrame
+  // Präzises TV-Scrollen: Ausgewähltes Element und aktive Kategorie-Reihe sind IMMER voll sichtbar!
   const scrollRafRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -539,28 +584,94 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
     }
 
     scrollRafRef.current = requestAnimationFrame(() => {
+      const container = tvScrollContainerRef.current;
+      if (!container) return;
+
       if (focusedZone === 'header') {
+        container.scrollTo({ top: 0, behavior: 'smooth' });
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      } else if (focusedZone === 'hero') {
+        // Sektion 1: Oben das Hero-/Front-Video ganz nach oben bringen
+        container.scrollTo({ top: 0, behavior: 'smooth' });
         window.scrollTo({ top: 0, behavior: 'smooth' });
       } else if (focusedZone === 'emptyState') {
-        emptyStateBtnRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
-      } else if (focusedZone === 'hero') {
-        const btn = heroIndex === 0 ? heroPlayBtnRef.current : heroInfoBtnRef.current;
-        btn?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+        emptyStateBtnRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       } else if (focusedZone === 'carousels') {
         const key = `${carouselRowIdx}-${carouselColIdx}`;
-        const el = carouselItemRefs.current.get(key);
-        if (el) {
-          el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+        const cardEl = carouselItemRefs.current.get(key);
+        const rowSection = carouselRowIdx === 0
+          ? sectionRecentRef.current
+          : carouselRowSectionRefs.current.get(carouselRowIdx);
+
+        // 1. VERTIKAL: Ausgewählte Kategorie-Reihe & Karte MUSS voll sichtbar sein und springt sauber ins Blickfeld!
+        const focusedCardEl = cardEl || (document.querySelector('[data-focused="true"]') as HTMLDivElement | null);
+        if (focusedCardEl) {
+          const containerRect = container.getBoundingClientRect();
+          const cardRect = focusedCardEl.getBoundingClientRect();
+          const relativeCardTop = cardRect.top - containerRect.top + container.scrollTop;
+
+          // Karte vertikal im Sichtbereich zentrieren, damit sowohl die Kategorieüberschrift als auch die gesamte Karte 100% sichtbar sind
+          const targetScrollTop = Math.max(0, relativeCardTop - (container.clientHeight - cardRect.height) / 2);
+          
+          container.scrollTo({
+            top: targetScrollTop,
+            behavior: 'smooth',
+          });
+        } else if (rowSection) {
+          const containerRect = container.getBoundingClientRect();
+          const targetRect = rowSection.getBoundingClientRect();
+          const relativeTop = targetRect.top - containerRect.top + container.scrollTop;
+          
+          // Header ist sticky (~65px) -> Platziere die gewählte Reihe 80px unter den oberen Rand
+          const targetScrollTop = Math.max(0, relativeTop - 80);
+          
+          container.scrollTo({
+            top: targetScrollTop,
+            behavior: 'smooth',
+          });
+        }
+
+        // 2. HORIZONTAL: Die gewählte Karte im Track zentrieren, OHNE das vertikale Scrollen zu stören
+        if (focusedCardEl) {
+          const rowTrack = (focusedCardEl.closest('.tv-scroll-track') as HTMLElement) || focusedCardEl.parentElement;
+          if (rowTrack) {
+            const trackRect = rowTrack.getBoundingClientRect();
+            const cardRect = focusedCardEl.getBoundingClientRect();
+            const relativeLeft = cardRect.left - trackRect.left + rowTrack.scrollLeft;
+            const targetScrollLeft = relativeLeft - (rowTrack.clientWidth - cardRect.width) / 2;
+            rowTrack.scrollTo({
+              left: Math.max(0, targetScrollLeft),
+              behavior: 'smooth',
+            });
+          }
         }
       } else if (focusedZone === 'filterBar') {
-        const btn = filterPillRefs.current.get(filterBarIdx);
-        if (btn) {
-          btn.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+        // Sektion 4: Kategorien-Filterleiste
+        if (sectionAllRef.current) {
+          const containerRect = container.getBoundingClientRect();
+          const targetRect = sectionAllRef.current.getBoundingClientRect();
+          const relativeTop = targetRect.top - containerRect.top + container.scrollTop;
+          container.scrollTo({
+            top: Math.max(0, relativeTop - 80),
+            behavior: 'smooth',
+          });
+        }
+        const pillBtn = filterPillRefs.current.get(filterBarIdx);
+        if (pillBtn) {
+          pillBtn.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
         }
       } else if (focusedZone === 'grid') {
-        const el = gridItemRefs.current.get(gridIdx);
-        if (el) {
-          el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+        const cardEl = gridItemRefs.current.get(gridIdx);
+        if (cardEl) {
+          const containerRect = container.getBoundingClientRect();
+          const cardRect = cardEl.getBoundingClientRect();
+          const relativeTop = cardRect.top - containerRect.top + container.scrollTop;
+          // Karte vertikal im Sichtfeld zentrieren, damit sie voll sichtbar ist
+          const targetScrollTop = relativeTop - (container.clientHeight - cardRect.height) / 2;
+          container.scrollTo({
+            top: Math.max(0, targetScrollTop),
+            behavior: 'smooth',
+          });
         }
       }
     });
@@ -580,6 +691,8 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
     activePlayerVideo,
     selectedDetailsVideo,
     descriptionOverlay,
+    featuredRows,
+    recentRow,
   ]);
 
   // Keep a ref of activePlayerVideo to safely inspect in window popstate handler
@@ -818,25 +931,41 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
 
       const cols = getGridCols();
       const maxHeaderIdx = searchQuery ? 2 : 1;
-      const isUp = e.key === 'ArrowUp' || e.key === 'Up' || e.keyCode === 38;
-      const isDown = e.key === 'ArrowDown' || e.key === 'Down' || e.keyCode === 40;
-      const isLeft = e.key === 'ArrowLeft' || e.key === 'Left' || e.keyCode === 37;
-      const isRight = e.key === 'ArrowRight' || e.key === 'Right' || e.keyCode === 39;
+      const isUp = e.key === 'ArrowUp' || e.key === 'Up' || e.code === 'ArrowUp' || e.keyCode === 38;
+      const isDown = e.key === 'ArrowDown' || e.key === 'Down' || e.code === 'ArrowDown' || e.keyCode === 40;
+      const isLeft = e.key === 'ArrowLeft' || e.key === 'Left' || e.code === 'ArrowLeft' || e.keyCode === 37;
+      const isRight = e.key === 'ArrowRight' || e.key === 'Right' || e.code === 'ArrowRight' || e.keyCode === 39;
       const isEnter = e.key === 'Enter' || e.keyCode === 13;
+
+      // Home-Taste: Springt direkt an den Seitenanfang / Hero-Sektion
+      if (e.key === 'Home') {
+        e.preventDefault();
+        if (heroVideo) {
+          setFocusedZone('hero');
+          setHeroIndex(0);
+        } else {
+          setFocusedZone('header');
+          setHeaderFocusIndex(0);
+        }
+        tvScrollContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        return;
+      }
 
       if (isUp) {
         e.preventDefault();
         if (focusedZone === 'grid') {
           if (gridIdx >= cols) {
-            // Strictly vertical navigation up inside the same column
+            // Streng vertikal nach oben in derselben Spalte navigieren
             setGridIdx((prev) => prev - cols);
           } else {
-            // Reached top row of grid -> navigate up to filterBar
+            // Oberste Zeile des Grids erreicht -> Fokus springt auf Sektion 4 Filterleiste
             setFocusedZone('filterBar');
             const targetPill = Math.min(filterOptions.length - 1, gridIdx % cols);
             setFilterBarIdx(Math.max(0, targetPill));
           }
         } else if (focusedZone === 'filterBar') {
+          // Von Filterleiste nach oben -> springt auf die letzte Karussell-Reihe (Sektion 3)
           if (featuredRows.length > 0) {
             setFocusedZone('carousels');
             const targetRow = featuredRows.length - 1;
@@ -852,11 +981,13 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
           }
         } else if (focusedZone === 'carousels') {
           if (carouselRowIdx > 0) {
+            // In den Karussell-Reihen nach oben wandern (z. B. Sektion 3 Reihe 3 -> 2 -> 1 -> Sektion 2 "Zuletzt hinzugefügt")
             const nextRow = carouselRowIdx - 1;
             const maxCol = Math.max(0, (featuredRows[nextRow]?.videos.length || 1) - 1);
             setCarouselRowIdx(nextRow);
             setCarouselColIdx((prev) => Math.min(prev, maxCol));
           } else {
+            // Reihe 0 ("Zuletzt hinzugefügt") erreicht -> Fokus springt verlässlich nach oben auf Sektion 1 (Hero-/Front-Video)!
             if (heroVideo) {
               setFocusedZone('hero');
               setHeroIndex(0);
@@ -866,11 +997,21 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
             }
           }
         } else if (focusedZone === 'hero') {
+          // Vom Hero-Banner nach oben -> Fokus springt auf den Header (Suchleiste / Startleiste)
           setFocusedZone('header');
           setHeaderFocusIndex(0);
+          tvScrollContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        } else if (focusedZone === 'header') {
+          // Bereits im Header -> Seitenanfang bündig sicherstellen
+          setHeaderFocusIndex(0);
+          tvScrollContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+          window.scrollTo({ top: 0, behavior: 'smooth' });
         } else if (focusedZone === 'emptyState') {
           setFocusedZone('header');
           setHeaderFocusIndex(0);
+          tvScrollContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+          window.scrollTo({ top: 0, behavior: 'smooth' });
         }
         return;
       }
@@ -1071,9 +1212,12 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
   ]);
 
   return (
-    <div className="relative w-full min-h-screen bg-[#141414] text-white flex flex-col font-sans selection:bg-[#E50914] selection:text-white pb-16 overflow-x-hidden">
+    <div
+      ref={tvScrollContainerRef}
+      className="relative w-full h-full bg-[#141414] text-white flex flex-col font-sans selection:bg-[#E50914] selection:text-white pb-32 overflow-y-auto overflow-x-hidden scroll-smooth"
+    >
       {/* 1. TOP HEADER (1:1 mit Cinema abgestimmt, ohne Zurück-Knopf im TV-Modus) */}
-      <header className="sticky top-0 z-40 w-full flex items-center justify-between px-4 sm:px-8 py-3 bg-[#141414] border-b border-white/5 transition-all">
+      <header className="sticky top-0 z-40 w-full flex items-center justify-between px-4 sm:px-8 py-3 bg-[#141414]/95 backdrop-blur-md border-b border-white/5 transition-all shrink-0">
         {/* Left: Branding */}
         <div className="flex items-center gap-3 sm:gap-6 min-w-0">
           {/* Clean Red Logo: Mattes Kräftiges Rot (#E50914) */}
@@ -1222,14 +1366,19 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
         </div>
       </header>
 
-      {/* 2. HERO FEATURED BANNER (IDENTISCHER FADE & BLEND-IN MIT /CINEMA) */}
-      {isLoadingCategories ? (
-        <div className="w-full h-[45vh] min-h-[340px] max-h-[550px] flex flex-col items-center justify-center gap-3 select-none mb-8">
+      {/* SEKTION 1: OBEN DAS GROSSE HERO-/FRONT-VIDEO (VORSCHAU / BANNER) */}
+      {isLoadingCategories && displayVideos.length === 0 ? (
+        <div className="w-full h-[50vh] min-h-[360px] max-h-[580px] flex flex-col items-center justify-center gap-3 select-none mb-8 snap-start snap-always scroll-mt-20 shrink-0">
           <Loader2 className="w-10 h-10 animate-spin text-[#E50914]" />
           <span className="text-xs text-gray-400 font-medium">Mediathek wird geladen...</span>
         </div>
       ) : heroVideo ? (
-        <section className="relative w-full h-[55vh] min-h-[380px] max-h-[640px] flex items-end overflow-hidden mb-8 select-none">
+        <section
+          ref={sectionHeroRef}
+          id="tv-section-1-hero"
+          data-tv-section="hero"
+          className="relative w-full h-[55vh] min-h-[380px] max-h-[640px] flex items-end overflow-hidden mb-8 select-none snap-start snap-always scroll-mt-20 shrink-0"
+        >
           {/* Ambient Video Background */}
           <div className="absolute inset-0 bg-[#0a0a0a] overflow-hidden pointer-events-none">
             <VideoThumbnail
@@ -1322,7 +1471,7 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
         </section>
       ) : !isLoadingCategories && displayVideos.length === 0 ? (
         /* Empty State */
-        <div className="w-full max-w-4xl mx-auto my-12 px-6 py-12 rounded-3xl bg-neutral-900/60 border border-white/10 text-center shadow-2xl">
+        <div className="w-full max-w-4xl mx-auto my-12 px-6 py-12 rounded-3xl bg-neutral-900/60 border border-white/10 text-center shadow-2xl snap-start snap-always scroll-mt-20 shrink-0">
           <div
             className="w-16 h-16 mx-auto mb-4 rounded-2xl flex items-center justify-center border border-white/10"
             style={{ backgroundColor: 'rgba(229, 9, 20, 0.1)', color: '#E50914' }}
@@ -1350,186 +1499,285 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
         </div>
       ) : null}
 
-      {/* 3. HORIZONTAL SCROLLING ROWS: "ZULETZT HINZUGEFÜGT" + 2-3 ZUFÄLLIGE ORDNERKATEGORIEN (DURCHLAUF BIS ZUM RAND) */}
-      <div className="w-full max-w-7xl mx-auto px-4 sm:px-8 space-y-10">
-        {featuredRows.map((category, rowIdx) => {
-          const rowElementId = `tv-row-${category.id}`;
-          return (
-            <section key={`tv-feat-row-${category.id}`} className="space-y-3">
-              {/* Row Header (Ohne Ordner-Symbole, saubere Filmkategorie) */}
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <h2 className="text-lg sm:text-2xl font-black tracking-tight text-white">
-                    {category.title}
-                  </h2>
-                  <span className="text-xs font-semibold text-gray-400 bg-white/5 px-2 py-0.5 rounded-full border border-white/10">
-                    {category.videos.length}
-                  </span>
-                </div>
-
-                {/* Carousel controls */}
-                <div className="flex items-center gap-1.5">
-                  <button
-                    onClick={() => scrollRow(rowElementId, 'left')}
-                    className="p-2 rounded-full bg-white/5 hover:bg-white/15 text-gray-300 hover:text-white border border-white/10 transition-all active:scale-95"
-                    title="Nach links scrollen"
-                  >
-                    <ChevronLeft className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => scrollRow(rowElementId, 'right')}
-                    className="p-2 rounded-full bg-white/5 hover:bg-white/15 text-gray-300 hover:text-white border border-white/10 transition-all active:scale-95"
-                    title="Nach rechts scrollen"
-                  >
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-
-              {/* Horizontal Scroll Track (Bis zum Bildschirmrand: -mx-4 sm:-mx-8 px-4 sm:px-8) */}
-              <div className="relative -mx-4 sm:-mx-8">
-                <div
-                  id={rowElementId}
-                  className="flex items-stretch gap-4 sm:gap-6 overflow-x-auto overflow-y-visible px-4 sm:px-8 py-4 -my-2 scrollbar-none snap-x snap-mandatory scroll-smooth"
-                  style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
-                >
-                  {category.videos.map((video, colIdx) => {
-                    const isFocused =
-                      focusedZone === 'carousels' &&
-                      carouselRowIdx === rowIdx &&
-                      carouselColIdx === colIdx;
-
-                    return (
-                      <TvCardItem
-                        key={`tv-card-${category.id}-${video.path || video.name}-${colIdx}`}
-                        video={video}
-                        category={category}
-                        isFocused={isFocused}
-                        className="flex-none w-64 sm:w-72 md:w-80 snap-start"
-                        itemRef={(el) => {
-                          const key = `${rowIdx}-${colIdx}`;
-                          if (el) carouselItemRefs.current.set(key, el);
-                          else carouselItemRefs.current.delete(key);
-                        }}
-                        onSelect={handleVideoSelect}
-                        onDetails={handleVideoDetails}
-                        onHover={() => {
-                          setFocusedZone('carousels');
-                          setCarouselRowIdx(rowIdx);
-                          setCarouselColIdx(colIdx);
-                        }}
-                      />
-                    );
-                  })}
-                </div>
-              </div>
-            </section>
-          );
-        })}
-
-        {/* 4. UNTERER BEREICH: LEICHT ANKLICKBARE KATEGORIEN-LEISTE FÜR FERNSEHER + 16:9 GRID */}
-        <section className="relative z-30 space-y-6 pt-6 border-t border-white/10">
-          <div className="space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="flex items-center gap-2.5">
-                <Layers className="w-5 h-5" style={{ color: '#E50914' }} />
-                <h2 className="text-xl sm:text-2xl font-black tracking-tight text-white">
-                  Alle Videos & Filme
-                </h2>
-              </div>
-              <span className="text-xs text-gray-400">
-                {gridVideos.length} {gridVideos.length === 1 ? 'Film' : 'Filme'}
+      {/* SEKTION 2: REIHE "ZULETZT HINZUGEFÜGT" */}
+      {recentRow && (
+        <section
+          ref={sectionRecentRef}
+          id="tv-section-2-recent"
+          data-tv-section="recent"
+          className="w-full max-w-7xl mx-auto px-4 sm:px-8 space-y-3 mb-10 snap-start snap-always scroll-mt-20 shrink-0"
+        >
+          {/* Row Header */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <h2 className="text-lg sm:text-2xl font-black tracking-tight text-white">
+                {recentRow.title}
+              </h2>
+              <span className="text-xs font-semibold text-gray-400 bg-white/5 px-2 py-0.5 rounded-full border border-white/10">
+                {recentRow.videos.length}
               </span>
             </div>
 
-            {/* Leicht anklickbare / per Fernbedienung steuerbare Kategorien-Leiste: Ganz oben im Layout (z-40/z-50), ohne Clipping, ohne Balken-Überlappung */}
-            <div className="relative z-40 flex flex-wrap items-center gap-3 py-3 px-1 overflow-visible">
-              {filterOptions.map((opt, pillIdx) => {
-                const isFocused = focusedZone === 'filterBar' && filterBarIdx === pillIdx;
-                const isSelected = activeCategoryFilter === opt.id;
-
-                return (
-                  <button
-                    key={`tv-pill-${opt.id}`}
-                    ref={(el) => {
-                      if (el) filterPillRefs.current.set(pillIdx, el);
-                      else filterPillRefs.current.delete(pillIdx);
-                    }}
-                    onClick={() => {
-                      setFocusedZone('filterBar');
-                      setFilterBarIdx(pillIdx);
-                      setActiveCategoryFilter(opt.id);
-                    }}
-                    onMouseEnter={() => {
-                      setFocusedZone('filterBar');
-                      setFilterBarIdx(pillIdx);
-                    }}
-                    className={`relative px-5 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all duration-200 shrink-0 cursor-pointer outline-none select-none ${
-                      isFocused
-                        ? 'z-50 ring-4 ring-white scale-105 shadow-2xl shadow-black/80'
-                        : isSelected
-                        ? 'z-30 text-white shadow-lg'
-                        : 'z-20 hover:z-30 text-gray-200 bg-white/10 hover:bg-white/20 border border-white/15 hover:border-white/30'
-                    }`}
-                    style={isSelected ? { backgroundColor: '#E50914', borderColor: '#E50914' } : {}}
-                  >
-                    {opt.label}
-                  </button>
-                );
-              })}
+            {/* Carousel controls */}
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => scrollRow('tv-row-recent', 'left')}
+                className="p-2 rounded-full bg-white/5 hover:bg-white/15 text-gray-300 hover:text-white border border-white/10 transition-all active:scale-95 cursor-pointer"
+                title="Nach links scrollen"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => scrollRow('tv-row-recent', 'right')}
+                className="p-2 rounded-full bg-white/5 hover:bg-white/15 text-gray-300 hover:text-white border border-white/10 transition-all active:scale-95 cursor-pointer"
+                title="Nach rechts scrollen"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
             </div>
           </div>
 
-          {/* 16:9 Widescreen Grid (Fernbedienungs-optimiert) */}
-          {gridVideos.length === 0 ? (
-            <div className="text-center py-16 text-gray-400 text-sm flex flex-col items-center justify-center gap-3">
-              <Search className="w-8 h-8 text-gray-500 opacity-60" />
-              <p className="font-semibold text-gray-300">
-                {searchQuery
-                  ? `Keine Videos gefunden für "${searchQuery}"`
-                  : 'Keine Filme in dieser Kategorie gefunden.'}
-              </p>
-              {searchQuery && (
-                <button
-                  type="button"
-                  onClick={() => setSearchQuery('')}
-                  className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-semibold cursor-pointer transition-colors"
-                >
-                  Suche zurücksetzen
-                </button>
-              )}
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 sm:gap-6 py-2">
-              {gridVideos.map((video, idx) => {
-                const isFocused = focusedZone === 'grid' && gridIdx === idx;
-                const cat = allFolderCategories.find((c) =>
-                  c.videos.some((v) => (v.path || v.name) === (video.path || video.name))
-                );
+          {/* Horizontal Scroll Track */}
+          <div className="relative -mx-4 sm:-mx-8">
+            <div
+              id="tv-row-recent"
+              className="tv-scroll-track flex items-stretch gap-4 sm:gap-6 overflow-x-auto overflow-y-visible px-4 sm:px-8 py-4 -my-2 scrollbar-none snap-x snap-mandatory scroll-smooth"
+              style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+            >
+              {recentRow.videos.map((video, colIdx) => {
+                const isFocused =
+                  focusedZone === 'carousels' &&
+                  carouselRowIdx === 0 &&
+                  carouselColIdx === colIdx;
 
                 return (
                   <TvCardItem
-                    key={`tv-grid-${video.path || video.name}-${idx}`}
+                    key={`tv-card-recent-${video.path || video.name}-${colIdx}`}
                     video={video}
-                    category={cat}
+                    category={recentRow}
                     isFocused={isFocused}
+                    className="flex-none w-64 sm:w-72 md:w-80 snap-start"
                     itemRef={(el) => {
-                      if (el) gridItemRefs.current.set(idx, el);
-                      else gridItemRefs.current.delete(idx);
+                      const key = `0-${colIdx}`;
+                      if (el) carouselItemRefs.current.set(key, el);
+                      else carouselItemRefs.current.delete(key);
                     }}
                     onSelect={handleVideoSelect}
                     onDetails={handleVideoDetails}
                     onHover={() => {
-                      setFocusedZone('grid');
-                      setGridIdx(idx);
+                      setFocusedZone('carousels');
+                      setCarouselRowIdx(0);
+                      setCarouselColIdx(colIdx);
                     }}
                   />
                 );
               })}
             </div>
-          )}
+          </div>
         </section>
-      </div>
+      )}
+
+      {/* SEKTION 3: KATEGORIEN (3 KATEGORIE-REIHEN AUS DER MEDIATHEK) */}
+      {categoryRows.length > 0 && (
+        <div
+          ref={sectionCategoriesRef}
+          id="tv-section-3-categories"
+          data-tv-section="categories"
+          className="w-full max-w-7xl mx-auto px-4 sm:px-8 space-y-10 mb-10 shrink-0"
+        >
+          {categoryRows.map((category, idx) => {
+            const rowIdx = recentRow ? idx + 1 : idx;
+            const rowElementId = `tv-row-cat-${category.id}`;
+
+            return (
+              <section
+                key={`tv-cat-row-${category.id}-${idx}`}
+                ref={(el) => {
+                  if (el) carouselRowSectionRefs.current.set(rowIdx, el);
+                  else carouselRowSectionRefs.current.delete(rowIdx);
+                }}
+                className="space-y-3 snap-start snap-always scroll-mt-20"
+              >
+                {/* Row Header: Nur der echte Kategoriename, keine Empfehlungen */}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <h2 className="text-lg sm:text-2xl font-black tracking-tight text-white">
+                      {category.title}
+                    </h2>
+                    <span className="text-xs font-semibold text-gray-400 bg-white/5 px-2 py-0.5 rounded-full border border-white/10">
+                      {category.videos.length}
+                    </span>
+                  </div>
+
+                  {/* Carousel controls */}
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => scrollRow(rowElementId, 'left')}
+                      className="p-2 rounded-full bg-white/5 hover:bg-white/15 text-gray-300 hover:text-white border border-white/10 transition-all active:scale-95 cursor-pointer"
+                      title="Nach links scrollen"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => scrollRow(rowElementId, 'right')}
+                      className="p-2 rounded-full bg-white/5 hover:bg-white/15 text-gray-300 hover:text-white border border-white/10 transition-all active:scale-95 cursor-pointer"
+                      title="Nach rechts scrollen"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Horizontal Scroll Track */}
+                <div className="relative -mx-4 sm:-mx-8">
+                  <div
+                    id={rowElementId}
+                    className="tv-scroll-track flex items-stretch gap-4 sm:gap-6 overflow-x-auto overflow-y-visible px-4 sm:px-8 py-4 -my-2 scrollbar-none snap-x snap-mandatory scroll-smooth"
+                    style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+                  >
+                    {category.videos.map((video, colIdx) => {
+                      const isFocused =
+                        focusedZone === 'carousels' &&
+                        carouselRowIdx === rowIdx &&
+                        carouselColIdx === colIdx;
+
+                      return (
+                        <TvCardItem
+                          key={`tv-card-${category.id}-${video.path || video.name}-${colIdx}`}
+                          video={video}
+                          category={category}
+                          isFocused={isFocused}
+                          className="flex-none w-64 sm:w-72 md:w-80 snap-start"
+                          itemRef={(el) => {
+                            const key = `${rowIdx}-${colIdx}`;
+                            if (el) carouselItemRefs.current.set(key, el);
+                            else carouselItemRefs.current.delete(key);
+                          }}
+                          onSelect={handleVideoSelect}
+                          onDetails={handleVideoDetails}
+                          onHover={() => {
+                            setFocusedZone('carousels');
+                            setCarouselRowIdx(rowIdx);
+                            setCarouselColIdx(colIdx);
+                          }}
+                        />
+                      );
+                    })}
+                  </div>
+                </div>
+              </section>
+            );
+          })}
+        </div>
+      )}
+
+      {/* SEKTION 4: "ALLE VIDEOS UND FILME" (KATEGORIEN-LEISTE + 16:9 GRID) */}
+      <section
+        ref={sectionAllRef}
+        id="tv-section-4-all"
+        data-tv-section="all-videos"
+        className="relative z-30 w-full max-w-7xl mx-auto px-4 sm:px-8 space-y-6 pt-6 border-t border-white/10 snap-start snap-always scroll-mt-20 shrink-0"
+      >
+        <div className="space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <Layers className="w-5 h-5" style={{ color: '#E50914' }} />
+              <h2 className="text-xl sm:text-2xl font-black tracking-tight text-white">
+                Alle Videos & Filme
+              </h2>
+            </div>
+            <span className="text-xs text-gray-400">
+              {gridVideos.length} {gridVideos.length === 1 ? 'Film' : 'Filme'}
+            </span>
+          </div>
+
+          {/* Leicht anklickbare / per Fernbedienung steuerbare Kategorien-Leiste */}
+          <div className="relative z-40 flex flex-wrap items-center gap-3 py-3 px-1 overflow-visible">
+            {filterOptions.map((opt, pillIdx) => {
+              const isFocused = focusedZone === 'filterBar' && filterBarIdx === pillIdx;
+              const isSelected = activeCategoryFilter === opt.id;
+
+              return (
+                <button
+                  key={`tv-pill-${opt.id}`}
+                  ref={(el) => {
+                    if (el) filterPillRefs.current.set(pillIdx, el);
+                    else filterPillRefs.current.delete(pillIdx);
+                  }}
+                  onClick={() => {
+                    setFocusedZone('filterBar');
+                    setFilterBarIdx(pillIdx);
+                    setActiveCategoryFilter(opt.id);
+                  }}
+                  onMouseEnter={() => {
+                    setFocusedZone('filterBar');
+                    setFilterBarIdx(pillIdx);
+                  }}
+                  className={`relative px-5 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all duration-200 shrink-0 cursor-pointer outline-none select-none ${
+                    isFocused
+                      ? 'z-50 ring-4 ring-white scale-105 shadow-2xl shadow-black/80'
+                      : isSelected
+                      ? 'z-30 text-white shadow-lg'
+                      : 'z-20 hover:z-30 text-gray-200 bg-white/10 hover:bg-white/20 border border-white/15 hover:border-white/30'
+                  }`}
+                  style={isSelected ? { backgroundColor: '#E50914', borderColor: '#E50914' } : {}}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* 16:9 Widescreen Grid (Fernbedienungs-optimiert) */}
+        {gridVideos.length === 0 ? (
+          <div className="text-center py-16 text-gray-400 text-sm flex flex-col items-center justify-center gap-3">
+            <Search className="w-8 h-8 text-gray-500 opacity-60" />
+            <p className="font-semibold text-gray-300">
+              {searchQuery
+                ? `Keine Videos gefunden für "${searchQuery}"`
+                : 'Keine Filme in dieser Kategorie gefunden.'}
+            </p>
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-semibold cursor-pointer transition-colors"
+              >
+                Suche zurücksetzen
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 sm:gap-6 py-2">
+            {gridVideos.map((video, idx) => {
+              const isFocused = focusedZone === 'grid' && gridIdx === idx;
+              const cat = allFolderCategories.find((c) =>
+                c.videos.some((v) => (v.path || v.name) === (video.path || video.name))
+              );
+
+              return (
+                <TvCardItem
+                  key={`tv-grid-${video.path || video.name}-${idx}`}
+                  video={video}
+                  category={cat}
+                  isFocused={isFocused}
+                  itemRef={(el) => {
+                    if (el) gridItemRefs.current.set(idx, el);
+                    else gridItemRefs.current.delete(idx);
+                  }}
+                  onSelect={handleVideoSelect}
+                  onDetails={handleVideoDetails}
+                  onHover={() => {
+                    setFocusedZone('grid');
+                    setGridIdx(idx);
+                  }}
+                />
+              );
+            })}
+          </div>
+        )}
+      </section>
 
       {/* 5. BESCHREIBUNGS-POP-UP / INFO-OVERLAY */}
       {descriptionOverlay && (

@@ -7,6 +7,7 @@ import {
   Maximize,
   Minimize,
   ArrowLeft,
+  Loader2,
 } from 'lucide-react';
 import type { FileItemData } from '../types';
 import {
@@ -98,6 +99,34 @@ export const CinemaPlayerOverlay: React.FC<CinemaPlayerOverlayProps> = ({
   const [duration, setDuration] = useState(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
+  // Robuster Lade- & Pufferzustand mit Timeout-Fallback (bleibt niemals hängen)
+  const [isVideoLoading, setIsVideoLoading] = useState(true);
+  const videoLoadingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const startLoadingTimeout = useCallback(() => {
+    setIsVideoLoading(true);
+    if (videoLoadingTimeoutRef.current) clearTimeout(videoLoadingTimeoutRef.current);
+    // Robuster Fallback: Spinner verschwindet nach maximal 4 Sekunden garantiert
+    videoLoadingTimeoutRef.current = setTimeout(() => {
+      setIsVideoLoading(false);
+    }, 4000);
+  }, []);
+
+  const finishLoading = useCallback(() => {
+    setIsVideoLoading(false);
+    if (videoLoadingTimeoutRef.current) {
+      clearTimeout(videoLoadingTimeoutRef.current);
+      videoLoadingTimeoutRef.current = null;
+    }
+  }, []);
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (videoLoadingTimeoutRef.current) clearTimeout(videoLoadingTimeoutRef.current);
+    };
+  }, []);
+
   // OSD Sichtbarkeit
   const [showOsd, setShowOsd] = useState(true);
   const osdTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -119,7 +148,8 @@ export const CinemaPlayerOverlay: React.FC<CinemaPlayerOverlayProps> = ({
   // Synchronisiere Video bei Prop-Wechsel
   useEffect(() => {
     setActiveVideo(video);
-  }, [video]);
+    startLoadingTimeout();
+  }, [video, startLoadingTimeout]);
 
   const triggerHud = (text: string) => {
     setHudFeedback(text);
@@ -372,6 +402,15 @@ export const CinemaPlayerOverlay: React.FC<CinemaPlayerOverlayProps> = ({
         src={streamUrl}
         autoPlay
         playsInline
+        onLoadStart={startLoadingTimeout}
+        onWaiting={startLoadingTimeout}
+        onLoadedData={finishLoading}
+        onCanPlay={finishLoading}
+        onPlaying={finishLoading}
+        onError={() => {
+          finishLoading();
+          triggerHud('Video-Wiedergabe nicht möglich');
+        }}
         onTimeUpdate={() => {
           if (videoRef.current) setCurrentTime(videoRef.current.currentTime);
         }}
@@ -381,12 +420,23 @@ export const CinemaPlayerOverlay: React.FC<CinemaPlayerOverlayProps> = ({
             videoRef.current.play().catch(() => {});
           }
         }}
-        onPlay={() => setIsPlaying(true)}
+        onPlay={() => {
+          setIsPlaying(true);
+          finishLoading();
+        }}
         onPause={() => setIsPlaying(false)}
         onEnded={handleNextVideo}
         onClick={togglePlayPause}
         className="w-full h-full object-contain cursor-pointer"
       />
+
+      {/* Robuster TV-Ladebildschirm / Spinner beim Video-Wechsel & Puffern (Fallback-geschützt) */}
+      {isVideoLoading && (
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/60 pointer-events-none backdrop-blur-xs select-none animate-in fade-in duration-150">
+          <Loader2 className="w-12 h-12 text-[#E50914] animate-spin mb-3" />
+          <span className="text-sm font-bold text-white/90 tracking-wide">Video wird geladen...</span>
+        </div>
+      )}
 
       {/* HUD Quick Notification Pill */}
       {hudFeedback && (

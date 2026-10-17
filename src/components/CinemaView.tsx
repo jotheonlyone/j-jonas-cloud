@@ -200,8 +200,16 @@ export const CinemaView: React.FC<CinemaViewProps> = ({
 
     scanLibrary();
 
+    // Robuster Fallback-Timer: Ladebildschirm bricht nach maximal 3,5 Sekunden garantiert ab
+    const safetyTimer = setTimeout(() => {
+      if (isMounted) {
+        setIsLoadingCategories(false);
+      }
+    }, 3500);
+
     return () => {
       isMounted = false;
+      clearTimeout(safetyTimer);
     };
   }, [user.username, items]);
 
