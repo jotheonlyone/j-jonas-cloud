@@ -18,7 +18,8 @@ import {
   Layers,
   ChevronLeft,
   ChevronRight,
-  Loader2
+  Loader2,
+  Calendar,
 } from 'lucide-react';
 import type { FileItemData, UserAccount } from '../types';
 import {
@@ -31,6 +32,12 @@ import {
 } from '../services/storageApi';
 import { isVideoFile } from './MediaViewerModal';
 import { CinemaPlayerOverlay } from './CinemaPlayerOverlay';
+import {
+  parseVideoDescription,
+  sortVideosByTagDate,
+  enrichVideosWithMetadata,
+  type ParsedVideoMetadata,
+} from '../utils/videoMetadataParser';
 
 /**
  * Detects whether a keydown event corresponds to the Back / Return button
@@ -80,6 +87,9 @@ const DEMO_CINEMA_VIDEOS: FileItemData[] = [
     modified: new Date(Date.now() - 3600000 * 4).toISOString(),
     mime_type: 'video/mp4',
     path: 'Videos/Cosmos_Horizon_Documentary.mp4',
+    metadata: {
+      description: '/front /24.12.2026 Eine faszinierende Reise durch die Geheimnisse des Universums und ferne Galaxien.',
+    },
   },
   {
     name: 'Neon_City_Nightfall_Cinematic.webm',
@@ -88,6 +98,9 @@ const DEMO_CINEMA_VIDEOS: FileItemData[] = [
     modified: new Date(Date.now() - 3600000 * 24).toISOString(),
     mime_type: 'video/webm',
     path: 'Videos/Neon_City_Nightfall_Cinematic.webm',
+    metadata: {
+      description: '/front /18.11.2026 Atemberaubende Cyberpunk-Aufnahmen einer futuristischen Metropole bei Nacht.',
+    },
   },
   {
     name: 'Alpine_Glacier_Drone_Reel.mp4',
@@ -96,6 +109,9 @@ const DEMO_CINEMA_VIDEOS: FileItemData[] = [
     modified: new Date(Date.now() - 3600000 * 48).toISOString(),
     mime_type: 'video/mp4',
     path: 'Videos/Alpine_Glacier_Drone_Reel.mp4',
+    metadata: {
+      description: '/15.08.2026 Spektakuläre 4K-Drohnenflüge über schneebedeckte Alpengipfel und schimmernde Gletscher.',
+    },
   },
   {
     name: 'Deep_Ocean_4K_Nature.mp4',
@@ -104,6 +120,9 @@ const DEMO_CINEMA_VIDEOS: FileItemData[] = [
     modified: new Date(Date.now() - 3600000 * 72).toISOString(),
     mime_type: 'video/mp4',
     path: 'Videos/Deep_Ocean_4K_Nature.mp4',
+    metadata: {
+      description: '/01.06.2026 Erkundung der unberührten Tiefsee und ihrer leuchtenden Meeresbewohner.',
+    },
   },
 ];
 
@@ -131,6 +150,7 @@ const TvCardItem = React.memo<TvCardItemProps>(
   }) => {
     const streamUrl = getStreamUrl(video.path || video.name, video.owner);
     const cleanTitle = formatCleanTitle(video.name);
+    const tagMeta = parseVideoDescription(video.metadata?.description);
 
     return (
       <div
@@ -159,6 +179,14 @@ const TvCardItem = React.memo<TvCardItemProps>(
 
           {/* Gradient Overlay to dark bottom */}
           <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-transparent pointer-events-none" />
+
+          {/* Highlight Date Tag Badge on Card Thumbnail */}
+          {tagMeta.rawDateString && (
+            <div className="absolute top-2 left-2 z-20 flex items-center gap-1 px-2 py-0.5 rounded-md bg-black/80 backdrop-blur-md border border-[#E50914]/40 text-[#ff4d58] text-[10px] font-bold shadow-md pointer-events-none">
+              <Calendar className="w-2.5 h-2.5" />
+              <span>{tagMeta.rawDateString}</span>
+            </div>
+          )}
 
           {/* Play Button in Center on Hover / Focus */}
           <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
@@ -205,10 +233,12 @@ const TvCardItem = React.memo<TvCardItemProps>(
     return (
       prev.isFocused === next.isFocused &&
       (prev.video.path || prev.video.name) === (next.video.path || next.video.name) &&
+      prev.video.metadata?.description === next.video.metadata?.description &&
       prev.category?.id === next.category?.id
     );
   }
 );
+TvCardItem.displayName = 'TvCardItem';
 TvCardItem.displayName = 'TvCardItem';
 
 export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
@@ -239,6 +269,7 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
   const [descriptionOverlay, setDescriptionOverlay] = useState<{
     video: FileItemData;
     description: string;
+    parsedMeta?: ParsedVideoMetadata;
     category?: VideoCategory | null;
   } | null>(null);
 
@@ -276,7 +307,7 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
                 id: folder.name,
                 title: formatCleanTitle(folder.name),
                 folderPath: folder.name,
-                videos: subVideos,
+                videos: sortVideosByTagDate(subVideos),
               });
               subVideos.forEach((sv) => {
                 if (!mergedVideos.some((x) => (x.path || x.name) === (sv.path || sv.name))) {
@@ -289,20 +320,39 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
           }
         }
 
-        mergedVideos.sort(
-          (a, b) => new Date(b.modified).getTime() - new Date(a.modified).getTime()
+        const initialSorted = sortVideosByTagDate(
+          mergedVideos.length > 0 ? mergedVideos : items.filter(isVideoFile)
         );
 
         if (isMounted) {
           setAllFolderCategories(loadedCategories);
-          setAllUserVideos(mergedVideos.length > 0 ? mergedVideos : items.filter(isVideoFile));
+          setAllUserVideos(initialSorted);
+          setIsLoadingCategories(false);
+          setIsReloading(false);
         }
+
+        // Asynchronously enrich with server metadata descriptions for tags (/front, /DD.MM.YYYY)
+        enrichVideosWithMetadata(initialSorted, user.username)
+          .then((enriched) => {
+            if (!isMounted) return;
+            const reSorted = sortVideosByTagDate(enriched);
+            setAllUserVideos(reSorted);
+            setAllFolderCategories((prevCats) =>
+              prevCats.map((cat) => ({
+                ...cat,
+                videos: sortVideosByTagDate(
+                  cat.videos.map((cv) => {
+                    const match = enriched.find((e) => (e.path || e.name) === (cv.path || cv.name));
+                    return match || cv;
+                  })
+                ),
+              }))
+            );
+          })
+          .catch(() => {});
       } catch (err) {
         if (isMounted) {
-          setAllUserVideos(items.filter(isVideoFile));
-        }
-      } finally {
-        if (isMounted) {
+          setAllUserVideos(sortVideosByTagDate(items.filter(isVideoFile)));
           setIsLoadingCategories(false);
           setIsReloading(false);
         }
@@ -318,16 +368,35 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
 
   // Fallback demo clips if library is empty
   const displayVideos = useMemo(() => {
-    if (allUserVideos.length > 0) return allUserVideos;
-    if (useDemoFallback) return DEMO_CINEMA_VIDEOS;
+    if (allUserVideos.length > 0) return sortVideosByTagDate(allUserVideos);
+    if (useDemoFallback) return sortVideosByTagDate(DEMO_CINEMA_VIDEOS);
     return [];
   }, [allUserVideos, useDemoFallback]);
 
-  // Hero Video (featured top video)
+  // Hero Video (/front rotation & fallback):
+  // Alle Videos mit /front sind Hero-Kandidaten. Bei mehreren wechseln sich diese ab.
+  const [heroVideoRotateIdx, setHeroVideoRotateIdx] = useState(() => Math.floor(Math.random() * 100));
+
+  const frontVideos = useMemo(() => {
+    return displayVideos.filter((v) => parseVideoDescription(v.metadata?.description).isFront);
+  }, [displayVideos]);
+
+  // Rotation alle 12 Sekunden, wenn mehrere /front Hero-Kandidaten existieren
+  useEffect(() => {
+    if (frontVideos.length <= 1) return;
+    const interval = setInterval(() => {
+      setHeroVideoRotateIdx((prev) => (prev + 1) % frontVideos.length);
+    }, 12000);
+    return () => clearInterval(interval);
+  }, [frontVideos.length]);
+
   const heroVideo = useMemo(() => {
+    if (frontVideos.length > 0) {
+      return frontVideos[heroVideoRotateIdx % frontVideos.length];
+    }
     if (displayVideos.length > 0) return displayVideos[0];
     return null;
-  }, [displayVideos]);
+  }, [frontVideos, heroVideoRotateIdx, displayVideos]);
 
   // Helper to match videos against search query (title, filename, folder path, description)
   const matchesQuery = useCallback((v: FileItemData, query: string) => {
@@ -346,7 +415,9 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
     const q = searchQuery.trim().toLowerCase();
 
     // Row 1: "Zuletzt hinzugefügt"
-    const recentFiltered = displayVideos.filter((v) => matchesQuery(v, searchQuery));
+    const recentFiltered = sortVideosByTagDate(
+      displayVideos.filter((v) => matchesQuery(v, searchQuery))
+    );
     if (recentFiltered.length > 0) {
       rows.push({
         id: 'recent',
@@ -361,7 +432,9 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
       if (q) {
         allFolderCategories.forEach((cat) => {
           const catMatches = cat.title.toLowerCase().includes(q);
-          const matchingVideos = cat.videos.filter((v) => catMatches || matchesQuery(v, searchQuery));
+          const matchingVideos = sortVideosByTagDate(
+            cat.videos.filter((v) => catMatches || matchesQuery(v, searchQuery))
+          );
           if (matchingVideos.length > 0) {
             rows.push({
               ...cat,
@@ -371,7 +444,10 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
         });
       } else {
         const shuffled = [...allFolderCategories].sort(() => 0.5 - Math.random());
-        const selectedRandom = shuffled.slice(0, 3);
+        const selectedRandom = shuffled.slice(0, 3).map((cat) => ({
+          ...cat,
+          videos: sortVideosByTagDate(cat.videos),
+        }));
         rows.push(...selectedRandom);
       }
     }
@@ -407,8 +483,10 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
       }
     }
 
-    if (!searchQuery.trim()) return baseList;
-    return baseList.filter((v) => matchesQuery(v, searchQuery));
+    const filtered = !searchQuery.trim()
+      ? baseList
+      : baseList.filter((v) => matchesQuery(v, searchQuery));
+    return sortVideosByTagDate(filtered);
   }, [displayVideos, allFolderCategories, activeCategoryFilter, searchQuery, matchesQuery]);
 
   // -------------------------------------------------------------
@@ -548,9 +626,11 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
     async (video: FileItemData, category?: VideoCategory | null) => {
       setOverlayBtnIdx(1);
       if (video.metadata?.description && video.metadata.description.trim()) {
+        const parsed = parseVideoDescription(video.metadata.description);
         setDescriptionOverlay({
           video,
-          description: video.metadata.description.trim(),
+          description: parsed.description,
+          parsedMeta: parsed,
           category,
         });
         return;
@@ -560,9 +640,11 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
       try {
         const meta = await getFileMetadata(itemPath, itemOwner);
         if (meta.description && meta.description.trim()) {
+          const parsed = parseVideoDescription(meta.description);
           setDescriptionOverlay({
             video,
-            description: meta.description.trim(),
+            description: parsed.description,
+            parsedMeta: parsed,
             category,
           });
         } else {
@@ -1163,8 +1245,20 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
 
           {/* Hero Content Information */}
           <div className="relative z-10 w-full max-w-7xl mx-auto px-4 sm:px-8 pb-10 flex flex-col justify-end">
-            <div className="flex items-center gap-2 mb-2 text-xs sm:text-sm text-gray-300 font-medium select-none">
-              <span>Hinzugefügt am {new Date(heroVideo.modified).toLocaleDateString('de-DE')}</span>
+            <div className="flex flex-wrap items-center gap-2.5 mb-2 text-xs sm:text-sm text-gray-300 font-medium select-none">
+              {parseVideoDescription(heroVideo.metadata?.description).rawDateString ? (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-[#E50914] text-white shadow-md">
+                  <Calendar className="w-3.5 h-3.5" />
+                  <span>{parseVideoDescription(heroVideo.metadata?.description).rawDateString}</span>
+                </span>
+              ) : (
+                <span>Hinzugefügt am {new Date(heroVideo.modified).toLocaleDateString('de-DE')}</span>
+              )}
+              {frontVideos.length > 1 && (
+                <span className="text-[11px] font-semibold text-gray-300 bg-white/10 px-2 py-0.5 rounded-full border border-white/15">
+                  Highlight {(heroVideoRotateIdx % frontVideos.length) + 1} / {frontVideos.length}
+                </span>
+              )}
               <span className="text-gray-500">·</span>
               <span>{formatBytes(heroVideo.size)}</span>
             </div>
@@ -1471,6 +1565,14 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
               </button>
             </div>
 
+            {/* Tag Date Badge if present */}
+            {descriptionOverlay.parsedMeta?.rawDateString && (
+              <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#E50914]/20 border border-[#E50914]/40 text-[#ff4d58] text-xs font-bold w-fit shadow-xs">
+                <Calendar className="w-3.5 h-3.5" />
+                <span>Erscheinungsdatum: {descriptionOverlay.parsedMeta.rawDateString}</span>
+              </div>
+            )}
+
             {/* Description Text */}
             <div className="p-4 rounded-2xl bg-black/50 border border-white/5 text-gray-300 text-xs sm:text-sm leading-relaxed whitespace-pre-wrap max-h-60 overflow-y-auto">
               {descriptionOverlay.description}
@@ -1525,103 +1627,118 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
       )}
 
       {/* 6. DETAILS MODAL */}
-      {selectedDetailsVideo && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200"
-          onClick={() => setSelectedDetailsVideo(null)}
-        >
+      {selectedDetailsVideo && (() => {
+        const detailsParsed = parseVideoDescription(detailsDescription);
+        return (
           <div
-            className="relative w-full max-w-lg bg-neutral-900 border border-white/15 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-4"
-            onClick={(e) => e.stopPropagation()}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200"
+            onClick={() => setSelectedDetailsVideo(null)}
           >
-            <div className="flex items-start justify-between gap-4 pb-3 border-b border-white/10">
-              <div>
-                <span className="text-[10px] font-bold uppercase tracking-wider text-[#E50914]">
-                  Filmdetails
-                </span>
-                <h3 className="text-lg sm:text-xl font-bold text-white leading-snug">
-                  {formatCleanTitle(selectedDetailsVideo.name)}
-                </h3>
+            <div
+              className="relative w-full max-w-lg bg-neutral-900 border border-white/15 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-4"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-start justify-between gap-4 pb-3 border-b border-white/10">
+                <div>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-[#E50914]">
+                    Filmdetails
+                  </span>
+                  <h3 className="text-lg sm:text-xl font-bold text-white leading-snug">
+                    {formatCleanTitle(selectedDetailsVideo.name)}
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedDetailsVideo(null)}
+                  className="p-1 rounded-full text-gray-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+                  title="Schließen"
+                >
+                  <X className="w-5 h-5" />
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => setSelectedDetailsVideo(null)}
-                className="p-1 rounded-full text-gray-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
-                title="Schließen"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
 
-            {/* Video preview thumbnail */}
-            <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-black border border-white/10">
-              <video
-                src={getStreamUrl(selectedDetailsVideo.path || selectedDetailsVideo.name, selectedDetailsVideo.owner)}
-                preload="metadata"
-                controls
-                className="w-full h-full object-contain"
-              />
-            </div>
+              {/* Video preview thumbnail */}
+              <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-black border border-white/10">
+                <video
+                  src={getStreamUrl(selectedDetailsVideo.path || selectedDetailsVideo.name, selectedDetailsVideo.owner)}
+                  preload="metadata"
+                  controls
+                  className="w-full h-full object-contain"
+                />
+              </div>
 
-            {/* Optional Description if saved */}
-            {detailsDescription && (
-              <div className="p-3.5 rounded-xl bg-black/40 border border-white/5 text-xs text-gray-300 leading-relaxed whitespace-pre-wrap max-h-36 overflow-y-auto">
-                <span className="text-[10px] uppercase font-bold text-gray-400 block mb-1">
-                  Beschreibung
-                </span>
-                {detailsDescription}
-              </div>
-            )}
+              {/* Optional Description if saved (clean without tags) */}
+              {detailsParsed.description && (
+                <div className="p-3.5 rounded-xl bg-black/40 border border-white/5 text-xs text-gray-300 leading-relaxed whitespace-pre-wrap max-h-36 overflow-y-auto">
+                  <span className="text-[10px] uppercase font-bold text-gray-400 block mb-1">
+                    Beschreibung
+                  </span>
+                  {detailsParsed.description}
+                </div>
+              )}
 
-            <div className="space-y-1.5 text-xs text-gray-300">
-              <div className="flex justify-between py-1 border-b border-white/5">
-                <span className="text-gray-500">Dateiname:</span>
-                <span className="font-mono text-gray-200 truncate max-w-[260px]">{selectedDetailsVideo.name}</span>
+              <div className="space-y-1.5 text-xs text-gray-300">
+                {/* Formatted Date Tag Badge */}
+                {detailsParsed.rawDateString && (
+                  <div className="flex justify-between items-center py-1.5 border-b border-white/5">
+                    <span className="text-gray-400 flex items-center gap-1.5">
+                      <Calendar className="w-3.5 h-3.5 text-[#E50914]" />
+                      <span>Erscheinungsdatum:</span>
+                    </span>
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-[#E50914]/20 text-[#ff4d58] border border-[#E50914]/40">
+                      {detailsParsed.rawDateString}
+                    </span>
+                  </div>
+                )}
+                <div className="flex justify-between py-1 border-b border-white/5">
+                  <span className="text-gray-500">Dateiname:</span>
+                  <span className="font-mono text-gray-200 truncate max-w-[260px]">{selectedDetailsVideo.name}</span>
+                </div>
+                <div className="flex justify-between py-1 border-b border-white/5">
+                  <span className="text-gray-500">Dateigröße:</span>
+                  <span className="font-semibold text-white">{formatBytes(selectedDetailsVideo.size)}</span>
+                </div>
+                <div className="flex justify-between py-1 border-b border-white/5">
+                  <span className="text-gray-500">Pfad:</span>
+                  <span className="font-mono text-gray-200 truncate max-w-[260px]">
+                    {selectedDetailsVideo.path || selectedDetailsVideo.name}
+                  </span>
+                </div>
+                <div className="flex justify-between py-1">
+                  <span className="text-gray-500">Hinzugefügt am:</span>
+                  <span>{new Date(selectedDetailsVideo.modified).toLocaleString('de-DE')}</span>
+                </div>
               </div>
-              <div className="flex justify-between py-1 border-b border-white/5">
-                <span className="text-gray-500">Dateigröße:</span>
-                <span className="font-semibold text-white">{formatBytes(selectedDetailsVideo.size)}</span>
-              </div>
-              <div className="flex justify-between py-1 border-b border-white/5">
-                <span className="text-gray-500">Pfad:</span>
-                <span className="font-mono text-gray-200 truncate max-w-[260px]">
-                  {selectedDetailsVideo.path || selectedDetailsVideo.name}
-                </span>
-              </div>
-              <div className="flex justify-between py-1">
-                <span className="text-gray-500">Hinzugefügt am:</span>
-                <span>{new Date(selectedDetailsVideo.modified).toLocaleString('de-DE')}</span>
-              </div>
-            </div>
 
-            <div className="flex items-center justify-end gap-3 pt-3 border-t border-white/10">
-              <button
-                type="button"
-                onClick={() => setSelectedDetailsVideo(null)}
-                className="px-4 py-2.5 rounded-xl text-xs font-semibold text-gray-300 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
-              >
-                Schließen
-              </button>
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-white/10">
+                <button
+                  type="button"
+                  onClick={() => setSelectedDetailsVideo(null)}
+                  className="px-4 py-2.5 rounded-xl text-xs font-semibold text-gray-300 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+                >
+                  Schließen
+                </button>
 
-              <button
-                type="button"
-                onClick={() => {
-                  const vid = selectedDetailsVideo;
-                  setSelectedDetailsVideo(null);
-                  startPlayback(vid);
-                }}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-white font-bold text-xs transition-colors active:scale-95 cursor-pointer"
-                style={{ backgroundColor: '#E50914' }}
-                onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.backgroundColor = '#B80710')}
-                onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.backgroundColor = '#E50914')}
-              >
-                <Play className="w-4 h-4 fill-white" />
-                Jetzt abspielen
-              </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const vid = selectedDetailsVideo;
+                    setSelectedDetailsVideo(null);
+                    startPlayback(vid);
+                  }}
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-white font-bold text-xs transition-colors active:scale-95 cursor-pointer"
+                  style={{ backgroundColor: '#E50914' }}
+                  onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.backgroundColor = '#B80710')}
+                  onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.backgroundColor = '#E50914')}
+                >
+                  <Play className="w-4 h-4 fill-white" />
+                  Jetzt abspielen
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* 7. FERNBEDIENUNGS-OPTIMIERTER VOLLBILD MEDIA-PLAYER */}
       {activePlayerVideo && (
