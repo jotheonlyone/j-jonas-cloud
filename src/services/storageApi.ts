@@ -416,6 +416,47 @@ export function getStreamUrl(itemPath: string, user?: string): string {
 }
 
 /**
+ * Liefert die direkte URL zum serverseitig generierten Video-Vorschaubild (FFmpeg / WebP).
+ * Priorisiert die Server-Route `/api/thumbnail/${file.id}` oder `/api/thumbnail?path=...`.
+ */
+export function getThumbnailUrl(item: FileItemData | string, user?: string): string {
+  if (!item) return '';
+
+  if (typeof item === 'string') {
+    if (item.startsWith('http://') || item.startsWith('https://') || item.startsWith('data:') || item.startsWith('blob:')) {
+      return item;
+    }
+    const clean = item.replace(/^\/+/, '');
+    const username = (user || getActiveUser()?.username || '').trim();
+    const userParam = username ? `user=${encodeURIComponent(username)}&` : '';
+    return `/api/thumbnail?${userParam}path=${encodeURIComponent(clean)}`;
+  }
+
+  // 1. Wenn explizit ein thumbnail_url Feld existiert
+  if (item.thumbnail_url) {
+    return item.thumbnail_url;
+  }
+
+  // 2. Direkte ID-URL gem. Vorgabe: /api/thumbnail/${file.id}
+  if (item.id && typeof item.id === 'string' && !item.id.includes('/') && !item.id.includes('\\')) {
+    return `/api/thumbnail/${encodeURIComponent(item.id)}`;
+  }
+
+  // 3. Fallback über relative Pfadangabe / Name
+  const rawPath = item.path || item.name || '';
+  const clean = rawPath.replace(/^\/+/, '');
+  const owner = item.owner || user || getActiveUser()?.username || '';
+  const userParam = owner ? `user=${encodeURIComponent(owner)}&` : '';
+
+  if (item.id) {
+    return `/api/thumbnail/${encodeURIComponent(item.id)}`;
+  }
+
+  return `/api/thumbnail?${userParam}path=${encodeURIComponent(clean)}`;
+}
+
+
+/**
  * GET /download?user=<owner>&path=<relative_path>&file=<relative_path>
  * Direkter Download im Browser.
  */

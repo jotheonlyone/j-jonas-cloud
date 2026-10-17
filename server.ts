@@ -61,6 +61,15 @@ app.use('/api/stream', (req, res) => {
 });
 
 /**
+ * Proxy für /api/thumbnail -> https://storage.j-jonas.com/thumbnail
+ * Liefert das serverseitig generierte WebP-Vorschaubild (FFmpeg).
+ */
+app.use('/api/thumbnail', (req, res) => {
+  const targetUrl = `https://storage.j-jonas.com/thumbnail${req.url}`;
+  res.redirect(targetUrl);
+});
+
+/**
  * PATCH /api/shares/permissions
  * Aktualisiert die Berechtigungen (can_see_members, can_manage_members) für ein Ordner-Mitglied.
  * Überträgt geänderte Flags sofort an das Backend und speichert diese dauerhaft.

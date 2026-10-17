@@ -20,6 +20,7 @@ export interface FileItemData {
   mime_type?: string;
   path?: string;
   owner?: string;
+  thumbnail_url?: string;
   metadata?: {
     description?: string;
     [key: string]: any;

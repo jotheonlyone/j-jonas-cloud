@@ -26,6 +26,7 @@ import {
 import { isVideoFile } from './MediaViewerModal';
 import { isTvBackEvent } from './CinemaTvView';
 import { CinemaPlayerOverlay } from './CinemaPlayerOverlay';
+import { VideoThumbnail } from './VideoThumbnail';
 import {
   parseVideoDescription,
   sortVideosByTagDate,
@@ -488,13 +489,14 @@ export const CinemaView: React.FC<CinemaViewProps> = ({
         <section className="relative w-full h-[55vh] min-h-[380px] max-h-[640px] flex items-end overflow-hidden mb-8 select-none">
           {/* Ambient Video / Artwork Background */}
           <div className="absolute inset-0 bg-[#0a0a0a] overflow-hidden pointer-events-none">
-            {/* Live Video Preview Frame */}
-            <video
-              src={getStreamUrl(heroVideo.path || heroVideo.name, heroVideo.owner)}
+            {/* Server-rendered Video Thumbnail Frame */}
+            <VideoThumbnail
+              video={heroVideo}
+              alt={heroVideo.name}
               className="w-full h-full object-cover opacity-60"
-              preload="metadata"
-              muted
-              playsInline
+              placeholderClassName="w-full h-full flex items-center justify-center bg-[#0a0a0a]"
+              iconClassName="w-20 h-20 text-white/10"
+              loading="lazy"
             />
 
             {/* Gradient Overlay to #141414 (Weicher Fade & Blend-In) */}
@@ -870,12 +872,14 @@ export const CinemaView: React.FC<CinemaViewProps> = ({
               </div>
 
               {/* Video preview thumbnail */}
-              <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-black border border-white/10">
-                <video
-                  src={getStreamUrl(selectedDetailsVideo.path || selectedDetailsVideo.name, selectedDetailsVideo.owner)}
-                  preload="metadata"
-                  controls
+              <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-neutral-950 border border-white/10 flex items-center justify-center">
+                <VideoThumbnail
+                  video={selectedDetailsVideo}
+                  alt={selectedDetailsVideo.name}
                   className="w-full h-full object-contain"
+                  placeholderClassName="w-full h-full flex items-center justify-center bg-neutral-950"
+                  iconClassName="w-12 h-12 text-white/20"
+                  loading="lazy"
                 />
               </div>
 
@@ -989,12 +993,13 @@ const VideoCard: React.FC<VideoCardProps> = ({ video, onPlay, onDetails }) => {
     >
       {/* 16:9 Thumbnail Area with Subtle Overlay */}
       <div className="relative w-full aspect-video bg-neutral-950 overflow-hidden flex items-center justify-center">
-        <video
-          src={streamUrl}
-          preload="metadata"
-          muted
-          playsInline
+        <VideoThumbnail
+          video={video}
+          alt={video.name}
           className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity duration-300"
+          placeholderClassName="w-full h-full flex items-center justify-center bg-neutral-950"
+          iconClassName="w-10 h-10 text-white/20"
+          loading="lazy"
         />
 
         {/* Gradient Overlay to dark bottom */}

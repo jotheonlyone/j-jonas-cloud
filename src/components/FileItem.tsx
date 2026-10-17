@@ -17,7 +17,7 @@ import {
   Info
 } from 'lucide-react';
 import type { FileItemData, ViewMode } from '../types';
-import { formatBytes, getStreamUrl } from '../services/storageApi';
+import { formatBytes, getStreamUrl, getThumbnailUrl } from '../services/storageApi';
 import { isImageFile, isVideoFile, isPdfFile } from './MediaViewerModal';
 
 interface FileItemProps {
@@ -109,6 +109,7 @@ export const FileItem: React.FC<FileItemProps> = ({
   isCut = false,
 }) => {
   const [imgError, setImgError] = useState(false);
+  const [thumbError, setThumbError] = useState(false);
 
   // Mobile Long-Press Detection
   const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -203,7 +204,7 @@ export const FileItem: React.FC<FileItemProps> = ({
       >
         {/* Top bar in card: Thumbnail / Icon + Context menu */}
         <div className="flex items-start justify-between gap-2">
-          {/* Visual Presentation: Image Thumbnail or Icon / Badge */}
+          {/* Visual Presentation: Image or Video Thumbnail / Icon / Badge */}
           {isImg && !imgError ? (
             <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-xl bg-gray-100 dark:bg-gray-700 overflow-hidden shrink-0 border border-gray-200/60 dark:border-gray-600/50 flex items-center justify-center group-hover:scale-105 transition-transform">
               <img
@@ -211,6 +212,16 @@ export const FileItem: React.FC<FileItemProps> = ({
                 alt={item.name}
                 loading="lazy"
                 onError={() => setImgError(true)}
+                className="w-full h-full object-cover"
+              />
+            </div>
+          ) : isVid && !thumbError ? (
+            <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-xl bg-gray-100 dark:bg-gray-700 overflow-hidden shrink-0 border border-gray-200/60 dark:border-gray-600/50 flex items-center justify-center group-hover:scale-105 transition-transform">
+              <img
+                src={getThumbnailUrl(item)}
+                alt={item.name}
+                loading="lazy"
+                onError={() => setThumbError(true)}
                 className="w-full h-full object-cover"
               />
             </div>
@@ -304,7 +315,7 @@ export const FileItem: React.FC<FileItemProps> = ({
       } ${isCut ? 'opacity-50' : ''} transition-all cursor-pointer select-none`}
     >
       <div className="flex items-center gap-3 flex-1 min-w-0 pr-4">
-        {/* Thumbnail in list view for images, otherwise small icon */}
+        {/* Thumbnail in list view for images and videos, otherwise small icon */}
         {isImg && !imgError ? (
           <div className="w-7 h-7 rounded-lg bg-gray-100 dark:bg-gray-700 overflow-hidden shrink-0 border border-gray-200/60 dark:border-gray-600/50 flex items-center justify-center">
             <img
@@ -312,6 +323,16 @@ export const FileItem: React.FC<FileItemProps> = ({
               alt={item.name}
               loading="lazy"
               onError={() => setImgError(true)}
+              className="w-full h-full object-cover"
+            />
+          </div>
+        ) : isVid && !thumbError ? (
+          <div className="w-7 h-7 rounded-lg bg-gray-100 dark:bg-gray-700 overflow-hidden shrink-0 border border-gray-200/60 dark:border-gray-600/50 flex items-center justify-center">
+            <img
+              src={getThumbnailUrl(item)}
+              alt={item.name}
+              loading="lazy"
+              onError={() => setThumbError(true)}
               className="w-full h-full object-cover"
             />
           </div>
