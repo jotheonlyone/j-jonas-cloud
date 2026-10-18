@@ -11,6 +11,8 @@ import {
 } from 'lucide-react';
 import type { FileItemData } from '../types';
 import { getStreamUrl } from '../services/storageApi';
+import { isAudioFile } from '../utils/audioPlayerUtils';
+import { StandaloneAudioPlayer } from './AudioPlayer';
 
 interface MediaViewerModalProps {
   isOpen: boolean;
@@ -63,6 +65,7 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
   const isCurrentAnImage = currentItem ? isImageFile(currentItem) : false;
   const isCurrentAVideo = currentItem ? isVideoFile(currentItem) : false;
   const isCurrentAPdf = currentItem ? isPdfFile(currentItem) : false;
+  const isCurrentAnAudio = currentItem ? isAudioFile(currentItem) : false;
 
   const handlePrevImage = () => {
     if (currentImageIndex > 0) {
@@ -293,8 +296,20 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
             </div>
           )}
 
+          {/* AUDIO PLAYER */}
+          {isCurrentAnAudio && (
+            <div className="w-full flex items-center justify-center p-4">
+              <StandaloneAudioPlayer
+                filePath={currentItem.path || currentItem.name}
+                fileName={currentItem.name}
+                currentUser={currentItem.owner || 'user'}
+                onDownload={() => onDownload(currentItem)}
+              />
+            </div>
+          )}
+
           {/* Fallback for other file types */}
-          {!isCurrentAnImage && !isCurrentAVideo && !isCurrentAPdf && (
+          {!isCurrentAnImage && !isCurrentAVideo && !isCurrentAPdf && !isCurrentAnAudio && (
             <div className="flex flex-col items-center justify-center p-8 text-center text-white select-none">
               <FileText className="w-16 h-16 text-gray-400 mb-4" />
               <h3 className="text-lg font-bold">{currentItem.name}</h3>

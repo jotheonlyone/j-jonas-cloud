@@ -63,6 +63,9 @@ import {
   CURRENT_USER_KEY,
 } from './services/accountManager';
 import { resolveFolderPath } from './utils/pathResolver';
+import { AudioPlayerProvider, useAudioPlayer } from './context/AudioPlayerContext';
+import { AudioPlayerBar, AudioPlayerModal } from './components/AudioPlayer';
+import { isAudioFile } from './utils/audioPlayerUtils';
 
 const DARK_MODE_KEY = 'jjcloud_dark_mode';
 const VIEW_MODE_KEY = 'jjcloud_view_mode';
@@ -70,6 +73,7 @@ const OPEN_FILES_IN_NEW_TAB_KEY = 'jjcloud_open_files_in_new_tab';
 
 function MainApp() {
   const { addToast } = useToast();
+  const { playTrack } = useAudioPlayer();
 
   // Multi-account persistent session
   const [user, setUser] = useState<UserAccount | null>(() => getActiveUser());
@@ -858,7 +862,7 @@ function MainApp() {
     }, 400);
   }, [currentPath, isLoadingItems]);
 
-  // Open item (files open preview modal or new tab according to setting, folders navigate)
+  // Open item (files open preview modal or new tab according to setting, folders navigate, audio files play in persistent player)
   const handleOpenItem = useCallback((item: FileItemData) => {
     // In Cinema or Cinema/TV mode, standard preview modal must not be opened
     if (isCinemaMode || isTvMode) {
@@ -866,6 +870,9 @@ function MainApp() {
     }
     if (item.type === 'folder') {
       handleOpenFolder(item);
+    } else if (isAudioFile(item.name)) {
+      const audioTracks = items.filter((i) => isAudioFile(i.name));
+      playTrack(item, audioTracks, item.owner || user?.username);
     } else {
       if (openFilesInNewTab) {
         handleOpenFileInNewTab(item);
@@ -874,7 +881,7 @@ function MainApp() {
         setViewerItemsList(items);
       }
     }
-  }, [isCinemaMode, isTvMode, handleOpenFolder, openFilesInNewTab, handleOpenFileInNewTab, items]);
+  }, [isCinemaMode, isTvMode, handleOpenFolder, items, playTrack, user, openFilesInNewTab, handleOpenFileInNewTab]);
 
   // Share handlers
   const handleAcceptShare = async (shareId: string) => {
@@ -1231,7 +1238,10 @@ function MainApp() {
                     setManageSharesFolder({ path: fPath, name: fName, owner: fOwner });
                   }}
                   onOpenFilePreview={(item, allItems) => {
-                    if (openFilesInNewTab) {
+                    if (isAudioFile(item.name)) {
+                      const audioTracks = allItems.filter((i) => isAudioFile(i.name));
+                      playTrack(item, audioTracks, item.owner || user.username);
+                    } else if (openFilesInNewTab) {
                       handleOpenFileInNewTab(item, item.owner);
                     } else {
                       setViewerItem(item);
@@ -1394,6 +1404,14 @@ function MainApp() {
         task={uploadTask}
         onClose={() => setUploadTask(null)}
       />
+
+      {/* Modern Audio Player: Floating Bar and Expanded Modal */}
+      {!isAnyCinemaMode && (
+        <>
+          <AudioPlayerBar />
+          <AudioPlayerModal />
+        </>
+      )}
     </div>
   );
 }
@@ -1401,7 +1419,9 @@ function MainApp() {
 export default function App() {
   return (
     <ToastProvider>
-      <MainApp />
+      <AudioPlayerProvider>
+        <MainApp />
+      </AudioPlayerProvider>
     </ToastProvider>
   );
 }

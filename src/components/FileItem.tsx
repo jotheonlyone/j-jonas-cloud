@@ -19,6 +19,8 @@ import {
 import type { FileItemData, ViewMode } from '../types';
 import { formatBytes, getStreamUrl, getThumbnailUrl } from '../services/storageApi';
 import { isImageFile, isVideoFile, isPdfFile } from './MediaViewerModal';
+import { isAudioFile } from '../utils/audioPlayerUtils';
+import { AudioCoverArt } from './AudioPlayer/AudioCoverArt';
 
 interface FileItemProps {
   item: FileItemData;
@@ -132,6 +134,7 @@ export const FileItem: React.FC<FileItemProps> = ({
   const isImg = isImageFile(item);
   const isVid = isVideoFile(item);
   const isPdf = isPdfFile(item);
+  const isAud = isAudioFile(item);
   const streamUrl = getStreamUrl(item.path || item.name, item.owner);
 
   // Touch handlers for mobile long-press (500ms)
@@ -225,13 +228,23 @@ export const FileItem: React.FC<FileItemProps> = ({
                 className="w-full h-full object-cover"
               />
             </div>
+          ) : isAud ? (
+            <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-xl bg-gray-100 dark:bg-gray-700 overflow-hidden shrink-0 border border-gray-200/60 dark:border-gray-600/50 flex items-center justify-center group-hover:scale-105 transition-transform">
+              <AudioCoverArt
+                filePath={item.path || item.name}
+                currentUser={item.owner}
+                title={item.name}
+                className="w-full h-full"
+                iconClassName="w-7 h-7 text-indigo-500"
+              />
+            </div>
           ) : (
             <div className="p-3 rounded-xl bg-gray-50 dark:bg-gray-700/60 group-hover:scale-105 transition-transform flex items-center justify-center">
               {getFileIcon(item)}
             </div>
           )}
 
-          {/* Type Badge for Videos & PDFs */}
+          {/* Type Badge for Videos, PDFs & Audio */}
           <div className="flex items-center gap-1.5">
             {isVid && (
               <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-violet-100 dark:bg-violet-950/60 text-violet-600 dark:text-violet-300 border border-violet-200 dark:border-violet-800">
@@ -241,6 +254,11 @@ export const FileItem: React.FC<FileItemProps> = ({
             {isPdf && (
               <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-red-100 dark:bg-red-950/60 text-red-600 dark:text-red-300 border border-red-200 dark:border-red-800">
                 PDF
+              </span>
+            )}
+            {isAud && (
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-indigo-100 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+                AUDIO
               </span>
             )}
 
@@ -315,7 +333,7 @@ export const FileItem: React.FC<FileItemProps> = ({
       } ${isCut ? 'opacity-50' : ''} transition-all cursor-pointer select-none`}
     >
       <div className="flex items-center gap-3 flex-1 min-w-0 pr-4">
-        {/* Thumbnail in list view for images and videos, otherwise small icon */}
+        {/* Thumbnail in list view for images, videos and audio, otherwise small icon */}
         {isImg && !imgError ? (
           <div className="w-7 h-7 rounded-lg bg-gray-100 dark:bg-gray-700 overflow-hidden shrink-0 border border-gray-200/60 dark:border-gray-600/50 flex items-center justify-center">
             <img
@@ -334,6 +352,16 @@ export const FileItem: React.FC<FileItemProps> = ({
               loading="lazy"
               onError={() => setThumbError(true)}
               className="w-full h-full object-cover"
+            />
+          </div>
+        ) : isAud ? (
+          <div className="w-7 h-7 rounded-lg bg-gray-100 dark:bg-gray-700 overflow-hidden shrink-0 border border-gray-200/60 dark:border-gray-600/50 flex items-center justify-center">
+            <AudioCoverArt
+              filePath={item.path || item.name}
+              currentUser={item.owner}
+              title={item.name}
+              className="w-full h-full"
+              iconClassName="w-4 h-4 text-indigo-500"
             />
           </div>
         ) : (
@@ -363,6 +391,11 @@ export const FileItem: React.FC<FileItemProps> = ({
         {isPdf && (
           <span className="hidden sm:inline-block text-[9px] font-bold px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-950/60 text-red-600 dark:text-red-300">
             PDF
+          </span>
+        )}
+        {isAud && (
+          <span className="hidden sm:inline-block text-[9px] font-bold px-1.5 py-0.5 rounded bg-indigo-100 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-300">
+            AUDIO
           </span>
         )}
       </div>

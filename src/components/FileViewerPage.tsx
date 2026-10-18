@@ -19,11 +19,8 @@ import { getActiveUser } from '../services/accountManager';
 import { getStreamUrl, triggerDirectDownload, getFileMetadata } from '../services/storageApi';
 import { isImageFile, isVideoFile, isPdfFile } from './MediaViewerModal';
 import { getSmallFileIcon } from './FileItem';
-
-export function isAudioFile(fileName: string): boolean {
-  const ext = fileName.split('.').pop()?.toLowerCase() || '';
-  return ['mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac', 'wma', 'opus'].includes(ext);
-}
+import { isAudioFile } from '../utils/audioPlayerUtils';
+import { StandaloneAudioPlayer } from './AudioPlayer';
 
 export function isTextFile(fileName: string): boolean {
   const ext = fileName.split('.').pop()?.toLowerCase() || '';
@@ -425,16 +422,12 @@ export const FileViewerPage: React.FC<FileViewerPageProps> = ({
 
         {/* 5. AUDIO PLAYER */}
         {isAud && (
-          <div className="w-full max-w-md p-8 rounded-3xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 shadow-2xl text-center">
-            <div className="w-20 h-20 mx-auto mb-4 rounded-3xl bg-pink-50 dark:bg-pink-950/40 border border-pink-200 dark:border-pink-900/50 flex items-center justify-center text-pink-500 shadow-inner">
-              <Music className="w-10 h-10" />
-            </div>
-            <h3 className="text-base font-bold text-gray-900 dark:text-gray-100 mb-1 truncate">
-              {name}
-            </h3>
-            <p className="text-xs text-gray-500 mb-6 truncate">{path}</p>
-            <audio src={streamUrl} controls autoPlay className="w-full mb-4" />
-          </div>
+          <StandaloneAudioPlayer
+            filePath={path}
+            fileName={name}
+            currentUser={owner || activeUser?.username || 'user'}
+            onDownload={handleDownload}
+          />
         )}
 
         {/* 6. FALLBACK DOWNLOAD CARD */}

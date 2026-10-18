@@ -16,8 +16,10 @@ import {
   UploadCloud,
   RefreshCw,
   Share2,
+  Play,
 } from 'lucide-react';
 import type { FileItemData } from '../types';
+import { isAudioFile } from '../utils/audioPlayerUtils';
 
 export interface ContextMenuPosition {
   x: number;
@@ -203,10 +205,12 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
         >
           {item.type === 'folder' ? (
             <FolderOpen className="w-4 h-4 text-amber-500 shrink-0" />
+          ) : isAudioFile(item) ? (
+            <Play className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0 fill-blue-600/20" />
           ) : (
             <Eye className="w-4 h-4 text-blue-500 shrink-0" />
           )}
-          <span>{item.type === 'folder' ? 'Öffnen' : 'Vorschau / Öffnen'}</span>
+          <span>{item.type === 'folder' ? 'Öffnen' : isAudioFile(item) ? 'Abspielen' : 'Vorschau / Öffnen'}</span>
         </button>
 
         {item.type === 'file' && onOpenInNewTab && (
