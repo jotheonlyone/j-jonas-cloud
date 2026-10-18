@@ -1529,18 +1529,6 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
                   : `${searchResultVideos.length} Videos gefunden`}
               </p>
             </div>
-
-            <button
-              type="button"
-              onClick={() => {
-                setSearchQuery('');
-                setFocusedZone('header');
-                setHeaderFocusIndex(0);
-              }}
-              className="self-start sm:self-auto px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-xs sm:text-sm font-semibold text-gray-200 hover:text-white transition-all cursor-pointer border border-white/10"
-            >
-              Suche beenden
-            </button>
           </div>
 
           {searchResultVideos.length === 0 ? (

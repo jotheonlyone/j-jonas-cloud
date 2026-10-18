@@ -46,6 +46,7 @@ import { CinemaView } from './components/CinemaView';
 import { CinemaTvView, isTvBackEvent } from './components/CinemaTvView';
 import { CinemaTvAuthModal } from './components/CinemaTvAuthModal';
 import { SettingsModal } from './components/SettingsModal';
+import { ContactPage } from './components/ContactPage';
 import { FileViewerPage } from './components/FileViewerPage';
 import { MaintenanceBanner } from './components/MaintenanceBanner';
 import { LegalLinks } from './components/LegalLinks';
@@ -99,7 +100,25 @@ function MainApp() {
     return 'my-drive';
   };
 
+  // Check if current URL matches contact/help page routes
+  const isContactPath = (path: string): boolean => {
+    const clean = path.toLowerCase().replace(/\/+$/, '') || '/';
+    return (
+      clean === '/kontakt' ||
+      clean === '/hilfe' ||
+      clean === '/support' ||
+      clean === '/help' ||
+      clean === '/contact' ||
+      clean === '/kundenservice' ||
+      clean === '/anfrage'
+    );
+  };
+
   // UI state
+  const [isContactRoute, setIsContactRoute] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return isContactPath(window.location.pathname);
+  });
   const [isShareRoute, setIsShareRoute] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
     return window.location.pathname.toLowerCase().startsWith('/share');
@@ -134,6 +153,7 @@ function MainApp() {
   // Synchronize browser history and path
   const navigateToTab = useCallback((tab: NavigationTab, replace = false) => {
     setIsShareRoute(false);
+    setIsContactRoute(false);
     setCurrentTab(tab);
     if (typeof window !== 'undefined') {
       const currentUrlPath = window.location.pathname.toLowerCase().replace(/\/+$/, '') || '/';
@@ -160,6 +180,15 @@ function MainApp() {
   // Listen to browser Back/Forward (popstate)
   useEffect(() => {
     const handlePopState = () => {
+      const isContact = typeof window !== 'undefined' && isContactPath(window.location.pathname);
+      setIsContactRoute(isContact);
+      if (isContact) {
+        if (window.location.pathname.toLowerCase().replace(/\/+$/, '') !== '/kontakt') {
+          window.history.replaceState({ contact: true }, '', '/kontakt');
+        }
+        return;
+      }
+
       const isShare = typeof window !== 'undefined' && window.location.pathname.toLowerCase().startsWith('/share');
       setIsShareRoute(isShare);
       if (isShare) return;
@@ -187,10 +216,14 @@ function MainApp() {
     };
 
     window.addEventListener('popstate', handlePopState);
-    // Initial check on mount: If path was /vod or /tv, rewrite to canonical path
+    // Initial check on mount: If path was /vod or /tv or contact route, rewrite to canonical path
     if (typeof window !== 'undefined') {
       const path = window.location.pathname.toLowerCase().replace(/\/+$/, '');
-      if (path === '/vod') {
+      if (isContactPath(path)) {
+        if (path !== '/kontakt') {
+          window.history.replaceState({ contact: true }, '', '/kontakt');
+        }
+      } else if (path === '/vod') {
         window.history.replaceState({ tab: 'cinema' }, '', '/cinema');
       } else if (path === '/tv') {
         window.history.replaceState({ tab: 'cinema-tv' }, '', '/cinema/tv');
@@ -919,11 +952,30 @@ function MainApp() {
     : 0;
 
 
+  // Dedicated Contact Page (/kontakt, /hilfe, /support, /help, etc.)
+  if (isContactRoute) {
+    return (
+      <ContactPage
+        user={user}
+        darkMode={darkMode}
+        onBack={() => {
+          setIsContactRoute(false);
+          if (typeof window !== 'undefined') {
+            if (window.history.length > 1) {
+              window.history.back();
+            } else {
+              window.history.pushState({}, '', '/');
+            }
+          }
+        }}
+      />
+    );
+  }
+
   if (isViewRoute) {
     return (
       <FileViewerPage
         darkMode={darkMode}
-        onToggleDarkMode={toggleDarkMode}
       />
     );
   }
@@ -968,7 +1020,6 @@ function MainApp() {
       <AuthModal
         onSuccess={handleLoginSuccess}
         darkMode={darkMode}
-        onToggleDarkMode={toggleDarkMode}
       />
     );
   }
@@ -1049,6 +1100,12 @@ function MainApp() {
             serverStatus={serverStatus}
             onRefreshServerStatus={handleRetryConnection}
             onOpenSettings={() => setShowAccountSettingsModal(true)}
+            onOpenHelp={() => {
+              setIsContactRoute(true);
+              if (typeof window !== 'undefined') {
+                window.history.pushState({ contact: true }, '', '/kontakt');
+              }
+            }}
             onToggleMobileMenu={() => setMobileMenuOpen(!mobileMenuOpen)}
             onLogoClick={() => {
               navigateToTab('my-drive');
@@ -1327,7 +1384,6 @@ function MainApp() {
         <AuthModal
           onSuccess={handleLoginSuccess}
           darkMode={darkMode}
-          onToggleDarkMode={toggleDarkMode}
           onClose={() => setShowAddAccountModal(false)}
           isAddAccountMode={true}
         />

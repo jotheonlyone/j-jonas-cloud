@@ -464,6 +464,15 @@ export const CinemaView: React.FC<CinemaViewProps> = ({
   // Keyboard shortcut for closing modals or fullscreen player
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      const isInputActive =
+        document.activeElement?.tagName === 'INPUT' ||
+        document.activeElement?.tagName === 'TEXTAREA';
+
+      // When the user is typing in the search bar or any input, allow Backspace to delete characters
+      if (isInputActive && (e.key === 'Backspace' || (e.keyCode || e.which) === 8)) {
+        return;
+      }
+
       if (isTvBackEvent(e)) {
         e.preventDefault();
         e.stopPropagation();
@@ -564,6 +573,10 @@ export const CinemaView: React.FC<CinemaViewProps> = ({
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onKeyDown={(e) => {
+                  if (e.key === 'Backspace' || (e.keyCode || e.which) === 8) {
+                    e.stopPropagation();
+                    return;
+                  }
                   if (e.key === 'Enter') {
                     if (autocompleteMatch) {
                       e.preventDefault();
@@ -619,14 +632,6 @@ export const CinemaView: React.FC<CinemaViewProps> = ({
                   : `${searchResultVideos.length} Videos gefunden`}
               </p>
             </div>
-
-            <button
-              type="button"
-              onClick={() => setSearchQuery('')}
-              className="self-start sm:self-auto px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-xs sm:text-sm font-semibold text-gray-200 hover:text-white transition-all cursor-pointer border border-white/10 active:scale-95"
-            >
-              Suche beenden
-            </button>
           </div>
 
           {searchResultVideos.length === 0 ? (

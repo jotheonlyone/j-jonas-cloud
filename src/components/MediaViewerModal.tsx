@@ -46,6 +46,8 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
   onDownload,
 }) => {
   const [currentItem, setCurrentItem] = useState<FileItemData | null>(activeItem);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const viewerContainerRef = useRef<HTMLDivElement | null>(null);
 
   // Sync internal state when activeItem changes
   useEffect(() => {
@@ -115,14 +117,36 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
     const diff = touchStartX.current - touchEndX.current;
     const minSwipeDistance = 45; // pixels
     if (diff > minSwipeDistance) {
-      // Swiped Left -> Next
       handleNextImage();
     } else if (diff < -minSwipeDistance) {
-      // Swiped Right -> Prev
       handlePrevImage();
     }
     touchStartX.current = null;
     touchEndX.current = null;
+  };
+
+  // Direct In-Tab Fullscreen Toggle (Opens directly in current tab without external redirection)
+  const handleToggleFullscreen = () => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+      return;
+    }
+
+    const targetElement = (isCurrentAVideo && videoRef.current)
+      ? videoRef.current
+      : viewerContainerRef.current;
+
+    if (!targetElement) return;
+
+    if (targetElement.requestFullscreen) {
+      targetElement.requestFullscreen().catch(() => {});
+    } else if ((targetElement as any).webkitRequestFullscreen) {
+      (targetElement as any).webkitRequestFullscreen();
+    } else if ((targetElement as any).mozRequestFullScreen) {
+      (targetElement as any).mozRequestFullScreen();
+    } else if ((targetElement as any).msRequestFullscreen) {
+      (targetElement as any).msRequestFullscreen();
+    }
   };
 
   if (!isOpen || !currentItem) return null;
@@ -131,16 +155,17 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-2 sm:p-4 select-none animate-in fade-in duration-150"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-2 sm:p-4 animate-in fade-in duration-150"
       onClick={onClose}
     >
       {/* Container - Stop propagation inside */}
       <div
-        className="relative w-full h-full max-w-6xl max-h-[92vh] flex flex-col items-center justify-between pointer-events-auto"
+        ref={viewerContainerRef}
+        className="relative w-full h-full max-w-6xl max-h-[92vh] flex flex-col items-center justify-between pointer-events-auto bg-transparent"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Top Header Bar */}
-        <div className="w-full flex items-center justify-between px-4 py-3 bg-gray-900/80 backdrop-blur-md text-white rounded-2xl border border-white/10 shadow-lg z-20">
+        <div className="w-full flex items-center justify-between px-4 py-3 bg-gray-900/90 backdrop-blur-md text-white rounded-2xl border border-white/10 shadow-lg z-20 shrink-0">
           <div className="flex items-center gap-3 min-w-0 pr-4">
             {isCurrentAnImage && <ImageIcon className="w-5 h-5 text-emerald-400 shrink-0" />}
             {isCurrentAVideo && <VideoIcon className="w-5 h-5 text-violet-400 shrink-0" />}
@@ -159,28 +184,28 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
             {/* Download Button */}
             <button
               onClick={() => onDownload(currentItem)}
-              className="p-2 rounded-xl text-gray-300 hover:text-white bg-white/5 hover:bg-white/15 transition-colors flex items-center gap-1.5 text-xs font-semibold"
+              className="p-2 rounded-xl text-gray-300 hover:text-white bg-white/5 hover:bg-white/15 transition-colors flex items-center gap-1.5 text-xs font-semibold cursor-pointer"
               title="Herunterladen"
             >
               <Download className="w-4 h-4 text-blue-400" />
               <span className="hidden sm:inline">Download</span>
             </button>
 
-            {/* Direct Open in new tab */}
-            <a
-              href={streamUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="p-2 rounded-xl text-gray-300 hover:text-white bg-white/5 hover:bg-white/15 transition-colors"
-              title="In neuem Tab öffnen"
+            {/* In-Tab Fullscreen Button (Direct Fullscreen in Current Tab) */}
+            <button
+              type="button"
+              onClick={handleToggleFullscreen}
+              className="p-2 rounded-xl text-gray-300 hover:text-white bg-white/5 hover:bg-white/15 transition-colors cursor-pointer"
+              title="Vollbildmodus (im aktuellen Tab)"
+              aria-label="Vollbildmodus"
             >
-              <Maximize2 className="w-4 h-4" />
-            </a>
+              <Maximize2 className="w-4 h-4 text-gray-300 hover:text-white" />
+            </button>
 
             {/* Close Button */}
             <button
               onClick={onClose}
-              className="p-2 rounded-xl text-gray-300 hover:text-white bg-white/10 hover:bg-red-500/80 hover:text-white transition-colors"
+              className="p-2 rounded-xl text-gray-300 hover:text-white bg-white/10 hover:bg-red-500/80 hover:text-white transition-colors cursor-pointer"
               title="Schließen (Esc)"
               aria-label="Schließen"
             >
@@ -191,14 +216,14 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
 
         {/* Center Viewer Area */}
         <div
-          className="relative flex-1 w-full flex items-center justify-center my-3 overflow-hidden rounded-2xl bg-black/40 border border-white/5"
+          className="relative flex-1 w-full flex items-center justify-center my-2.5 overflow-hidden rounded-2xl bg-black/50 border border-white/5 min-h-0"
           onTouchStart={isCurrentAnImage ? handleTouchStart : undefined}
           onTouchMove={isCurrentAnImage ? handleTouchMove : undefined}
           onTouchEnd={isCurrentAnImage ? handleTouchEnd : undefined}
         >
           {/* IMAGE LIGHTBOX */}
           {isCurrentAnImage && (
-            <div className="relative w-full h-full flex items-center justify-center p-2">
+            <div className="relative w-full h-full flex items-center justify-center p-2 select-none">
               <img
                 src={streamUrl}
                 alt={currentItem.name}
@@ -214,7 +239,7 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
                     e.stopPropagation();
                     handlePrevImage();
                   }}
-                  className="absolute left-3 top-1/2 -translate-y-1/2 p-2.5 rounded-full bg-black/60 hover:bg-black/90 text-white/80 hover:text-white transition-all backdrop-blur-sm border border-white/10 active:scale-95 shadow-lg"
+                  className="absolute left-3 top-1/2 -translate-y-1/2 p-2.5 rounded-full bg-black/60 hover:bg-black/90 text-white/80 hover:text-white transition-all backdrop-blur-sm border border-white/10 active:scale-95 shadow-lg cursor-pointer"
                   aria-label="Vorheriges Bild"
                 >
                   <ChevronLeft className="w-6 h-6" />
@@ -229,7 +254,7 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
                     e.stopPropagation();
                     handleNextImage();
                   }}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 p-2.5 rounded-full bg-black/60 hover:bg-black/90 text-white/80 hover:text-white transition-all backdrop-blur-sm border border-white/10 active:scale-95 shadow-lg"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 p-2.5 rounded-full bg-black/60 hover:bg-black/90 text-white/80 hover:text-white transition-all backdrop-blur-sm border border-white/10 active:scale-95 shadow-lg cursor-pointer"
                   aria-label="Nächstes Bild"
                 >
                   <ChevronRight className="w-6 h-6" />
@@ -238,17 +263,18 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
             </div>
           )}
 
-          {/* VIDEO PLAYER MODAL */}
+          {/* VIDEO PLAYER MODAL: Mit sichtbarer nativer Steuerungsleiste (Pause, Play, Scrubbing / Hin- und Herzappen) */}
           {isCurrentAVideo && (
-            <div className="w-full h-full max-h-[75vh] flex items-center justify-center p-2">
+            <div className="w-full h-full flex items-center justify-center p-2 sm:p-3 min-h-0 select-auto">
               <video
+                ref={videoRef}
                 key={streamUrl}
                 src={streamUrl}
                 controls
                 autoPlay
                 playsInline
-                preload="metadata"
-                className="max-w-full max-h-[75vh] rounded-xl shadow-2xl bg-black outline-none"
+                preload="auto"
+                className="w-auto h-auto max-w-full max-h-[66vh] sm:max-h-[72vh] rounded-xl shadow-2xl bg-black outline-none border border-white/10 block pointer-events-auto"
               >
                 Dein Browser unterstützt diesen Videoplayer nicht.
               </video>
@@ -269,7 +295,7 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
 
           {/* Fallback for other file types */}
           {!isCurrentAnImage && !isCurrentAVideo && !isCurrentAPdf && (
-            <div className="flex flex-col items-center justify-center p-8 text-center text-white">
+            <div className="flex flex-col items-center justify-center p-8 text-center text-white select-none">
               <FileText className="w-16 h-16 text-gray-400 mb-4" />
               <h3 className="text-lg font-bold">{currentItem.name}</h3>
               <p className="text-sm text-gray-400 mt-1 max-w-md">
@@ -277,7 +303,7 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
               </p>
               <button
                 onClick={() => onDownload(currentItem)}
-                className="mt-5 flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm transition-colors shadow-lg"
+                className="mt-5 flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm transition-colors shadow-lg cursor-pointer"
               >
                 <Download className="w-4 h-4" />
                 <span>Datei herunterladen</span>
@@ -286,9 +312,9 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
           )}
         </div>
 
-        {/* File Description from metadata if present */}
-        {currentItem.metadata?.description && (
-          <div className="w-full mt-2 px-4 py-2.5 rounded-xl bg-gray-900/90 backdrop-blur-md border border-white/10 text-xs text-gray-200 z-20 shrink-0 max-h-24 overflow-y-auto">
+        {/* File Description from metadata if present (only when not video to preserve full video controls visibility) */}
+        {currentItem.metadata?.description && !isCurrentAVideo && (
+          <div className="w-full mb-2 px-4 py-2.5 rounded-xl bg-gray-900/90 backdrop-blur-md border border-white/10 text-xs text-gray-200 z-20 shrink-0 max-h-24 overflow-y-auto">
             <span className="text-[10px] uppercase font-bold text-blue-400 block mb-0.5">
               Beschreibung
             </span>
@@ -297,11 +323,11 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
         )}
 
         {/* Bottom Hint Bar */}
-        <div className="w-full flex items-center justify-between px-4 py-2 text-[11px] text-gray-400 bg-gray-900/60 backdrop-blur-md rounded-xl border border-white/5">
-          <span>{currentItem.path || currentItem.name}</span>
-          <div className="flex items-center gap-3">
+        <div className="w-full flex items-center justify-between px-4 py-2 text-[11px] text-gray-400 bg-gray-900/70 backdrop-blur-md rounded-xl border border-white/5 shrink-0 select-none">
+          <span className="truncate max-w-xs sm:max-w-md">{currentItem.path || currentItem.name}</span>
+          <div className="flex items-center gap-3 shrink-0">
             {isCurrentAnImage && imageList.length > 1 && (
-              <span className="hidden sm:inline">Tipp: Pfeiltasten oder Wischen zum Wechseln</span>
+              <span className="hidden sm:inline">Pfeiltasten zum Wechseln</span>
             )}
             <span>Esc zum Schließen</span>
           </div>

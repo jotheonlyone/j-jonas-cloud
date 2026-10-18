@@ -13,7 +13,8 @@ import {
   UserPlus,
   CheckCircle2,
   Users,
-  ChevronRight
+  ChevronRight,
+  HelpCircle
 } from 'lucide-react';
 import type { UserAccount, ViewMode, NavigationTab } from '../types';
 import type { ServerStatus } from '../services/storageApi';
@@ -35,6 +36,7 @@ interface HeaderProps {
   serverStatus: ServerStatus | null;
   onRefreshServerStatus?: () => void;
   onOpenSettings: () => void;
+  onOpenHelp?: () => void;
   onToggleMobileMenu?: () => void;
   onLogoClick?: () => void;
   currentTab?: NavigationTab;
@@ -58,6 +60,7 @@ export const Header: React.FC<HeaderProps> = ({
   serverStatus,
   onRefreshServerStatus,
   onOpenSettings,
+  onOpenHelp,
   onToggleMobileMenu,
   onLogoClick,
   currentTab,
@@ -285,6 +288,20 @@ export const Header: React.FC<HeaderProps> = ({
                         <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-[#E50914]/10 text-[#E50914]">
                           VOD
                         </span>
+                      </button>
+                    )}
+
+                    {onOpenHelp && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowProfileMenu(false);
+                          onOpenHelp();
+                        }}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-gray-700 dark:text-gray-300 hover:bg-blue-50/70 dark:hover:bg-blue-950/30 hover:text-blue-600 dark:hover:text-blue-400 rounded-xl text-left transition-colors cursor-pointer group"
+                      >
+                        <HelpCircle className="w-4 h-4 text-blue-500 group-hover:scale-110 transition-transform shrink-0" />
+                        <span>Hilfe</span>
                       </button>
                     )}
 

@@ -13,8 +13,6 @@ import {
   Check,
   Music,
   ExternalLink,
-  Sun,
-  Moon,
   ArrowLeft
 } from 'lucide-react';
 import { getActiveUser } from '../services/accountManager';
@@ -38,12 +36,10 @@ export function isTextFile(fileName: string): boolean {
 
 interface FileViewerPageProps {
   darkMode?: boolean;
-  onToggleDarkMode?: () => void;
 }
 
 export const FileViewerPage: React.FC<FileViewerPageProps> = ({
   darkMode = true,
-  onToggleDarkMode,
 }) => {
   const [activeUser, setActiveUser] = useState(() => getActiveUser());
   const [copiedText, setCopiedText] = useState(false);
@@ -290,18 +286,6 @@ export const FileViewerPage: React.FC<FileViewerPageProps> = ({
             >
               {copiedText ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
               <span className="hidden sm:inline">{copiedText ? 'Kopiert' : 'Kopieren'}</span>
-            </button>
-          )}
-
-          {/* Theme Toggle */}
-          {onToggleDarkMode && (
-            <button
-              type="button"
-              onClick={onToggleDarkMode}
-              className="p-2 rounded-xl text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors cursor-pointer"
-              title={darkMode ? 'Heller Modus' : 'Dunkler Modus'}
-            >
-              {darkMode ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4" />}
             </button>
           )}
 

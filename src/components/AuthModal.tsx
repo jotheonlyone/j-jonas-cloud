@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { User, Lock, ArrowRight, AlertCircle, CheckCircle2, Eye, EyeOff, Sun, Moon, X } from 'lucide-react';
+import { User, Lock, ArrowRight, AlertCircle, CheckCircle2, Eye, EyeOff, X } from 'lucide-react';
 import { registerUser, loginUser } from '../services/firebase';
 import type { UserAccount } from '../types';
 import { LegalLinks } from './LegalLinks';
@@ -7,7 +7,6 @@ import { LegalLinks } from './LegalLinks';
 interface AuthModalProps {
   onSuccess: (user: UserAccount) => void;
   darkMode?: boolean;
-  onToggleDarkMode?: () => void;
   onClose?: () => void;
   isAddAccountMode?: boolean;
 }
@@ -15,7 +14,6 @@ interface AuthModalProps {
 export const AuthModal: React.FC<AuthModalProps> = ({
   onSuccess,
   darkMode = false,
-  onToggleDarkMode,
   onClose,
   isAddAccountMode = false,
 }) => {
@@ -298,20 +296,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   return (
     <div className="relative min-h-full flex flex-col justify-center items-center p-4 bg-[#f8fafd] dark:bg-gray-950 select-none">
-      {/* Top right theme toggle */}
-      {onToggleDarkMode && (
-        <div className="absolute top-4 right-4 sm:top-6 sm:right-6">
-          <button
-            type="button"
-            onClick={onToggleDarkMode}
-            className="p-2.5 rounded-full text-gray-600 dark:text-gray-400 hover:bg-gray-200/60 dark:hover:bg-gray-800 transition-colors shadow-xs cursor-pointer"
-            title={darkMode ? 'Heller Modus' : 'Dunkler Modus'}
-            aria-label="Design umschalten"
-          >
-            {darkMode ? <Sun className="w-5 h-5 text-amber-400" /> : <Moon className="w-5 h-5 text-gray-600" />}
-          </button>
-        </div>
-      )}
       {authContent}
     </div>
   );
