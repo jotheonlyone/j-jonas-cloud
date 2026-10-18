@@ -118,7 +118,7 @@ export const UploadProgressWidget: React.FC<UploadProgressWidgetProps> = ({ task
                   <>
                     <span>·</span>
                     <span className="text-blue-600 dark:text-blue-400 font-medium">
-                      Chunk {task.currentChunk} / {task.totalChunks} (20 MB Chunks)
+                      Chunk {task.currentChunk} / {task.totalChunks} (50 MB Chunks)
                     </span>
                   </>
                 )}
@@ -162,7 +162,7 @@ export const UploadProgressWidget: React.FC<UploadProgressWidgetProps> = ({ task
           {/* Cloudflare Tunnel optimization note */}
           {task.totalChunks > 1 && task.status === 'uploading' && (
             <p className="text-[10px] text-gray-400 dark:text-gray-500 italic">
-              Optimiert für Cloudflare-Tunnel: Upload wird in 20-MB-Stücken übertragen.
+              Optimiert für Cloudflare-Tunnel: Upload wird in 50-MB-Stücken übertragen.
             </p>
           )}
         </div>

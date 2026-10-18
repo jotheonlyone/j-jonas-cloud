@@ -159,7 +159,7 @@ export async function listFiles(owner: string, relativePath = ''): Promise<{ ite
   }
 }
 
-export const CHUNK_SIZE = 20 * 1024 * 1024; // 20 MB
+export const CHUNK_SIZE = 50 * 1024 * 1024; // 50 MB
 
 export interface UploadProgressInfo {
   progressPercent: number;
@@ -172,7 +172,7 @@ export interface UploadProgressInfo {
 export type UploadProgressCallback = (info: UploadProgressInfo) => void;
 
 /**
- * Fallback-Upload für Einzelanfragen (<= 20 MB) an POST /upload
+ * Fallback-Upload für Einzelanfragen (<= 50 MB) an POST /upload
  */
 async function uploadSingleDirect(
   file: File,
@@ -209,7 +209,7 @@ async function uploadSingleDirect(
 
 /**
  * Sequenzieller Chunked Upload:
- * - Sobald eine Datei größer als 20 MB ist, wird sie in 20-MB-Stücke via file.slice() zerlegt.
+ * - Sobald eine Datei größer als 50 MB ist, wird sie in 50-MB-Stücke via file.slice() zerlegt.
  * - Chunks werden nacheinander (sequenziell per await) an POST /upload-chunk gesendet.
  * - Übergibt sowohl als URL-Query-Parameter als auch in FormData:
  *   user, path, fileName, chunkIndex, totalChunks und chunk.
@@ -255,7 +255,7 @@ export async function uploadFileInChunks(
       });
 
       if (!res.ok) {
-        // Fallback für Dateien <= 20 MB auf älteren Serverversionen
+        // Fallback für Dateien <= 50 MB auf älteren Serverversionen
         if (chunkIndex === 0 && totalChunks === 1 && (res.status === 404 || res.status === 405)) {
           const fallbackRes = await uploadSingleDirect(file, owner, cleanPath);
           if (fallbackRes.success && onProgress) {
@@ -305,7 +305,7 @@ export async function uploadFileInChunks(
  * POST /upload oder POST /upload-chunk
  * Multipart-Formdata mit Datei, user (Ordner-Besitzer) und path.
  * Quota-Prüfung vor dem Senden!
- * Dateien > 20 MB laufen automatisch über Chunked Upload (20 MB Chunks).
+ * Dateien > 50 MB laufen automatisch über Chunked Upload (50 MB Chunks).
  */
 export async function uploadFile(
   file: File,
@@ -326,7 +326,7 @@ export async function uploadFile(
 
   const cleanPath = relativePath.trim().replace(/^\/+|\/+$/g, '') || '.';
 
-  // Sobald eine Datei größer als 20 MB ist (oder generell für zuverlässigen Upload):
+  // Sobald eine Datei größer als 50 MB ist (oder generell für zuverlässigen Upload):
   // Chunked Upload via POST /upload-chunk
   return uploadFileInChunks(file, owner, cleanPath, onProgress);
 }
