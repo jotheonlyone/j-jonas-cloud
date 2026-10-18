@@ -64,7 +64,7 @@ import {
 } from './services/accountManager';
 import { resolveFolderPath } from './utils/pathResolver';
 import { AudioPlayerProvider, useAudioPlayer } from './context/AudioPlayerContext';
-import { AudioPlayerBar, AudioPlayerModal } from './components/AudioPlayer';
+import { AudioPlayerBar } from './components/AudioPlayer';
 import { isAudioFile } from './utils/audioPlayerUtils';
 
 const DARK_MODE_KEY = 'jjcloud_dark_mode';
@@ -883,6 +883,30 @@ function MainApp() {
     }
   }, [isCinemaMode, isTvMode, handleOpenFolder, items, playTrack, user, openFilesInNewTab, handleOpenFileInNewTab]);
 
+  // Start entire folder as a music playlist
+  const handlePlayFolderAsPlaylist = useCallback(async (folder: FileItemData) => {
+    if (!user) return;
+    const folderOwner = folder.owner || user.username;
+    const targetFolderRelPath = folder.path || (currentPath ? `${currentPath}/${folder.name}` : folder.name);
+
+    addToast('info', 'Lade Playlist...', `Suche Musiktitel in "${folder.name}"`);
+
+    try {
+      const res = await listFiles(folderOwner, targetFolderRelPath);
+      const audioTracks = res.items.filter((item) => isAudioFile(item.name));
+
+      if (audioTracks.length === 0) {
+        addToast('info', 'Keine Musik gefunden', `In "${folder.name}" wurden keine Musikdateien gefunden.`);
+        return;
+      }
+
+      playTrack(audioTracks[0], audioTracks, folderOwner);
+      addToast('success', 'Playlist gestartet', `${audioTracks.length} Titel aus "${folder.name}" werden abgespielt.`);
+    } catch {
+      addToast('error', 'Fehler', `Inhalt von "${folder.name}" konnte nicht geladen werden.`);
+    }
+  }, [user, currentPath, addToast, playTrack]);
+
   // Share handlers
   const handleAcceptShare = async (shareId: string) => {
     if (!user) return;
@@ -1213,6 +1237,7 @@ function MainApp() {
                     const itemPath = item.path || (currentPath ? `${currentPath}/${item.name}` : item.name);
                     setManageSharesFolder({ path: itemPath, name: item.name });
                   }}
+                  onPlayFolderAsPlaylist={handlePlayFolderAsPlaylist}
                   searchTerm={searchTerm}
                   isActionsDisabled={isActionsDisabled}
                   rootLabel="Meine Ablage"
@@ -1263,6 +1288,7 @@ function MainApp() {
                     }
                   }}
                   onTriggerFileInput={handleTriggerFileInput}
+                  onPlayFolderAsPlaylist={handlePlayFolderAsPlaylist}
                 />
               )}
 
@@ -1405,13 +1431,8 @@ function MainApp() {
         onClose={() => setUploadTask(null)}
       />
 
-      {/* Modern Audio Player: Floating Bar and Expanded Modal */}
-      {!isAnyCinemaMode && (
-        <>
-          <AudioPlayerBar />
-          <AudioPlayerModal />
-        </>
-      )}
+      {/* Modern Audio Player: Floating Bar and Minimized Music Note Widget */}
+      {!isAnyCinemaMode && <AudioPlayerBar />}
     </div>
   );
 }

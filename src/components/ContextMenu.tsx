@@ -44,6 +44,7 @@ interface ContextMenuProps {
   onManageShares?: (item: FileItemData) => void;
   onPasteIntoFolder?: (targetFolder: FileItemData) => void;
   canPasteIntoFolder?: boolean;
+  onPlayFolderAsPlaylist?: (folder: FileItemData) => void;
   clipboardAction?: 'copy' | 'cut';
   clipboardItemName?: string;
   isActionsDisabled?: boolean;
@@ -65,6 +66,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
   onManageShares,
   onPasteIntoFolder,
   canPasteIntoFolder = false,
+  onPlayFolderAsPlaylist,
   clipboardAction,
   clipboardItemName,
   isActionsDisabled = false,
@@ -212,6 +214,20 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
           )}
           <span>{item.type === 'folder' ? 'Öffnen' : isAudioFile(item) ? 'Abspielen' : 'Vorschau / Öffnen'}</span>
         </button>
+
+        {item.type === 'folder' && onPlayFolderAsPlaylist && (
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              onPlayFolderAsPlaylist(item);
+            }}
+            className="w-full flex items-center gap-2.5 px-3 py-1.5 hover:bg-blue-50 dark:hover:bg-blue-950/40 hover:text-blue-600 dark:hover:text-blue-400 text-left transition-colors font-medium cursor-pointer"
+          >
+            <Play className="w-4 h-4 text-indigo-500 shrink-0 fill-indigo-500/20" />
+            <span>Als Playlist starten</span>
+          </button>
+        )}
 
         {item.type === 'file' && onOpenInNewTab && (
           <button

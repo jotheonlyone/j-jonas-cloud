@@ -6,11 +6,13 @@ import {
   FolderOpen,
   ArrowUp,
   AlertCircle,
+  Play,
 } from 'lucide-react';
 import type { FileItemData, ViewMode } from '../types';
 import { Breadcrumbs } from './Breadcrumbs';
 import { FileItem } from './FileItem';
 import { ContextMenu, EmptyAreaContextMenu, type ContextMenuPosition } from './ContextMenu';
+import { isAudioFile } from '../utils/audioPlayerUtils';
 
 interface FileExplorerProps {
   currentPath: string;
@@ -31,6 +33,7 @@ interface FileExplorerProps {
   onPublicShareItem?: (item: FileItemData) => void;
   onShareFolder?: (item: FileItemData) => void;
   onManageShares?: (item: FileItemData) => void;
+  onPlayFolderAsPlaylist?: (folder: FileItemData) => void;
   searchTerm?: string;
   isActionsDisabled?: boolean;
   rootLabel?: string;
@@ -61,6 +64,7 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
   onPublicShareItem,
   onShareFolder,
   onManageShares,
+  onPlayFolderAsPlaylist,
   searchTerm = '',
   isActionsDisabled = false,
   rootLabel = 'Meine Ablage',
@@ -110,6 +114,7 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
 
   const folders = filteredItems.filter((i) => i.type === 'folder');
   const files = filteredItems.filter((i) => i.type === 'file');
+  const audioFiles = files.filter(isAudioFile);
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -224,6 +229,19 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
+          {audioFiles.length > 0 && (
+            <button
+              type="button"
+              onClick={() => onOpenFile(audioFiles[0])}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white shadow-xs transition-all active:scale-95 cursor-pointer shrink-0"
+              title={`Alle ${audioFiles.length} Musiktitel als Playlist abspielen`}
+            >
+              <Play className="w-3.5 h-3.5 fill-white" />
+              <span className="hidden sm:inline">Playlist starten</span>
+              <span className="text-[10px] bg-white/20 px-1.5 py-0.2 rounded-full font-mono">{audioFiles.length}</span>
+            </button>
+          )}
+
           <button
             onClick={onRefresh}
             className="p-1.5 rounded-full text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors cursor-pointer"
@@ -500,6 +518,7 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
         onCut={(it) => onCutItem?.(it)}
         onShare={(it) => onShareFolder?.(it)}
         onManageShares={(it) => onManageShares?.(it)}
+        onPlayFolderAsPlaylist={onPlayFolderAsPlaylist}
         onPasteIntoFolder={(targetFolder) => {
           if (onPaste) {
             const nextSub = currentPath ? `${currentPath}/${targetFolder.name}` : targetFolder.name;

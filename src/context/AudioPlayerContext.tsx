@@ -11,7 +11,9 @@ import type { FileItemData } from '../types';
 import {
   getAudioStreamUrl,
   isAudioFile,
+  parseAudioTitle,
 } from '../utils/audioPlayerUtils';
+import { useToast } from '../components/Toast';
 
 export type RepeatMode = 'off' | 'all' | 'one';
 
@@ -27,7 +29,7 @@ export interface AudioPlayerContextType {
   volume: number;
   isMuted: boolean;
   isPlayerVisible: boolean;
-  isExpanded: boolean;
+  isMinimized: boolean;
   isShuffle: boolean;
   repeatMode: RepeatMode;
   playbackRate: number;
@@ -49,8 +51,11 @@ export interface AudioPlayerContextType {
   cycleRepeatMode: () => void;
   toggleShuffle: () => void;
   setPlaybackRate: (rate: number) => void;
-  setIsExpanded: (expanded: boolean) => void;
-  toggleExpanded: () => void;
+  setIsMinimized: (minimized: boolean) => void;
+  toggleMinimized: () => void;
+  resetAutoMinimizeTimer: () => void;
+  pauseAutoMinimizeTimer: () => void;
+  resumeAutoMinimizeTimer: () => void;
   closePlayer: () => void;
 }
 
@@ -58,16 +63,31 @@ const AudioPlayerContext = createContext<AudioPlayerContextType | null>(null);
 
 const AUDIO_VOLUME_KEY = 'jjcloud_audio_volume';
 const AUDIO_MUTED_KEY = 'jjcloud_audio_muted';
+const AUTO_MINIMIZE_DELAY_MS = 10000; // 10 seconds per user requirement
 
 interface AudioPlayerProviderProps {
   children: ReactNode;
   defaultUser?: string;
 }
 
+/**
+ * Fisher-Yates shuffle that produces a random permutation
+ */
+function shuffleArray<T>(array: T[]): T[] {
+  const result = [...array];
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [result[i], result[j]] = [result[j], result[i]];
+  }
+  return result;
+}
+
 export const AudioPlayerProvider: React.FC<AudioPlayerProviderProps> = ({
   children,
   defaultUser = 'user',
 }) => {
+  const { addAudioToast } = useToast();
+
   const [currentTrack, setCurrentTrack] = useState<FileItemData | null>(null);
   const [playlist, setPlaylist] = useState<FileItemData[]>([]);
   const [currentUser, setCurrentUser] = useState<string>(defaultUser);
@@ -77,12 +97,20 @@ export const AudioPlayerProvider: React.FC<AudioPlayerProviderProps> = ({
   const [duration, setDuration] = useState<number>(0);
   const [bufferedPercent, setBufferedPercent] = useState<number>(0);
   const [isPlayerVisible, setIsPlayerVisible] = useState<boolean>(false);
-  const [isExpanded, setIsExpanded] = useState<boolean>(false);
+  const [isMinimized, setIsMinimizedState] = useState<boolean>(false);
   const [isShuffle, setIsShuffle] = useState<boolean>(false);
   const [repeatMode, setRepeatMode] = useState<RepeatMode>('all');
   const [playbackRate, setPlaybackRateState] = useState<number>(1);
   const [keyboardFeedback, setKeyboardFeedback] = useState<string | null>(null);
+
   const feedbackTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const autoMinimizeTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Spotify-style Smart Shuffle State:
+  // - shuffledQueue: remaining tracks to play in this shuffle cycle
+  // - playedHistory: stack of previously played tracks so 'prevTrack' steps backwards through history
+  const shuffledQueueRef = useRef<FileItemData[]>([]);
+  const playedHistoryRef = useRef<FileItemData[]>([]);
 
   // Volume state with persistence
   const [volume, setVolumeState] = useState<number>(() => {
@@ -104,19 +132,65 @@ export const AudioPlayerProvider: React.FC<AudioPlayerProviderProps> = ({
     }
   });
 
-  // Native HTML5 <audio> instance maintained in a persistent ref
+  // Native HTML5 <audio> instance
   const audioRef = useRef<HTMLAudioElement | null>(null);
   if (!audioRef.current && typeof Audio !== 'undefined') {
     audioRef.current = new Audio();
     audioRef.current.preload = 'auto';
   }
 
-  // Update default user if changed from props
   useEffect(() => {
     if (defaultUser) {
       setCurrentUser(defaultUser);
     }
   }, [defaultUser]);
+
+  // 10-Second Auto-Minimize Management
+  const clearAutoMinimizeTimer = useCallback(() => {
+    if (autoMinimizeTimerRef.current) {
+      clearTimeout(autoMinimizeTimerRef.current);
+      autoMinimizeTimerRef.current = null;
+    }
+  }, []);
+
+  const startAutoMinimizeTimer = useCallback(() => {
+    clearAutoMinimizeTimer();
+    autoMinimizeTimerRef.current = setTimeout(() => {
+      setIsMinimizedState(true);
+    }, AUTO_MINIMIZE_DELAY_MS);
+  }, [clearAutoMinimizeTimer]);
+
+  const resetAutoMinimizeTimer = useCallback(() => {
+    if (!isMinimized && isPlayerVisible) {
+      startAutoMinimizeTimer();
+    }
+  }, [isMinimized, isPlayerVisible, startAutoMinimizeTimer]);
+
+  const pauseAutoMinimizeTimer = useCallback(() => {
+    clearAutoMinimizeTimer();
+  }, [clearAutoMinimizeTimer]);
+
+  const resumeAutoMinimizeTimer = useCallback(() => {
+    if (!isMinimized && isPlayerVisible) {
+      startAutoMinimizeTimer();
+    }
+  }, [isMinimized, isPlayerVisible, startAutoMinimizeTimer]);
+
+  const setIsMinimized = useCallback(
+    (minimized: boolean) => {
+      setIsMinimizedState(minimized);
+      if (!minimized) {
+        startAutoMinimizeTimer();
+      } else {
+        clearAutoMinimizeTimer();
+      }
+    },
+    [startAutoMinimizeTimer, clearAutoMinimizeTimer]
+  );
+
+  const toggleMinimized = useCallback(() => {
+    setIsMinimized(!isMinimized);
+  }, [isMinimized, setIsMinimized]);
 
   // Temporary HUD feedback when shortcuts are pressed
   const showFeedback = useCallback((text: string) => {
@@ -127,7 +201,6 @@ export const AudioPlayerProvider: React.FC<AudioPlayerProviderProps> = ({
     }, 1500);
   }, []);
 
-  // Compute current index in playlist
   const currentIndex = currentTrack
     ? playlist.findIndex(
         (t) => (t.path || t.name) === (currentTrack.path || currentTrack.name)
@@ -135,16 +208,20 @@ export const AudioPlayerProvider: React.FC<AudioPlayerProviderProps> = ({
     : -1;
 
   // Set Volume helper
-  const setVolume = useCallback((newVol: number) => {
-    const clamped = Math.max(0, Math.min(1, newVol));
-    setVolumeState(clamped);
-    if (audioRef.current) {
-      audioRef.current.volume = isMuted ? 0 : clamped;
-    }
-    try {
-      localStorage.setItem(AUDIO_VOLUME_KEY, String(clamped));
-    } catch {}
-  }, [isMuted]);
+  const setVolume = useCallback(
+    (newVol: number) => {
+      const clamped = Math.max(0, Math.min(1, newVol));
+      setVolumeState(clamped);
+      if (audioRef.current) {
+        audioRef.current.volume = isMuted ? 0 : clamped;
+      }
+      try {
+        localStorage.setItem(AUDIO_VOLUME_KEY, String(clamped));
+      } catch {}
+      resetAutoMinimizeTimer();
+    },
+    [isMuted, resetAutoMinimizeTimer]
+  );
 
   // Toggle Mute
   const toggleMute = useCallback(() => {
@@ -159,16 +236,21 @@ export const AudioPlayerProvider: React.FC<AudioPlayerProviderProps> = ({
       showFeedback(next ? 'Ton aus' : `Ton an (${Math.round(volume * 100)}%)`);
       return next;
     });
-  }, [volume, showFeedback]);
+    resetAutoMinimizeTimer();
+  }, [volume, showFeedback, resetAutoMinimizeTimer]);
 
   // Set Playback Speed (0.75x to 2x)
-  const setPlaybackRate = useCallback((rate: number) => {
-    setPlaybackRateState(rate);
-    if (audioRef.current) {
-      audioRef.current.playbackRate = rate;
-    }
-    showFeedback(`Geschwindigkeit: ${rate}x`);
-  }, [showFeedback]);
+  const setPlaybackRate = useCallback(
+    (rate: number) => {
+      setPlaybackRateState(rate);
+      if (audioRef.current) {
+        audioRef.current.playbackRate = rate;
+      }
+      showFeedback(`Geschwindigkeit: ${rate}x`);
+      resetAutoMinimizeTimer();
+    },
+    [showFeedback, resetAutoMinimizeTimer]
+  );
 
   // Cycle repeat modes: off -> all -> one
   const cycleRepeatMode = useCallback(() => {
@@ -187,38 +269,87 @@ export const AudioPlayerProvider: React.FC<AudioPlayerProviderProps> = ({
       showFeedback(label);
       return next;
     });
-  }, [showFeedback]);
+    resetAutoMinimizeTimer();
+  }, [showFeedback, resetAutoMinimizeTimer]);
+
+  // Spotify-style Smart Shuffle deck generator
+  const prepareSpotifyShuffleDeck = useCallback(
+    (sourceList: FileItemData[], activeTrack: FileItemData | null) => {
+      if (sourceList.length <= 1) {
+        shuffledQueueRef.current = [];
+        return;
+      }
+
+      // Exclude active track from the pool
+      const pool = activeTrack
+        ? sourceList.filter(
+            (t) => (t.path || t.name) !== (activeTrack.path || activeTrack.name)
+          )
+        : [...sourceList];
+
+      const shuffled = shuffleArray(pool);
+
+      // Guarantee that the first song is never identical to current track
+      if (
+        activeTrack &&
+        shuffled.length > 1 &&
+        (shuffled[0].path || shuffled[0].name) === (activeTrack.path || activeTrack.name)
+      ) {
+        const temp = shuffled[0];
+        shuffled[0] = shuffled[shuffled.length - 1];
+        shuffled[shuffled.length - 1] = temp;
+      }
+
+      shuffledQueueRef.current = shuffled;
+    },
+    []
+  );
 
   // Toggle shuffle
   const toggleShuffle = useCallback(() => {
     setIsShuffle((prev) => {
       const next = !prev;
-      showFeedback(next ? 'Zufallswiedergabe an' : 'Zufallswiedergabe aus');
+      if (next) {
+        prepareSpotifyShuffleDeck(playlist, currentTrack);
+        showFeedback('Spotify-Shuffle: An (keine Wiederholungen)');
+      } else {
+        shuffledQueueRef.current = [];
+        showFeedback('Shuffle: Aus (Reihenfolge)');
+      }
       return next;
     });
-  }, [showFeedback]);
+    resetAutoMinimizeTimer();
+  }, [playlist, currentTrack, prepareSpotifyShuffleDeck, showFeedback, resetAutoMinimizeTimer]);
 
   // Seek to specific time (seconds)
-  const seek = useCallback((targetSeconds: number) => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    const dur = audio.duration || 0;
-    const clamped = Math.max(0, Math.min(targetSeconds, dur));
-    audio.currentTime = clamped;
-    setCurrentTime(clamped);
-  }, []);
+  const seek = useCallback(
+    (targetSeconds: number) => {
+      const audio = audioRef.current;
+      if (!audio) return;
+      const dur = audio.duration || 0;
+      const clamped = Math.max(0, Math.min(targetSeconds, dur));
+      audio.currentTime = clamped;
+      setCurrentTime(clamped);
+      resetAutoMinimizeTimer();
+    },
+    [resetAutoMinimizeTimer]
+  );
 
   // Jump forward or backward by delta seconds (+5 or -5)
-  const jumpSeconds = useCallback((delta: number) => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    const newTime = Math.max(0, Math.min((audio.currentTime || 0) + delta, audio.duration || 0));
-    audio.currentTime = newTime;
-    setCurrentTime(newTime);
-    showFeedback(delta > 0 ? `+${delta}s vor` : `${delta}s zurück`);
-  }, [showFeedback]);
+  const jumpSeconds = useCallback(
+    (delta: number) => {
+      const audio = audioRef.current;
+      if (!audio) return;
+      const newTime = Math.max(0, Math.min((audio.currentTime || 0) + delta, audio.duration || 0));
+      audio.currentTime = newTime;
+      setCurrentTime(newTime);
+      showFeedback(delta > 0 ? `+${delta}s vor` : `${delta}s zurück`);
+      resetAutoMinimizeTimer();
+    },
+    [showFeedback, resetAutoMinimizeTimer]
+  );
 
-  // Play next track
+  // Play next track using Spotify-style Smart Shuffle or sequential
   const nextTrack = useCallback(() => {
     if (playlist.length === 0) return;
 
@@ -230,15 +361,27 @@ export const AudioPlayerProvider: React.FC<AudioPlayerProviderProps> = ({
       return;
     }
 
-    let nextIdx = 0;
+    if (currentTrack) {
+      playedHistoryRef.current.push(currentTrack);
+    }
+
+    let nextItem: FileItemData | null = null;
+
     if (isShuffle && playlist.length > 1) {
-      let randIdx = currentIndex;
-      while (randIdx === currentIndex) {
-        randIdx = Math.floor(Math.random() * playlist.length);
+      // If remaining deck is exhausted, create a fresh shuffled deck
+      if (shuffledQueueRef.current.length === 0) {
+        if (repeatMode === 'off') {
+          setIsPlaying(false);
+          return;
+        }
+        // Generate new deck ensuring first song != current song
+        prepareSpotifyShuffleDeck(playlist, currentTrack);
       }
-      nextIdx = randIdx;
+
+      nextItem = shuffledQueueRef.current.shift() || null;
     } else {
-      nextIdx = currentIndex + 1;
+      // Sequential playback
+      let nextIdx = currentIndex + 1;
       if (nextIdx >= playlist.length) {
         if (repeatMode === 'off') {
           setIsPlaying(false);
@@ -246,14 +389,14 @@ export const AudioPlayerProvider: React.FC<AudioPlayerProviderProps> = ({
         }
         nextIdx = 0; // Loop to start
       }
+      nextItem = playlist[nextIdx] || null;
     }
 
-    const next = playlist[nextIdx];
-    if (next) {
-      const owner = next.owner || currentUser;
-      playTrackInternal(next, playlist, owner);
+    if (nextItem) {
+      const owner = nextItem.owner || currentUser;
+      playTrackInternal(nextItem, playlist, owner);
     }
-  }, [playlist, currentIndex, isShuffle, repeatMode, currentTrack, currentUser]);
+  }, [playlist, currentIndex, isShuffle, repeatMode, currentTrack, currentUser, prepareSpotifyShuffleDeck]);
 
   // Play previous track
   const prevTrack = useCallback(() => {
@@ -267,6 +410,19 @@ export const AudioPlayerProvider: React.FC<AudioPlayerProviderProps> = ({
       return;
     }
 
+    // If we have Spotify-style playback history, pop the previous song!
+    if (playedHistoryRef.current.length > 0) {
+      const prevFromHistory = playedHistoryRef.current.pop()!;
+      if (currentTrack && isShuffle) {
+        // Return current track to front of remaining queue
+        shuffledQueueRef.current.unshift(currentTrack);
+      }
+      const owner = prevFromHistory.owner || currentUser;
+      playTrackInternal(prevFromHistory, playlist, owner);
+      return;
+    }
+
+    // Normal sequential prev
     let prevIdx = currentIndex - 1;
     if (prevIdx < 0) {
       prevIdx = playlist.length - 1;
@@ -276,7 +432,7 @@ export const AudioPlayerProvider: React.FC<AudioPlayerProviderProps> = ({
       const owner = prev.owner || currentUser;
       playTrackInternal(prev, playlist, owner);
     }
-  }, [playlist, currentIndex, currentUser]);
+  }, [playlist, currentIndex, currentUser, currentTrack, isShuffle]);
 
   // Internal play track function
   const playTrackInternal = (
@@ -294,6 +450,8 @@ export const AudioPlayerProvider: React.FC<AudioPlayerProviderProps> = ({
     setCurrentTrack(track);
     setCurrentUser(streamUser);
     setIsPlayerVisible(true);
+    setIsMinimizedState(false);
+    startAutoMinimizeTimer();
     setIsLoading(true);
     setCurrentTime(0);
     setDuration(0);
@@ -302,11 +460,15 @@ export const AudioPlayerProvider: React.FC<AudioPlayerProviderProps> = ({
     const validList = (trackList && trackList.length > 0 ? trackList : [track]).filter(
       (item) => isAudioFile(item.name)
     );
-    // Ensure current track is in playlist
     if (!validList.some((t) => (t.path || t.name) === (track.path || track.name))) {
       validList.unshift(track);
     }
     setPlaylist(validList);
+
+    // If shuffle is active, rebuild smart queue
+    if (isShuffle) {
+      prepareSpotifyShuffleDeck(validList, track);
+    }
 
     audio.src = streamUrl;
     audio.playbackRate = playbackRate;
@@ -322,6 +484,11 @@ export const AudioPlayerProvider: React.FC<AudioPlayerProviderProps> = ({
         console.warn('Audio play request interrupted or failed:', err);
         setIsLoading(false);
       });
+
+    // Notify user in the corner whenever a new song starts!
+    const { cleanTitle, artistHint } = parseAudioTitle(track.name);
+    const desc = track.metadata?.description || artistHint || (track.owner ? `@${track.owner}` : undefined);
+    addAudioToast(cleanTitle, desc, streamPath, streamUser);
   };
 
   // Public playTrack
@@ -330,7 +497,7 @@ export const AudioPlayerProvider: React.FC<AudioPlayerProviderProps> = ({
       const effectiveOwner = userOwner || track.owner || currentUser || 'user';
       playTrackInternal(track, trackList || [track], effectiveOwner);
     },
-    [currentUser, playbackRate, isMuted, volume]
+    [currentUser, playbackRate, isMuted, volume, isShuffle, prepareSpotifyShuffleDeck]
   );
 
   // Pause
@@ -339,18 +506,23 @@ export const AudioPlayerProvider: React.FC<AudioPlayerProviderProps> = ({
       audioRef.current.pause();
       setIsPlaying(false);
       showFeedback('Pause');
+      clearAutoMinimizeTimer();
     }
-  }, [showFeedback]);
+  }, [showFeedback, clearAutoMinimizeTimer]);
 
   // Resume
   const resume = useCallback(() => {
     if (audioRef.current) {
-      audioRef.current.play().then(() => {
-        setIsPlaying(true);
-        showFeedback('Wiedergabe');
-      }).catch(() => {});
+      audioRef.current
+        .play()
+        .then(() => {
+          setIsPlaying(true);
+          showFeedback('Wiedergabe');
+          startAutoMinimizeTimer();
+        })
+        .catch(() => {});
     }
-  }, [showFeedback]);
+  }, [showFeedback, startAutoMinimizeTimer]);
 
   // Toggle Play / Pause
   const togglePlay = useCallback(() => {
@@ -359,7 +531,8 @@ export const AudioPlayerProvider: React.FC<AudioPlayerProviderProps> = ({
     } else {
       resume();
     }
-  }, [isPlaying, pause, resume]);
+    resetAutoMinimizeTimer();
+  }, [isPlaying, pause, resume, resetAutoMinimizeTimer]);
 
   // Close / Dismiss Player completely
   const closePlayer = useCallback(() => {
@@ -367,16 +540,15 @@ export const AudioPlayerProvider: React.FC<AudioPlayerProviderProps> = ({
       audioRef.current.pause();
       audioRef.current.src = '';
     }
+    clearAutoMinimizeTimer();
     setIsPlaying(false);
     setIsPlayerVisible(false);
-    setIsExpanded(false);
+    setIsMinimizedState(false);
     setCurrentTrack(null);
     setCurrentTime(0);
-  }, []);
-
-  const toggleExpanded = useCallback(() => {
-    setIsExpanded((prev) => !prev);
-  }, []);
+    shuffledQueueRef.current = [];
+    playedHistoryRef.current = [];
+  }, [clearAutoMinimizeTimer]);
 
   // Synchronize audio element event listeners
   useEffect(() => {
@@ -386,7 +558,6 @@ export const AudioPlayerProvider: React.FC<AudioPlayerProviderProps> = ({
     const handleTimeUpdate = () => {
       setCurrentTime(audio.currentTime);
 
-      // Calculate buffered progress
       if (audio.duration > 0 && audio.buffered.length > 0) {
         const bufferedEnd = audio.buffered.end(audio.buffered.length - 1);
         setBufferedPercent(Math.min(100, Math.round((bufferedEnd / audio.duration) * 100)));
@@ -398,26 +569,11 @@ export const AudioPlayerProvider: React.FC<AudioPlayerProviderProps> = ({
       setIsLoading(false);
     };
 
-    const handleWaiting = () => {
-      setIsLoading(true);
-    };
-
-    const handleCanPlay = () => {
-      setIsLoading(false);
-    };
-
-    const handleEnded = () => {
-      nextTrack();
-    };
-
-    const handlePlay = () => {
-      setIsPlaying(true);
-    };
-
-    const handlePause = () => {
-      setIsPlaying(false);
-    };
-
+    const handleWaiting = () => setIsLoading(true);
+    const handleCanPlay = () => setIsLoading(false);
+    const handleEnded = () => nextTrack();
+    const handlePlay = () => setIsPlaying(true);
+    const handlePause = () => setIsPlaying(false);
     const handleError = () => {
       setIsLoading(false);
       setIsPlaying(false);
@@ -451,7 +607,6 @@ export const AudioPlayerProvider: React.FC<AudioPlayerProviderProps> = ({
     if (!isPlayerVisible || !currentTrack) return;
 
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      // Ignore if user is currently typing in an input, textarea, or contentEditable element
       const target = e.target as HTMLElement;
       const isInput =
         target.tagName === 'INPUT' ||
@@ -482,16 +637,27 @@ export const AudioPlayerProvider: React.FC<AudioPlayerProviderProps> = ({
         e.preventDefault();
         toggleMute();
       } else if (e.code === 'Escape') {
-        if (isExpanded) {
+        if (!isMinimized) {
           e.preventDefault();
-          setIsExpanded(false);
+          setIsMinimized(true);
         }
       }
     };
 
     window.addEventListener('keydown', handleGlobalKeyDown);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, [isPlayerVisible, currentTrack, togglePlay, jumpSeconds, volume, setVolume, toggleMute, isExpanded, showFeedback]);
+  }, [
+    isPlayerVisible,
+    currentTrack,
+    togglePlay,
+    jumpSeconds,
+    volume,
+    setVolume,
+    toggleMute,
+    isMinimized,
+    setIsMinimized,
+    showFeedback,
+  ]);
 
   return (
     <AudioPlayerContext.Provider
@@ -507,7 +673,7 @@ export const AudioPlayerProvider: React.FC<AudioPlayerProviderProps> = ({
         volume,
         isMuted,
         isPlayerVisible,
-        isExpanded,
+        isMinimized,
         isShuffle,
         repeatMode,
         playbackRate,
@@ -527,8 +693,11 @@ export const AudioPlayerProvider: React.FC<AudioPlayerProviderProps> = ({
         cycleRepeatMode,
         toggleShuffle,
         setPlaybackRate,
-        setIsExpanded,
-        toggleExpanded,
+        setIsMinimized,
+        toggleMinimized,
+        resetAutoMinimizeTimer,
+        pauseAutoMinimizeTimer,
+        resumeAutoMinimizeTimer,
         closePlayer,
       }}
     >

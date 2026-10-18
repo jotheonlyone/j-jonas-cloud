@@ -9,11 +9,11 @@ import {
   Repeat,
   Repeat1,
   Shuffle,
-  Maximize2,
+  Minimize2,
   X,
   Loader2,
-  ListMusic,
-  ChevronUp,
+  Music,
+  ChevronDown,
 } from 'lucide-react';
 import { useAudioPlayer } from '../../context/AudioPlayerContext';
 import { parseAudioTitle } from '../../utils/audioPlayerUtils';
@@ -33,6 +33,7 @@ export const AudioPlayerBar: React.FC = () => {
     volume,
     isMuted,
     isPlayerVisible,
+    isMinimized,
     isShuffle,
     repeatMode,
     playbackRate,
@@ -48,7 +49,10 @@ export const AudioPlayerBar: React.FC = () => {
     cycleRepeatMode,
     toggleShuffle,
     setPlaybackRate,
-    setIsExpanded,
+    setIsMinimized,
+    pauseAutoMinimizeTimer,
+    resumeAutoMinimizeTimer,
+    resetAutoMinimizeTimer,
     closePlayer,
   } = useAudioPlayer();
 
@@ -61,11 +65,101 @@ export const AudioPlayerBar: React.FC = () => {
   const { cleanTitle, ext, trackNumber, artistHint } = parseAudioTitle(currentTrack.name);
   const trackPath = currentTrack.path || currentTrack.name;
   const trackOwner = currentTrack.owner || currentUser;
-
   const speedOptions = [0.75, 1, 1.25, 1.5, 2];
 
+  const progressPercent = duration > 0 ? Math.min(100, Math.max(0, (currentTime / duration) * 100)) : 0;
+
+  // --------------------------------------------------------------------------
+  // 1. MINIMIZED FLOATING MUSIC NOTE WIDGET (Unten Rechts im Bild)
+  // --------------------------------------------------------------------------
+  if (isMinimized) {
+    return (
+      <div className="fixed bottom-5 right-5 z-40 select-none animate-in fade-in zoom-in-95 duration-200">
+        {keyboardFeedback && (
+          <div className="absolute -top-9 right-0 px-2.5 py-0.5 rounded-full bg-gray-900/90 dark:bg-black/90 text-white text-[11px] font-semibold shadow-lg backdrop-blur-md border border-white/10 pointer-events-none whitespace-nowrap">
+            {keyboardFeedback}
+          </div>
+        )}
+
+        <div
+          onClick={() => setIsMinimized(false)}
+          className="group relative flex items-center gap-2 p-2.5 sm:p-3 rounded-full bg-white/95 dark:bg-gray-900/95 backdrop-blur-xl border border-gray-200/90 dark:border-gray-800 shadow-2xl hover:shadow-blue-500/20 hover:scale-105 active:scale-95 transition-all cursor-pointer ring-2 ring-blue-500/20"
+          title={`"${cleanTitle}" wird abgespielt (Klicken zum Vergrößern)`}
+        >
+          {/* Circular Progress Ring around Music Icon */}
+          <div className="relative w-10 h-10 flex items-center justify-center">
+            <svg className="w-full h-full -rotate-90 transform" viewBox="0 0 36 36">
+              <path
+                className="text-gray-200 dark:text-gray-800"
+                strokeWidth="2.5"
+                stroke="currentColor"
+                fill="none"
+                d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+              />
+              <path
+                className="text-blue-600 dark:text-blue-500 transition-all duration-200"
+                strokeDasharray={`${progressPercent}, 100`}
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                stroke="currentColor"
+                fill="none"
+                d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+              />
+            </svg>
+
+            {/* Pulsing Music Note Icon */}
+            <div className="absolute inset-0 flex items-center justify-center text-blue-600 dark:text-blue-400">
+              {isLoading ? (
+                <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
+              ) : isPlaying ? (
+                <div className="flex items-end gap-0.5 h-3">
+                  <span className="w-0.5 bg-blue-600 dark:bg-blue-400 h-3 animate-pulse" />
+                  <span className="w-0.5 bg-blue-600 dark:bg-blue-400 h-2 animate-bounce" />
+                  <span className="w-0.5 bg-blue-600 dark:bg-blue-400 h-3 animate-pulse" />
+                </div>
+              ) : (
+                <Music className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+              )}
+            </div>
+          </div>
+
+          {/* Collapsed Details on hover */}
+          <div className="hidden group-hover:flex items-center gap-2 pr-2 animate-in fade-in duration-150">
+            <div className="max-w-[130px] min-w-0">
+              <p className="text-xs font-bold text-gray-800 dark:text-gray-100 truncate">
+                {cleanTitle}
+              </p>
+              <p className="text-[10px] text-gray-400 truncate">Klicken zum Öffnen</p>
+            </div>
+
+            {/* Quick Play/Pause without expanding */}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                togglePlay();
+              }}
+              className="p-1.5 rounded-full bg-blue-600 hover:bg-blue-500 text-white shadow-xs cursor-pointer"
+              title={isPlaying ? 'Pause' : 'Abspielen'}
+            >
+              {isPlaying ? <Pause className="w-3 h-3 fill-white" /> : <Play className="w-3 h-3 fill-white ml-0.5" />}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // --------------------------------------------------------------------------
+  // 2. EXPANDED FLOATING PLAYER BAR (Unten am Bildschirmrand)
+  // --------------------------------------------------------------------------
   return (
-    <div className="fixed bottom-3 left-3 right-3 sm:left-6 sm:right-6 md:left-auto md:right-8 md:w-[720px] lg:w-[820px] xl:w-[900px] z-40 max-w-full animate-in slide-in-from-bottom-5 duration-200">
+    <div
+      onMouseEnter={pauseAutoMinimizeTimer}
+      onMouseLeave={resumeAutoMinimizeTimer}
+      onClick={resetAutoMinimizeTimer}
+      className="fixed bottom-3 left-3 right-3 sm:left-6 sm:right-6 md:left-auto md:right-8 md:w-[720px] lg:w-[820px] xl:w-[900px] z-40 max-w-full animate-in slide-in-from-bottom-5 duration-200"
+    >
       {/* Keyboard Shortcut HUD Toast */}
       {keyboardFeedback && (
         <div className="absolute -top-10 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full bg-gray-900/90 dark:bg-black/90 text-white text-xs font-semibold shadow-lg backdrop-blur-md border border-white/10 animate-in fade-in zoom-in-95 duration-100 flex items-center gap-1.5 select-none pointer-events-none">
@@ -78,12 +172,8 @@ export const AudioPlayerBar: React.FC = () => {
         {/* DESKTOP / TABLET LAYOUT */}
         <div className="hidden sm:flex items-center justify-between gap-4">
           {/* Left: Album Cover & Track Title */}
-          <div
-            onClick={() => setIsExpanded(true)}
-            className="flex items-center gap-3 min-w-0 flex-1 max-w-[260px] cursor-pointer group"
-            title="Klicken zum Vergrößern"
-          >
-            <div className="relative shrink-0 group-hover:scale-105 transition-transform">
+          <div className="flex items-center gap-3 min-w-0 flex-1 max-w-[260px]">
+            <div className="relative shrink-0">
               <AudioCoverArt
                 filePath={trackPath}
                 currentUser={trackOwner}
@@ -91,9 +181,6 @@ export const AudioPlayerBar: React.FC = () => {
                 className="w-12 h-12 rounded-xl shadow-xs"
                 iconClassName="w-6 h-6"
               />
-              <div className="absolute inset-0 bg-black/30 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
-                <ChevronUp className="w-4 h-4" />
-              </div>
             </div>
 
             <div className="min-w-0 flex-1">
@@ -104,7 +191,7 @@ export const AudioPlayerBar: React.FC = () => {
                   </span>
                 )}
                 <h4
-                  className="text-xs sm:text-sm font-bold text-gray-900 dark:text-gray-100 truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors"
+                  className="text-xs sm:text-sm font-bold text-gray-900 dark:text-gray-100 truncate"
                   title={currentTrack.name}
                 >
                   {cleanTitle}
@@ -129,18 +216,21 @@ export const AudioPlayerBar: React.FC = () => {
           <div className="flex-1 max-w-md flex flex-col items-center">
             {/* Control Buttons */}
             <div className="flex items-center gap-1.5 sm:gap-2">
-              {/* Shuffle */}
+              {/* Spotify-style Smart Shuffle */}
               <button
                 type="button"
                 onClick={toggleShuffle}
-                className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                className={`p-1.5 rounded-lg transition-colors cursor-pointer relative ${
                   isShuffle
                     ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/50'
                     : 'text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800'
                 }`}
-                title={isShuffle ? 'Zufallswiedergabe: Ein' : 'Zufallswiedergabe: Aus'}
+                title={isShuffle ? 'Spotify-Shuffle: Aktiv (keine Wiederholungen)' : 'Zufallswiedergabe aktivieren'}
               >
                 <Shuffle className="w-3.5 h-3.5" />
+                {isShuffle && (
+                  <span className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-blue-600 dark:bg-blue-400" />
+                )}
               </button>
 
               {/* Previous Track */}
@@ -208,7 +298,7 @@ export const AudioPlayerBar: React.FC = () => {
               <button
                 type="button"
                 onClick={cycleRepeatMode}
-                className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                className={`p-1.5 rounded-lg transition-colors cursor-pointer relative ${
                   repeatMode !== 'off'
                     ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/50'
                     : 'text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800'
@@ -226,6 +316,9 @@ export const AudioPlayerBar: React.FC = () => {
                 ) : (
                   <Repeat className="w-3.5 h-3.5" />
                 )}
+                {repeatMode !== 'off' && (
+                  <span className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-blue-600 dark:bg-blue-400" />
+                )}
               </button>
             </div>
 
@@ -241,7 +334,7 @@ export const AudioPlayerBar: React.FC = () => {
             </div>
           </div>
 
-          {/* Right: Volume & Extra Controls */}
+          {/* Right: Volume & Minimize Controls */}
           <div className="flex items-center gap-2 shrink-0">
             {/* Speed Selector Dropdown */}
             <div className="relative">
@@ -285,29 +378,14 @@ export const AudioPlayerBar: React.FC = () => {
               compact={true}
             />
 
-            {/* Playlist Queue Button */}
+            {/* MINIMIZE BUTTON (Umgedrehter Knopf: Verkleinert zu Musiknote unten rechts) */}
             <button
               type="button"
-              onClick={() => setIsExpanded(true)}
-              className="p-1.5 rounded-lg text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors cursor-pointer relative"
-              title="Wiedergabeliste & Details"
-            >
-              <ListMusic className="w-4 h-4" />
-              {playlist.length > 1 && (
-                <span className="absolute -top-1 -right-1 px-1 text-[9px] font-mono font-bold rounded-full bg-blue-600 text-white">
-                  {playlist.length}
-                </span>
-              )}
-            </button>
-
-            {/* Expand View */}
-            <button
-              type="button"
-              onClick={() => setIsExpanded(true)}
+              onClick={() => setIsMinimized(true)}
               className="p-1.5 rounded-lg text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors cursor-pointer"
-              title="Vollbild-Player anzeigen"
+              title="Player verkleinern (zur Musiknote minimieren)"
             >
-              <Maximize2 className="w-4 h-4" />
+              <Minimize2 className="w-4 h-4" />
             </button>
 
             {/* Close / Stop Player */}
@@ -315,7 +393,7 @@ export const AudioPlayerBar: React.FC = () => {
               type="button"
               onClick={closePlayer}
               className="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors cursor-pointer"
-              title="Player schließen"
+              title="Player beenden"
             >
               <X className="w-4 h-4" />
             </button>
@@ -325,10 +403,7 @@ export const AudioPlayerBar: React.FC = () => {
         {/* MOBILE COMPACT VIEW (< 640px) */}
         <div className="sm:hidden flex flex-col gap-1.5">
           <div className="flex items-center justify-between gap-2">
-            <div
-              onClick={() => setIsExpanded(true)}
-              className="flex items-center gap-2.5 min-w-0 flex-1 cursor-pointer"
-            >
+            <div className="flex items-center gap-2.5 min-w-0 flex-1">
               <AudioCoverArt
                 filePath={trackPath}
                 currentUser={trackOwner}
@@ -382,13 +457,14 @@ export const AudioPlayerBar: React.FC = () => {
                 <RotateCw className="w-4 h-4" />
               </button>
 
-              {/* Expand */}
+              {/* Minimize to Music Note */}
               <button
                 type="button"
-                onClick={() => setIsExpanded(true)}
+                onClick={() => setIsMinimized(true)}
                 className="p-1.5 rounded-lg text-gray-500"
+                title="Player verkleinern"
               >
-                <ChevronUp className="w-4 h-4" />
+                <ChevronDown className="w-4 h-4" />
               </button>
 
               {/* Close */}

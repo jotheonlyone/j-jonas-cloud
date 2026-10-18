@@ -58,6 +58,7 @@ interface SharedSectionProps {
   onCutItem?: (item: FileItemData) => void;
   onPaste?: (targetShare?: FolderShare, subPath?: string) => Promise<void>;
   onTriggerFileInput?: () => void;
+  onPlayFolderAsPlaylist?: (folder: FileItemData) => void;
 }
 
 export const SharedSection: React.FC<SharedSectionProps> = ({
@@ -77,6 +78,7 @@ export const SharedSection: React.FC<SharedSectionProps> = ({
   onCutItem,
   onPaste,
   onTriggerFileInput,
+  onPlayFolderAsPlaylist,
 }) => {
   const { addToast } = useToast();
   const [activeFolderShare, setActiveFolderShare] = useState<FolderShare | null>(null);
@@ -624,6 +626,7 @@ export const SharedSection: React.FC<SharedSectionProps> = ({
             onCutItem={activeCanWrite ? onCutItem : undefined}
             onPaste={activeCanWrite && onPaste ? (sub) => onPaste(activeFolderShare, sub ?? sharedSubPath) : undefined}
             onUploadClick={activeCanWrite ? onTriggerFileInput : undefined}
+            onPlayFolderAsPlaylist={onPlayFolderAsPlaylist}
           />
         </div>
       </div>
