@@ -171,28 +171,36 @@ export const CinemaPlayerOverlay: React.FC<CinemaPlayerOverlayProps> = ({
   /**
    * OSD & Inaktivitäts-Steuerung für BEIDE Modi:
    * 1. Während Play: Nach genau 5 Sekunden Inaktivität alle Knöpfe & Fortschrittsleiste ausblenden.
+   *    Auch wenn ein Knopf im TV-Modus fokussiert ist (mit weißem Rahmen), verschwindet die Leiste nach 5s!
    *    Bei neuer Bewegung/Taste sofort wieder einblenden.
    * 2. Bei Pause: Die Steuerleiste und Buttons bleiben sichtbar (blenden nicht aus).
    *    Zusätzlich: Wenn nach 5 Sekunden Pause keine Taste gedrückt wird,
-   *    wird der Titel links mittig in großer, sauber lesbarer Schrift eingeblendet.
+   *    wird der Titel links mittig mit tiefschwarzem Blend eingeblendet.
    */
   const resetActivityTimers = useCallback(() => {
-    // Bei jeglicher Nutzeraktivität OSD sofort einblenden
+    // Bei Nutzeraktivität OSD sofort einblenden
     setShowOsd(true);
-    if (osdTimerRef.current) clearTimeout(osdTimerRef.current);
+    if (osdTimerRef.current) {
+      clearTimeout(osdTimerRef.current);
+      osdTimerRef.current = null;
+    }
 
     // Pausentitel bei Nutzeraktivität sofort ausblenden
     setShowPausedBigTitle(false);
-    if (pausedTitleTimerRef.current) clearTimeout(pausedTitleTimerRef.current);
+    if (pausedTitleTimerRef.current) {
+      clearTimeout(pausedTitleTimerRef.current);
+      pausedTitleTimerRef.current = null;
+    }
 
     if (isPlaying) {
       // Während der Wiedergabe: nach genau 5 Sekunden sanft ausblenden
-      // (Im TV-Modus nur, wenn kein Button der Steuerleiste fokussiert ist)
-      if (!isTvMode || focusedControlIdx === null) {
-        osdTimerRef.current = setTimeout(() => {
-          setShowOsd(false);
-        }, 5000);
-      }
+      // (auch im TV-Modus, wenn gerade ein Knopf mit weißer Umrandung fokussiert ist!)
+      osdTimerRef.current = setTimeout(() => {
+        setShowOsd(false);
+        setFocusedControlIdx(null);
+        // Eventuell aktiven HTML-Button-Fokus aufheben, damit keine weiße Umrandung stehen bleibt
+        (document.activeElement as HTMLElement)?.blur();
+      }, 5000);
     } else {
       // Bei Pause: Steuerleiste bleibt sichtbar.
       // Nach genau 5 Sekunden Inaktivität bei Pause den großen Titel links mittig einblenden
@@ -200,7 +208,7 @@ export const CinemaPlayerOverlay: React.FC<CinemaPlayerOverlayProps> = ({
         setShowPausedBigTitle(true);
       }, 5000);
     }
-  }, [isPlaying, isTvMode, focusedControlIdx]);
+  }, [isPlaying]);
 
   // Wenn sich isPlaying ändert (Play / Pause Umschaltung), Timer neu anstoßen
   useEffect(() => {
@@ -299,9 +307,6 @@ export const CinemaPlayerOverlay: React.FC<CinemaPlayerOverlayProps> = ({
   // TASTATUR- & FERNBEDIENUNGSSTEUERUNG
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Jede Tasteneingabe gilt als Nutzeraktivität (weckt OSD auf, setzt 5s-Timer zurück)
-      resetActivityTimers();
-
       // 1. Android TV Remote Back / Escape / Backspace / GoBack / KeyCode 4
       if (isTvBackEvent(e)) {
         e.preventDefault();
@@ -309,6 +314,23 @@ export const CinemaPlayerOverlay: React.FC<CinemaPlayerOverlayProps> = ({
         handleClosePlayer();
         return;
       }
+
+      // Pfeil nach oben: Leiste und Knöpfe SOFORT und direkt verschwinden lassen
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        e.stopPropagation();
+        setFocusedControlIdx(null);
+        setShowOsd(false);
+        (document.activeElement as HTMLElement)?.blur();
+        if (osdTimerRef.current) {
+          clearTimeout(osdTimerRef.current);
+          osdTimerRef.current = null;
+        }
+        return;
+      }
+
+      // Bei allen anderen Tasten: OSD einblenden und Aktivitäts-Timer neu anstoßen
+      resetActivityTimers();
 
       switch (e.key) {
         case ' ':
@@ -347,17 +369,6 @@ export const CinemaPlayerOverlay: React.FC<CinemaPlayerOverlayProps> = ({
             if (focusedControlIdx === null) {
               setFocusedControlIdx(0); // Startet auf dem Play-Button
             }
-          }
-          break;
-        }
-
-        // Pfeil nach oben: Im TV-Modus Fokus zurück ins Video
-        case 'ArrowUp': {
-          if (isTvMode && focusedControlIdx !== null) {
-            e.preventDefault();
-            e.stopPropagation();
-            setFocusedControlIdx(null);
-            resetActivityTimers();
           }
           break;
         }
@@ -516,44 +527,53 @@ export const CinemaPlayerOverlay: React.FC<CinemaPlayerOverlayProps> = ({
         </div>
       )}
 
-      {/* GROSSER PAUSENTITEL LINKS MITTIG (Erscheint nach 5 Sekunden Pause ohne Tastendruck) */}
+      {/* GROSSER PAUSENTITEL LINKS MITTIG (Mit tiefschwarzem Blend von links für perfekte Lesbarkeit) */}
       {!isPlaying && showPausedBigTitle && (
-        <div className="absolute left-8 sm:left-16 md:left-24 top-1/2 -translate-y-1/2 z-25 max-w-2xl sm:max-w-3xl pointer-events-none select-none animate-in fade-in slide-in-from-left-4 duration-700">
-          <div className="flex items-center gap-2 mb-2 sm:mb-3">
-            <span className="px-2.5 py-0.5 rounded-md bg-[#E50914] text-white text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-lg">
-              Angehalten
-            </span>
-            {currentCategory?.title && (
-              <span className="text-xs sm:text-sm font-semibold text-gray-300 drop-shadow">
-                {currentCategory.title}
+        <div className="absolute inset-0 z-25 pointer-events-none select-none flex items-center animate-in fade-in duration-700">
+          {/* Tiefschwarzer Verlauf / Blend von links nach rechts für extremen Kontrast */}
+          <div className="absolute inset-y-0 left-0 w-full sm:w-4/5 md:w-3/5 lg:w-1/2 bg-gradient-to-r from-black/95 via-black/85 to-transparent pointer-events-none" />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-black/30 pointer-events-none" />
+
+          {/* Text-Inhalt links mittig */}
+          <div className="relative z-10 px-8 sm:px-16 md:px-24 max-w-2xl sm:max-w-3xl animate-in fade-in slide-in-from-left-6 duration-700">
+            <div className="flex items-center gap-2 mb-2 sm:mb-3">
+              <span className="px-2.5 py-0.5 rounded-md bg-[#E50914] text-white text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-lg">
+                Angehalten
               </span>
-            )}
-          </div>
-          <h1
-            className="text-3xl sm:text-5xl md:text-6xl font-black text-white tracking-tight leading-tight line-clamp-2"
-            style={{
-              textShadow: '0 4px 24px rgba(0,0,0,0.9), 0 2px 6px rgba(0,0,0,0.8)',
-            }}
-          >
-            {cleanTitle}
-          </h1>
-          {parsedMeta.description && (
-            <p
-              className="mt-2 sm:mt-3 text-xs sm:text-base text-gray-300 line-clamp-2 max-w-xl font-medium"
+              {currentCategory?.title && (
+                <span className="text-xs sm:text-sm font-semibold text-gray-300 drop-shadow">
+                  {currentCategory.title}
+                </span>
+              )}
+            </div>
+            <h1
+              className="text-3xl sm:text-5xl md:text-6xl font-black text-white tracking-tight leading-tight line-clamp-2"
               style={{
-                textShadow: '0 2px 10px rgba(0,0,0,0.85)',
+                textShadow: '0 4px 24px rgba(0,0,0,0.9), 0 2px 6px rgba(0,0,0,0.8)',
               }}
             >
-              {parsedMeta.description}
-            </p>
-          )}
+              {cleanTitle}
+            </h1>
+            {parsedMeta.description && (
+              <p
+                className="mt-2 sm:mt-3 text-xs sm:text-base text-gray-200 line-clamp-3 max-w-xl font-medium leading-relaxed"
+                style={{
+                  textShadow: '0 2px 10px rgba(0,0,0,0.9)',
+                }}
+              >
+                {parsedMeta.description}
+              </p>
+            )}
+          </div>
         </div>
       )}
 
       {/* TOP BAR OSD (Zurück-Button, Titel & Dateigröße) */}
       <div
-        className={`absolute top-0 inset-x-0 z-30 p-4 sm:p-6 bg-gradient-to-b from-black/90 via-black/50 to-transparent flex items-center justify-between transition-opacity duration-500 ${
-          showOsd ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+        className={`absolute top-0 inset-x-0 z-30 p-4 sm:p-6 bg-gradient-to-b from-black/90 via-black/50 to-transparent flex items-center justify-between transition-all duration-500 ${
+          showOsd
+            ? 'opacity-100 pointer-events-auto translate-y-0 visible'
+            : 'opacity-0 pointer-events-none -translate-y-4 invisible'
         }`}
       >
         <div className="flex items-center gap-3 min-w-0">
@@ -579,8 +599,10 @@ export const CinemaPlayerOverlay: React.FC<CinemaPlayerOverlayProps> = ({
 
       {/* BOTTOM CONTROLS BAR OSD (Fortschrittsleiste & Steuerung) */}
       <div
-        className={`absolute bottom-0 inset-x-0 z-30 p-4 sm:p-8 bg-gradient-to-t from-black/95 via-black/60 to-transparent flex flex-col gap-3.5 transition-opacity duration-500 ${
-          showOsd ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+        className={`absolute bottom-0 inset-x-0 z-30 p-4 sm:p-8 bg-gradient-to-t from-black/95 via-black/60 to-transparent flex flex-col gap-3.5 transition-all duration-500 ${
+          showOsd
+            ? 'opacity-100 pointer-events-auto translate-y-0 visible'
+            : 'opacity-0 pointer-events-none translate-y-4 invisible'
         }`}
       >
         {/* Progress Bar */}

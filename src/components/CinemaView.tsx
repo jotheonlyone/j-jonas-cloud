@@ -299,6 +299,38 @@ export const CinemaView: React.FC<CinemaViewProps> = ({
     return '';
   }, [searchQuery, autocompleteMatch]);
 
+  const isSearchActive = Boolean(searchQuery.trim());
+
+  // Prüfen, ob die Suchanfrage exakt oder primär einer Kategorie entspricht:
+  // Prüfen, ob die Suchanfrage exakt oder primär einer Kategorie entspricht:
+  const matchedCategory = useMemo(() => {
+    if (!isSearchActive) return null;
+    const q = searchQuery.trim().toLowerCase();
+    // 1. Exakter Match
+    const exact = allFolderCategories.find(
+      (c) => c.title.toLowerCase() === q || c.id.toLowerCase() === q
+    );
+    if (exact) return exact;
+    // 2. Präfix-Match oder Suchbegriff entspricht Kategorie
+    const prefix = allFolderCategories.find(
+      (c) => c.title.toLowerCase().startsWith(q) || q.startsWith(c.title.toLowerCase())
+    );
+    if (prefix) return prefix;
+    // 3. Kategorie enthält Suchbegriff
+    return allFolderCategories.find((c) => c.title.toLowerCase().includes(q)) || null;
+  }, [isSearchActive, searchQuery, allFolderCategories]);
+
+  // Die gefilterten Suchtreffer-Videos (nur die eine Kategorie oder die spezifischen Videos):
+  const searchResultVideos = useMemo(() => {
+    if (!isSearchActive) return [];
+    if (matchedCategory) {
+      return sortVideosByTagDate(matchedCategory.videos);
+    }
+    return sortVideosByTagDate(
+      displayVideos.filter((v) => matchesQuery(v, searchQuery))
+    );
+  }, [isSearchActive, matchedCategory, displayVideos, matchesQuery, searchQuery]);
+
   // Featured rows: "Zuletzt hinzugefügt" is ALWAYS first, followed by 2 or 3 randomly selected folder categories
   const featuredRows = useMemo(() => {
     const rows: VideoCategory[] = [];
@@ -507,6 +539,7 @@ export const CinemaView: React.FC<CinemaViewProps> = ({
               if (autocompleteMatch) {
                 setSearchQuery(autocompleteMatch);
               }
+              window.scrollTo({ top: 0, behavior: 'smooth' });
               (document.activeElement as HTMLElement)?.blur();
             }}
             className="relative"
@@ -535,8 +568,9 @@ export const CinemaView: React.FC<CinemaViewProps> = ({
                     if (autocompleteMatch) {
                       e.preventDefault();
                       setSearchQuery(autocompleteMatch);
-                      (e.currentTarget as HTMLInputElement).blur();
                     }
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                    (e.currentTarget as HTMLInputElement).blur();
                   } else if (
                     e.key === 'Tab' ||
                     (e.key === 'ArrowRight' &&
@@ -566,7 +600,65 @@ export const CinemaView: React.FC<CinemaViewProps> = ({
         </div>
       </header>
 
-      {/* 2. HERO BANNER: IDENTISCHER FADE & BLEND-IN MIT DER SEITE */}
+      {/* 2. INHALTSBEREICH: SUCHERGEBNISSE ODER NORMALE KINOLAYOUT-BEREICHE */}
+      {isSearchActive ? (
+        <main className="w-full max-w-7xl mx-auto px-4 sm:px-8 py-8 space-y-6 flex-1 animate-in fade-in duration-200">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/10 pb-4">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-xs font-bold uppercase tracking-wider text-[#E50914] bg-[#E50914]/15 px-2.5 py-0.5 rounded-md border border-[#E50914]/30">
+                  {matchedCategory ? 'Kategorie-Treffer' : 'Suchergebnis'}
+                </span>
+              </div>
+              <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
+                {matchedCategory ? matchedCategory.title : `Ergebnisse für „${searchQuery.trim()}“`}
+              </h1>
+              <p className="text-xs sm:text-sm text-gray-400 mt-1">
+                {searchResultVideos.length === 1
+                  ? '1 Video gefunden'
+                  : `${searchResultVideos.length} Videos gefunden`}
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setSearchQuery('')}
+              className="self-start sm:self-auto px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-xs sm:text-sm font-semibold text-gray-200 hover:text-white transition-all cursor-pointer border border-white/10 active:scale-95"
+            >
+              Suche beenden
+            </button>
+          </div>
+
+          {searchResultVideos.length === 0 ? (
+            <div className="py-24 text-center">
+              <Search className="w-10 h-10 text-gray-500 opacity-50 mx-auto mb-2" />
+              <p className="text-base text-gray-300 font-semibold mb-1">
+                Keine passenden Videos oder Kategorien gefunden
+              </p>
+              <p className="text-xs text-gray-500">
+                Überprüfe deine Schreibweise oder setze die Suche zurück.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-6 pt-2">
+              {searchResultVideos.map((video) => (
+                <div
+                  key={`search-card-${video.path || video.name}`}
+                  className="relative transition-all duration-300"
+                >
+                  <VideoCard
+                    video={video}
+                    onPlay={() => handleSelectVideo(video, matchedCategory)}
+                    onDetails={() => setSelectedDetailsVideo(video)}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+        </main>
+      ) : (
+        <>
+          {/* 2. HERO BANNER: IDENTISCHER FADE & BLEND-IN MIT DER SEITE */}
       {isLoadingCategories ? (
         <div className="w-full h-[45vh] min-h-[340px] max-h-[550px] flex flex-col items-center justify-center gap-3 select-none mb-8">
           <Loader2 className="w-10 h-10 animate-spin text-[#E50914]" />
@@ -835,6 +927,8 @@ export const CinemaView: React.FC<CinemaViewProps> = ({
           )}
         </section>
       </div>
+    </>
+  )}
 
       {/* 5. BESCHREIBUNGS-POP-UP / INFO-OVERLAY (Beim Anwählen einer Filmkachel) */}
       {descriptionOverlay && (

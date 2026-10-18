@@ -480,6 +480,37 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
     return '';
   }, [searchQuery, autocompleteMatch]);
 
+  const isSearchActive = Boolean(searchQuery.trim());
+
+  // Prüfen, ob die Suchanfrage exakt oder primär einer Kategorie entspricht:
+  const matchedCategory = useMemo(() => {
+    if (!isSearchActive) return null;
+    const q = searchQuery.trim().toLowerCase();
+    // 1. Exakter Match
+    const exact = allFolderCategories.find(
+      (c) => c.title.toLowerCase() === q || c.id.toLowerCase() === q
+    );
+    if (exact) return exact;
+    // 2. Präfix-Match oder Suchbegriff entspricht Kategorie
+    const prefix = allFolderCategories.find(
+      (c) => c.title.toLowerCase().startsWith(q) || q.startsWith(c.title.toLowerCase())
+    );
+    if (prefix) return prefix;
+    // 3. Kategorie enthält Suchbegriff
+    return allFolderCategories.find((c) => c.title.toLowerCase().includes(q)) || null;
+  }, [isSearchActive, searchQuery, allFolderCategories]);
+
+  // Die gefilterten Suchtreffer-Videos (nur die eine Kategorie oder die spezifischen Videos):
+  const searchResultVideos = useMemo(() => {
+    if (!isSearchActive) return [];
+    if (matchedCategory) {
+      return sortVideosByTagDate(matchedCategory.videos);
+    }
+    return sortVideosByTagDate(
+      displayVideos.filter((v) => matchesQuery(v, searchQuery))
+    );
+  }, [isSearchActive, matchedCategory, displayVideos, matchesQuery, searchQuery]);
+
   // SEKTION 2: Reihe "Zuletzt hinzugefügt"
   const recentRow = useMemo<VideoCategory | null>(() => {
     const recentFiltered = sortVideosByTagDate(
@@ -555,6 +586,9 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
 
   // Videos displayed in the 16:9 Grid section based on active category filter and search query
   const gridVideos = useMemo(() => {
+    if (isSearchActive) {
+      return searchResultVideos;
+    }
     let baseList = displayVideos;
 
     if (activeCategoryFilter === 'recent') {
@@ -566,11 +600,8 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
       }
     }
 
-    const filtered = !searchQuery.trim()
-      ? baseList
-      : baseList.filter((v) => matchesQuery(v, searchQuery));
-    return sortVideosByTagDate(filtered);
-  }, [displayVideos, allFolderCategories, activeCategoryFilter, searchQuery, matchesQuery]);
+    return sortVideosByTagDate(baseList);
+  }, [isSearchActive, searchResultVideos, displayVideos, allFolderCategories, activeCategoryFilter]);
 
   // -------------------------------------------------------------
   // D-PAD & FERNBEDIENUNGS-STEUERUNG
@@ -705,17 +736,33 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
           pillBtn.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
         }
       } else if (focusedZone === 'grid') {
-        const cardEl = gridItemRefs.current.get(gridIdx);
-        if (cardEl) {
-          const containerRect = container.getBoundingClientRect();
-          const cardRect = cardEl.getBoundingClientRect();
-          const relativeTop = cardRect.top - containerRect.top + container.scrollTop;
-          // Karte vertikal im Sichtfeld zentrieren, damit sie voll sichtbar ist
-          const targetScrollTop = relativeTop - (container.clientHeight - cardRect.height) / 2;
-          container.scrollTo({
-            top: Math.max(0, targetScrollTop),
-            behavior: 'smooth',
-          });
+        if (isSearchActive) {
+          // Bei aktiver Suche: Bleibe oben bei den Suchergebnissen, kein automatisches Herunterspringen!
+          const cardEl = gridItemRefs.current.get(gridIdx);
+          if (cardEl && gridIdx >= 4) {
+            const containerRect = container.getBoundingClientRect();
+            const cardRect = cardEl.getBoundingClientRect();
+            const relativeTop = cardRect.top - containerRect.top + container.scrollTop;
+            container.scrollTo({
+              top: Math.max(0, relativeTop - 80),
+              behavior: 'smooth',
+            });
+          } else {
+            container.scrollTo({ top: 0, behavior: 'smooth' });
+          }
+        } else {
+          const cardEl = gridItemRefs.current.get(gridIdx);
+          if (cardEl) {
+            const containerRect = container.getBoundingClientRect();
+            const cardRect = cardEl.getBoundingClientRect();
+            const relativeTop = cardRect.top - containerRect.top + container.scrollTop;
+            // Karte vertikal im Sichtfeld zentrieren, damit sie voll sichtbar ist
+            const targetScrollTop = relativeTop - (container.clientHeight - cardRect.height) / 2;
+            container.scrollTo({
+              top: Math.max(0, targetScrollTop),
+              behavior: 'smooth',
+            });
+          }
         }
       }
     });
@@ -732,6 +779,7 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
     carouselColIdx,
     filterBarIdx,
     gridIdx,
+    isSearchActive,
     activePlayerVideo,
     selectedDetailsVideo,
     descriptionOverlay,
@@ -1003,10 +1051,18 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
             // Streng vertikal nach oben in derselben Spalte navigieren
             setGridIdx((prev) => prev - cols);
           } else {
-            // Oberste Zeile des Grids erreicht -> Fokus springt auf Sektion 4 Filterleiste
-            setFocusedZone('filterBar');
-            const targetPill = Math.min(filterOptions.length - 1, gridIdx % cols);
-            setFilterBarIdx(Math.max(0, targetPill));
+            if (isSearchActive) {
+              // Bei aktiver Suche: Oberste Zeile erreicht -> Fokus springt direkt ins Suchfeld im Header!
+              setFocusedZone('header');
+              setHeaderFocusIndex(0);
+              tvScrollContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            } else {
+              // Oberste Zeile des Grids erreicht -> Fokus springt auf Sektion 4 Filterleiste
+              setFocusedZone('filterBar');
+              const targetPill = Math.min(filterOptions.length - 1, gridIdx % cols);
+              setFilterBarIdx(Math.max(0, targetPill));
+            }
           }
         } else if (focusedZone === 'filterBar') {
           // Von Filterleiste nach oben -> springt auf die letzte Karussell-Reihe (Sektion 3)
@@ -1067,7 +1123,11 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
             searchInputRef.current?.blur();
             setIsEditingSearch(false);
           }
-          if (heroVideo) {
+          if (isSearchActive && searchResultVideos.length > 0) {
+            // Bei aktiver Suche: Direkt in die Suchergebnis-Karten springen
+            setFocusedZone('grid');
+            setGridIdx(0);
+          } else if (heroVideo) {
             setFocusedZone('hero');
             setHeroIndex(0);
           } else if (!isLoadingCategories && displayVideos.length === 0) {
@@ -1288,18 +1348,16 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
           <form
             onSubmit={(e) => {
               e.preventDefault();
+              const finalQuery = autocompleteMatch || searchQuery;
               if (autocompleteMatch) {
                 setSearchQuery(autocompleteMatch);
               }
               searchInputRef.current?.blur();
               setIsEditingSearch(false);
-              if (gridVideos.length > 0) {
+              if (finalQuery.trim()) {
                 setFocusedZone('grid');
                 setGridIdx(0);
-              } else if (featuredRows.length > 0 && featuredRows[0].videos.length > 0) {
-                setFocusedZone('carousels');
-                setCarouselRowIdx(0);
-                setCarouselColIdx(0);
+                tvScrollContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
               }
             }}
             className="relative flex-1 max-w-md"
@@ -1354,18 +1412,16 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
                   if (e.key === 'Enter') {
                     e.preventDefault();
                     e.stopPropagation();
+                    const finalQuery = autocompleteMatch || searchQuery;
                     if (autocompleteMatch) {
                       setSearchQuery(autocompleteMatch);
                     }
                     searchInputRef.current?.blur();
                     setIsEditingSearch(false);
-                    if (gridVideos.length > 0) {
+                    if (finalQuery.trim()) {
                       setFocusedZone('grid');
                       setGridIdx(0);
-                    } else if (featuredRows.length > 0 && featuredRows[0].videos.length > 0) {
-                      setFocusedZone('carousels');
-                      setCarouselRowIdx(0);
-                      setCarouselColIdx(0);
+                      tvScrollContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
                     }
                   } else if (
                     e.key === 'Tab' ||
@@ -1381,7 +1437,10 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
                     e.stopPropagation();
                     searchInputRef.current?.blur();
                     setIsEditingSearch(false);
-                    if (heroVideo) {
+                    if (isSearchActive && searchResultVideos.length > 0) {
+                      setFocusedZone('grid');
+                      setGridIdx(0);
+                    } else if (heroVideo) {
                       setFocusedZone('hero');
                       setHeroIndex(0);
                     } else if (featuredRows.length > 0) {
@@ -1446,7 +1505,78 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
         </div>
       </header>
 
-      {/* SEKTION 1: OBEN DAS GROSSE HERO-/FRONT-VIDEO (VORSCHAU / BANNER) */}
+      {/* INHALTSBEREICH: SUCHERGEBNISSE ODER NORMALE TV-SEKTIONEN */}
+      {isSearchActive ? (
+        <section
+          ref={sectionAllRef}
+          id="tv-search-results"
+          data-tv-section="search-results"
+          className="relative z-30 w-full max-w-7xl mx-auto px-4 sm:px-8 space-y-6 pt-4 shrink-0 animate-in fade-in duration-200"
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/10 pb-4">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-xs font-bold uppercase tracking-wider text-[#E50914] bg-[#E50914]/15 px-2.5 py-0.5 rounded-md border border-[#E50914]/30">
+                  {matchedCategory ? 'Kategorie-Treffer' : 'Suchergebnis'}
+                </span>
+              </div>
+              <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
+                {matchedCategory ? matchedCategory.title : `Ergebnisse für „${searchQuery.trim()}“`}
+              </h1>
+              <p className="text-xs sm:text-sm text-gray-400 mt-1">
+                {searchResultVideos.length === 1
+                  ? '1 Video gefunden'
+                  : `${searchResultVideos.length} Videos gefunden`}
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setSearchQuery('');
+                setFocusedZone('header');
+                setHeaderFocusIndex(0);
+              }}
+              className="self-start sm:self-auto px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-xs sm:text-sm font-semibold text-gray-200 hover:text-white transition-all cursor-pointer border border-white/10"
+            >
+              Suche beenden
+            </button>
+          </div>
+
+          {searchResultVideos.length === 0 ? (
+            <div className="py-20 text-center text-gray-400">
+              <Search className="w-10 h-10 text-gray-500 opacity-50 mx-auto mb-2" />
+              <p className="font-semibold text-gray-300">Keine passenden Videos oder Kategorien gefunden</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 sm:gap-6 pt-2">
+              {searchResultVideos.map((video, idx) => {
+                const isFocused = focusedZone === 'grid' && gridIdx === idx;
+                return (
+                  <TvCardItem
+                    key={`tv-search-card-${video.path || video.name}-${idx}`}
+                    video={video}
+                    category={matchedCategory}
+                    isFocused={isFocused}
+                    itemRef={(el) => {
+                      if (el) gridItemRefs.current.set(idx, el);
+                      else gridItemRefs.current.delete(idx);
+                    }}
+                    onSelect={handleVideoSelect}
+                    onDetails={handleVideoDetails}
+                    onHover={() => {
+                      setFocusedZone('grid');
+                      setGridIdx(idx);
+                    }}
+                  />
+                );
+              })}
+            </div>
+          )}
+        </section>
+      ) : (
+        <>
+          {/* SEKTION 1: OBEN DAS GROSSE HERO-/FRONT-VIDEO (VORSCHAU / BANNER) */}
       {isLoadingCategories && displayVideos.length === 0 ? (
         <div className="w-full h-[50vh] min-h-[360px] max-h-[580px] flex flex-col items-center justify-center gap-3 select-none mb-8 snap-start snap-always scroll-mt-20 shrink-0">
           <Loader2 className="w-10 h-10 animate-spin text-[#E50914]" />
@@ -1859,6 +1989,8 @@ export const CinemaTvView: React.FC<CinemaTvViewProps> = ({
           </div>
         )}
       </section>
+        </>
+      )}
 
       {/* 5. BESCHREIBUNGS-POP-UP / INFO-OVERLAY */}
       {descriptionOverlay && (
