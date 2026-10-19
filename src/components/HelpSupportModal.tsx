@@ -100,7 +100,7 @@ export const HelpSupportModal: React.FC<HelpSupportModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs select-none animate-in fade-in duration-150">
-      <div className="w-full max-w-xl rounded-2xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 shadow-2xl p-6 sm:p-8 animate-in zoom-in-95 duration-150 max-h-[92vh] flex flex-col overflow-hidden">
+      <div className="help-modal w-full max-w-xl rounded-2xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 shadow-2xl p-6 sm:p-8 animate-in zoom-in-95 duration-150 max-h-[92vh] flex flex-col overflow-hidden">
         {/* Header */}
         <div className="flex items-start justify-between pb-4 border-b border-gray-100 dark:border-gray-800 shrink-0">
           <div>

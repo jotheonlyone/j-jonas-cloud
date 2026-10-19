@@ -98,7 +98,7 @@ export const ContactPage: React.FC<ContactPageProps> = ({
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#f8fafd] dark:bg-gray-950 text-gray-900 dark:text-gray-100 font-sans">
+    <div className="contact-page min-h-screen flex flex-col bg-[#f8fafd] dark:bg-gray-950 text-gray-900 dark:text-gray-100 font-sans">
       {/* Navigation Header */}
       <header className="sticky top-0 z-30 flex items-center justify-between px-4 sm:px-8 py-3.5 bg-white/80 dark:bg-gray-900/80 backdrop-blur-md border-b border-gray-200/80 dark:border-gray-800">
         <div className="flex items-center gap-4">

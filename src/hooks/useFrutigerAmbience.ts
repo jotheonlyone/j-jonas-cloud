@@ -273,6 +273,20 @@ export function useFrutigerAmbience({
     }
   }, [isExternalMediaPlaying, isActive, state.tracks.length]);
 
+  const [progress, setProgress] = useState(0);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const handleTimeUpdate = () => {
+      if (audio.duration > 0) {
+        setProgress((audio.currentTime / audio.duration) * 100);
+      }
+    };
+    audio.addEventListener('timeupdate', handleTimeUpdate);
+    return () => audio.removeEventListener('timeupdate', handleTimeUpdate);
+  }, []);
+
   const toggleMute = useCallback(() => {
     const audio = audioRef.current;
     if (!audio) return;
@@ -281,12 +295,24 @@ export function useFrutigerAmbience({
     setState((prev) => ({ ...prev, isMuted: nextMuted }));
   }, []);
 
+  const togglePlay = useCallback(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (isPlayingRef.current) {
+      audio.pause();
+    } else {
+      audio.play().catch(() => {});
+    }
+  }, []);
+
   return {
     tracks: state.tracks,
     currentTrack: state.tracks[state.currentTrackIndex] || null,
     isPlaying: state.isPlaying,
     isMuted: state.isMuted,
     isSearching: state.isSearching,
+    progressPercent: progress,
     toggleMute,
+    togglePlay,
   };
 }

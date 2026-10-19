@@ -76,7 +76,7 @@ const FRUTIGER_AERO_KEY = 'jjcloud_frutiger_aero';
 
 function MainApp() {
   const { addToast } = useToast();
-  const { playTrack, isPlaying: isCloudAudioPlaying } = useAudioPlayer();
+  const { playTrack, isPlaying: isCloudAudioPlaying, isPlayerVisible: isMainPlayerVisible } = useAudioPlayer();
 
   // Multi-account persistent session
   const [user, setUser] = useState<UserAccount | null>(() => getActiveUser());
@@ -344,7 +344,9 @@ function MainApp() {
     currentTrack: ambienceTrack,
     isPlaying: isAmbiencePlaying,
     isMuted: isAmbienceMuted,
+    progressPercent: ambienceProgress,
     toggleMute: toggleAmbienceMute,
+    togglePlay: toggleAmbiencePlay,
   } = useFrutigerAmbience({
     isActive: isFrutigerAero,
     username: user?.username || '',
@@ -1125,7 +1127,10 @@ function MainApp() {
           currentTrack={ambienceTrack}
           isPlaying={isAmbiencePlaying}
           isMuted={isAmbienceMuted}
+          progressPercent={ambienceProgress}
           onToggleMute={toggleAmbienceMute}
+          onTogglePlay={toggleAmbiencePlay}
+          isMainPlayerVisible={isMainPlayerVisible}
         />
       )}
 

@@ -451,5 +451,31 @@ body.theme-frutiger-aero,
   text-shadow: 0 1px 0 rgba(255, 255, 255, 0.8) !important;
 }
 
+/* ==========================================================================
+   8. Exceptions: Retain Normal Button Design for Contact, Help & Settings
+   ========================================================================== */
+.theme-frutiger-aero .contact-page button,
+.theme-frutiger-aero .settings-modal button,
+.theme-frutiger-aero .help-modal button,
+.contact-page button,
+.settings-modal button,
+.help-modal button {
+  background: revert !important;
+  color: revert !important;
+  border: revert !important;
+  box-shadow: revert !important;
+  text-shadow: none !important;
+  font-weight: revert !important;
+  transform: none !important;
+  filter: none !important;
+}
+
+.theme-frutiger-aero .contact-page button svg,
+.theme-frutiger-aero .settings-modal button svg,
+.theme-frutiger-aero .help-modal button svg {
+  filter: none !important;
+}
+
+
 
 
