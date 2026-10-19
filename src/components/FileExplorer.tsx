@@ -12,6 +12,7 @@ import {
   Disc,
   Music,
   MoreVertical,
+  X,
 } from 'lucide-react';
 import type { FileItemData, ViewMode } from '../types';
 import { Breadcrumbs } from './Breadcrumbs';
@@ -51,6 +52,7 @@ interface FileExplorerProps {
   onCutItem?: (item: FileItemData) => void;
   onPaste?: (targetSubPath?: string) => void;
   onUploadClick?: () => void;
+  activePlaylistFolder?: string | null;
 }
 
 export const FileExplorer: React.FC<FileExplorerProps> = ({
@@ -82,11 +84,24 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
   onCutItem,
   onPaste,
   onUploadClick,
+  activePlaylistFolder,
 }) => {
   const [isDraggingOver, setIsDraggingOver] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuPosition | null>(null);
   const [emptyContextMenu, setEmptyContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [selectedItem, setSelectedItem] = useState<FileItemData | null>(null);
+  const [isPlaylistMenuOpen, setIsPlaylistMenuOpen] = useState(false);
+
+  // Sync playlist menu visibility:
+  // - Open when explicitly triggered (e.g. right click "Als Playlist starten" -> activePlaylistFolder)
+  // - Otherwise, initially NOT visible when entering a folder
+  useEffect(() => {
+    if (activePlaylistFolder && currentPath === activePlaylistFolder) {
+      setIsPlaylistMenuOpen(true);
+    } else {
+      setIsPlaylistMenuOpen(false);
+    }
+  }, [currentPath, activePlaylistFolder]);
 
   // Keyboard Shortcuts: Strg+C (Kopieren), Strg+X (Ausschneiden), Strg+V (Einfügen)
   useEffect(() => {
@@ -243,40 +258,22 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Playlist and Shuffle Buttons: ONLY inside folders, NEVER on the start page */}
+          {/* Small Playlist Button: ONLY inside folders with audio, NEVER on the start page, NO shuffle button up here */}
           {Boolean(currentPath) && audioFiles.length > 0 && (
-            <>
-              {/* Shuffle button prominent at top */}
-              <button
-                type="button"
-                onClick={() => {
-                  toggleShuffle();
-                  if (!isPlaying) {
-                    onOpenFile(audioFiles[0]);
-                  }
-                }}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all active:scale-95 cursor-pointer shrink-0 border ${
-                  isShuffle
-                    ? 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-500 shadow-xs ring-2 ring-emerald-400/30'
-                    : 'bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 border-gray-200 dark:border-gray-700'
-                }`}
-                title={isShuffle ? 'Shuffle-Modus ist AKTIV (klicken zum Ausschalten)' : 'Shuffle-Modus aktivieren'}
-              >
-                <Shuffle className="w-3.5 h-3.5" />
-                <span>Shuffle: {isShuffle ? 'AN' : 'AUS'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => onOpenFile(audioFiles[0])}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white shadow-xs transition-all active:scale-95 cursor-pointer shrink-0"
-                title={`Alle ${audioFiles.length} Musiktitel als Playlist abspielen`}
-              >
-                <Play className="w-3.5 h-3.5 fill-white" />
-                <span className="hidden sm:inline">Playlist starten</span>
-                <span className="text-[10px] bg-white/20 px-1.5 py-0.2 rounded-full font-mono">{audioFiles.length}</span>
-              </button>
-            </>
+            <button
+              type="button"
+              onClick={() => {
+                setIsPlaylistMenuOpen((prev) => !prev);
+                if (!isPlaying && !isPlaylistMenuOpen) {
+                  onOpenFile(audioFiles[0]);
+                }
+              }}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white shadow-xs transition-all active:scale-95 cursor-pointer shrink-0"
+              title={isPlaylistMenuOpen ? "Playlist-Menü schließen" : "Playlist starten"}
+            >
+              <Play className="w-3.5 h-3.5 fill-white" />
+              <span>Playlist starten</span>
+            </button>
           )}
 
           <button
@@ -381,14 +378,24 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
         ) : (
           // Populated Files & Folders View
           <div className="space-y-6 pb-12">
-            {isMusicFolder ? (
+            {isMusicFolder && isPlaylistMenuOpen ? (
               // ================================================================
-              // SPOTIFY-STYLE PLAYLIST VIEW (inside folders with music)
+              // SPOTIFY-STYLE PLAYLIST VIEW (inside folders with music when opened via 'Playlist starten')
               // ================================================================
               <div className="space-y-6">
                 {/* 1. Prominent Playlist Header Banner */}
                 <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-blue-600/15 via-indigo-600/10 to-purple-600/15 dark:from-blue-950/50 dark:via-indigo-950/40 dark:to-purple-950/50 border border-blue-200/80 dark:border-blue-900/60 p-4 sm:p-6 shadow-sm backdrop-blur-sm">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-5">
+                  {/* Close / Hide Playlist Menu Button */}
+                  <button
+                    type="button"
+                    onClick={() => setIsPlaylistMenuOpen(false)}
+                    className="absolute top-3 right-3 p-1.5 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-white/60 dark:hover:bg-gray-800/60 transition-colors cursor-pointer"
+                    title="Playlist-Menü schließen"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-5 pr-6 sm:pr-8">
                     {/* Left: Artwork / Cover & Info */}
                     <div className="flex items-center gap-4 min-w-0">
                       <div className="relative w-16 h-16 sm:w-22 sm:h-22 rounded-2xl overflow-hidden shadow-lg bg-gradient-to-br from-blue-600 to-indigo-700 shrink-0 flex items-center justify-center text-white ring-2 ring-white/40 dark:ring-white/10">

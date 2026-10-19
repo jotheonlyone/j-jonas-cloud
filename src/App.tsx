@@ -298,6 +298,9 @@ function MainApp() {
   // Discovered videos across directories for Cinema mode
   const [allCinemaVideos, setAllCinemaVideos] = useState<FileItemData[]>([]);
 
+  // Folder opened via 'Als Playlist starten' to auto-expand playlist view
+  const [activePlaylistFolder, setActivePlaylistFolder] = useState<string | null>(null);
+
   // File upload input ref
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -853,6 +856,7 @@ function MainApp() {
     isNavigatingRef.current = true;
     setIsNavigating(true);
 
+    setActivePlaylistFolder(null);
     setCurrentPath(nextPath);
 
     // Timeout fallback to release lock if loading settles
@@ -889,8 +893,9 @@ function MainApp() {
     const folderOwner = folder.owner || user.username;
     const targetFolderRelPath = folder.path || (currentPath ? `${currentPath}/${folder.name}` : folder.name);
 
-    // 1. Immediately navigate into the folder so the user enters the playlist view
+    // 1. Immediately navigate into the folder and open playlist view
     const nextPath = resolveFolderPath(currentPath, folder);
+    setActivePlaylistFolder(nextPath);
     setCurrentPath(nextPath);
 
     addToast('info', 'Lade Playlist...', `Suche Musiktitel in "${folder.name}"`);
@@ -1215,7 +1220,11 @@ function MainApp() {
               {currentTab === 'my-drive' && (
                 <FileExplorer
                   currentPath={currentPath}
-                  onNavigatePath={setCurrentPath}
+                  onNavigatePath={(p) => {
+                    setActivePlaylistFolder(null);
+                    setCurrentPath(p);
+                  }}
+                  activePlaylistFolder={activePlaylistFolder}
                   items={items}
                   isLoading={isLoadingItems}
                   serverError={serverError}
