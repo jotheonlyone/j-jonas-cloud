@@ -14,7 +14,8 @@ import {
   CheckCircle2,
   Users,
   ChevronRight,
-  HelpCircle
+  HelpCircle,
+  Sparkles,
 } from 'lucide-react';
 import type { UserAccount, ViewMode, NavigationTab } from '../types';
 import type { ServerStatus } from '../services/storageApi';
@@ -41,6 +42,8 @@ interface HeaderProps {
   onLogoClick?: () => void;
   currentTab?: NavigationTab;
   onSelectTab?: (tab: NavigationTab) => void;
+  isFrutigerAero?: boolean;
+  onToggleFrutigerAero?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -65,6 +68,8 @@ export const Header: React.FC<HeaderProps> = ({
   onLogoClick,
   currentTab,
   onSelectTab,
+  isFrutigerAero = false,
+  onToggleFrutigerAero,
 }) => {
   const [showProfileMenu, setShowProfileMenu] = useState(false);
 
@@ -287,6 +292,44 @@ export const Header: React.FC<HeaderProps> = ({
                         </div>
                         <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-[#E50914]/10 text-[#E50914]">
                           VOD
+                        </span>
+                      </button>
+                    )}
+
+                    {onToggleFrutigerAero && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowProfileMenu(false);
+                          onToggleFrutigerAero();
+                        }}
+                        className={`w-full flex items-center justify-between px-3 py-2 text-xs font-semibold rounded-xl text-left transition-all group cursor-pointer ${
+                          isFrutigerAero
+                            ? 'bg-gradient-to-r from-sky-500/15 via-cyan-500/15 to-emerald-500/15 text-sky-800 dark:text-sky-200 border border-sky-400/30 shadow-xs'
+                            : 'text-gray-700 dark:text-gray-300 hover:bg-neutral-100 dark:hover:bg-neutral-800'
+                        }`}
+                        title="Frutiger Aero 7 Modus (Windows 7 Ästhetik & Aquatic Ambience)"
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <div
+                            className={`w-5 h-5 rounded-full flex items-center justify-center transition-transform group-hover:scale-110 ${
+                              isFrutigerAero
+                                ? 'bg-gradient-to-tr from-sky-500 via-cyan-400 to-emerald-400 text-white shadow-xs ring-1 ring-white/60'
+                                : 'bg-sky-100 dark:bg-sky-950 text-sky-600 dark:text-sky-400'
+                            }`}
+                          >
+                            <Sparkles className="w-3 h-3" />
+                          </div>
+                          <span>Frutiger Aero 7</span>
+                        </div>
+                        <span
+                          className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full transition-all ${
+                            isFrutigerAero
+                              ? 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border border-emerald-400/40 shadow-xs'
+                              : 'bg-gray-200/70 dark:bg-gray-800 text-gray-500 dark:text-gray-400'
+                          }`}
+                        >
+                          {isFrutigerAero ? 'Aktiv' : 'Aus'}
                         </span>
                       </button>
                     )}

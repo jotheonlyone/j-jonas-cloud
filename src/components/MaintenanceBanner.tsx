@@ -31,25 +31,25 @@ export const MaintenanceBanner: React.FC<MaintenanceBannerProps> = ({
   };
 
   return (
-    <div className="bg-amber-500 text-amber-950 px-4 py-2.5 sm:px-6 shadow-xs select-none border-b border-amber-600/30">
-      <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2 text-xs sm:text-sm font-medium">
+    <div className="maintenance-banner bg-amber-500 text-slate-950 dark:bg-amber-500 dark:text-slate-950 px-4 py-2.5 sm:px-6 shadow-md select-none border-b border-amber-600/50 relative z-40 font-semibold">
+      <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2 text-xs sm:text-sm">
         <div className="flex items-center gap-2.5">
-          <div className="p-1 rounded-md bg-amber-600/30 text-amber-950">
+          <div className="p-1 rounded-md bg-black/15 text-slate-950 shrink-0">
             {isMaintenance ? (
-              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <AlertTriangle className="w-4 h-4 shrink-0 text-slate-950" />
             ) : (
-              <WifiOff className="w-4 h-4 shrink-0" />
+              <WifiOff className="w-4 h-4 shrink-0 text-slate-950" />
             )}
           </div>
-          <span>
+          <span className="text-slate-950">
             {isMaintenance ? (
               <>
-                <strong>Wartungsarbeiten:</strong> Dateizugriff vorübergehend pausiert.
+                <strong className="font-black text-black">Wartungsarbeiten:</strong> Dateizugriff vorübergehend pausiert.
                 {!isMaster && ' Uploads, Löschungen und Ordnererstellung sind vorübergehend gesperrt.'}
               </>
             ) : (
               <>
-                <strong>Server offline:</strong> Keine Verbindung zu https://storage.j-jonas.com. Dateizugriff vorübergehend pausiert.
+                <strong className="font-black text-black">Server offline:</strong> Keine Verbindung zu https://storage.j-jonas.com. Dateizugriff vorübergehend pausiert.
               </>
             )}
           </span>
@@ -60,9 +60,9 @@ export const MaintenanceBanner: React.FC<MaintenanceBannerProps> = ({
             <button
               onClick={handleRetry}
               disabled={isChecking}
-              className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-amber-600/30 hover:bg-amber-600/40 text-amber-950 font-semibold text-xs transition-colors disabled:opacity-60 active:scale-95"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-black/15 hover:bg-black/25 text-slate-950 font-bold text-xs transition-all disabled:opacity-60 active:scale-95 border border-black/20 shadow-xs cursor-pointer"
             >
-              <RefreshCw className={`w-3 h-3 ${isChecking ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`w-3.5 h-3.5 ${isChecking ? 'animate-spin' : ''}`} />
               <span>{isChecking ? 'Wird geprüft...' : 'Verbindung prüfen'}</span>
             </button>
           )}
@@ -70,7 +70,7 @@ export const MaintenanceBanner: React.FC<MaintenanceBannerProps> = ({
           {isMaintenance && isMaster && onDisableMaintenance && (
             <button
               onClick={onDisableMaintenance}
-              className="px-3 py-1 rounded-lg bg-amber-950 text-amber-100 hover:bg-black font-semibold text-xs shadow-xs transition-colors"
+              className="px-3 py-1.5 rounded-lg bg-black text-amber-100 hover:bg-neutral-900 font-bold text-xs shadow-md transition-colors cursor-pointer"
             >
               Wartungsmodus beenden
             </button>

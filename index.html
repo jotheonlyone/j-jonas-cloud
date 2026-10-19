@@ -24,6 +24,10 @@
             document.documentElement.classList.remove('dark');
             document.documentElement.style.colorScheme = 'light';
           }
+          var aeroSaved = localStorage.getItem('jjcloud_frutiger_aero');
+          if (aeroSaved === 'true') {
+            document.documentElement.classList.add('theme-frutiger-aero');
+          }
         } catch (e) {}
       })();
     </script>

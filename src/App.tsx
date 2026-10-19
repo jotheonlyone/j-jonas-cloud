@@ -66,19 +66,54 @@ import { resolveFolderPath } from './utils/pathResolver';
 import { AudioPlayerProvider, useAudioPlayer } from './context/AudioPlayerContext';
 import { AudioPlayerBar, AudioPlayerModal } from './components/AudioPlayer';
 import { isAudioFile } from './utils/audioPlayerUtils';
+import { FrutigerAeroBackground } from './components/FrutigerAeroBackground';
+import { useFrutigerAmbience } from './hooks/useFrutigerAmbience';
 
 const DARK_MODE_KEY = 'jjcloud_dark_mode';
 const VIEW_MODE_KEY = 'jjcloud_view_mode';
 const OPEN_FILES_IN_NEW_TAB_KEY = 'jjcloud_open_files_in_new_tab';
+const FRUTIGER_AERO_KEY = 'jjcloud_frutiger_aero';
 
 function MainApp() {
   const { addToast } = useToast();
-  const { playTrack } = useAudioPlayer();
+  const { playTrack, isPlaying: isCloudAudioPlaying } = useAudioPlayer();
 
   // Multi-account persistent session
   const [user, setUser] = useState<UserAccount | null>(() => getActiveUser());
   const [savedAccounts, setSavedAccounts] = useState<UserAccount[]>(() => getSavedAccounts());
   const [showAddAccountModal, setShowAddAccountModal] = useState<boolean>(false);
+
+  // Frutiger Aero 7 Mode: Windows 7 aesthetic with persistent state & ambient sound
+  const [isFrutigerAero, setIsFrutigerAero] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(FRUTIGER_AERO_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleFrutigerAero = useCallback(() => {
+    setIsFrutigerAero((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(FRUTIGER_AERO_KEY, String(next));
+      } catch {}
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(FRUTIGER_AERO_KEY, String(isFrutigerAero));
+    } catch {}
+    if (isFrutigerAero) {
+      document.documentElement.classList.add('theme-frutiger-aero');
+      document.body.classList.add('theme-frutiger-aero');
+    } else {
+      document.documentElement.classList.remove('theme-frutiger-aero');
+      document.body.classList.remove('theme-frutiger-aero');
+    }
+  }, [isFrutigerAero]);
 
   // Dark Mode: Auto-detects device mode if no explicit user override exists
   const [darkMode, setDarkMode] = useState<boolean>(() => {
@@ -300,6 +335,21 @@ function MainApp() {
 
   // Folder opened via 'Als Playlist starten' to auto-expand playlist view
   const [activePlaylistFolder, setActivePlaylistFolder] = useState<string | null>(null);
+
+  // Frutiger Aero Aquatic Ambience: Automatically pauses when cloud audio, video or cinema is playing
+  const isVideoViewing = Boolean(viewerItem && isVideoFile(viewerItem));
+  const isExternalMediaPlaying = isCloudAudioPlaying || isVideoViewing || isCinemaMode || isTvMode;
+
+  const {
+    currentTrack: ambienceTrack,
+    isPlaying: isAmbiencePlaying,
+    isMuted: isAmbienceMuted,
+    toggleMute: toggleAmbienceMute,
+  } = useFrutigerAmbience({
+    isActive: isFrutigerAero,
+    username: user?.username || '',
+    isExternalMediaPlaying,
+  });
 
   // File upload input ref
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1068,7 +1118,17 @@ function MainApp() {
   const isAnyCinemaMode = isCinemaMode || isTvMode;
 
   return (
-    <div className={`h-full flex flex-col ${isAnyCinemaMode ? 'bg-[#141414] text-white' : 'bg-[#f8fafd] dark:bg-gray-950 text-gray-900 dark:text-gray-100'} overflow-hidden font-sans`}>
+    <div className={`h-full flex flex-col ${isAnyCinemaMode ? 'bg-[#141414] text-white' : isFrutigerAero ? 'bg-transparent text-gray-900 dark:text-gray-100' : 'bg-[#f8fafd] dark:bg-gray-950 text-gray-900 dark:text-gray-100'} overflow-hidden font-sans relative`}>
+      {/* Dynamic Frutiger Aero Animated Glass Horizon & Bubbles */}
+      {isFrutigerAero && !isAnyCinemaMode && (
+        <FrutigerAeroBackground
+          currentTrack={ambienceTrack}
+          isPlaying={isAmbiencePlaying}
+          isMuted={isAmbienceMuted}
+          onToggleMute={toggleAmbienceMute}
+        />
+      )}
+
       <input
         type="file"
         ref={fileInputRef}
@@ -1156,6 +1216,8 @@ function MainApp() {
               navigateToTab(tab);
               if (tab === 'my-drive') setCurrentPath('');
             }}
+            isFrutigerAero={isFrutigerAero}
+            onToggleFrutigerAero={toggleFrutigerAero}
           />
 
           {/* Body: Sidebar + Main Content Card */}
