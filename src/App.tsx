@@ -81,6 +81,7 @@ function MainApp() {
     currentTrack: audioCurrentTrack,
     pause: pauseAudio,
     setRepeatMode,
+    setIsMinimized,
   } = useAudioPlayer();
 
   // Multi-account persistent session
@@ -402,6 +403,7 @@ function MainApp() {
         hasTriggeredAeroMusicRef.current = true;
         setRepeatMode(found.length > 1 ? 'all' : 'one');
         playTrack(found[0], found, user.username);
+        setIsMinimized(true);
       } catch (err) {
         console.warn('Frutiger Aero Ambience search skipped:', err);
       }

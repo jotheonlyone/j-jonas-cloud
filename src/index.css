@@ -256,9 +256,8 @@ body.theme-frutiger-aero,
     0 3px 8px rgba(12, 85, 150, 0.45) !important;
 }
 
-/* 2. Sidebar "+ Neu" Button in Aero */
-.theme-frutiger-aero aside button.bg-white,
-.theme-frutiger-aero aside button.dark\:bg-gray-900 {
+/* 2. Sidebar "+ Neu" Button in Aero (Light Mode) */
+.theme-frutiger-aero aside button.bg-white {
   background: linear-gradient(
     180deg,
     rgba(255, 255, 255, 0.95) 0%,
@@ -273,8 +272,7 @@ body.theme-frutiger-aero,
     0 2px 6px rgba(20, 80, 140, 0.16) !important;
 }
 
-.theme-frutiger-aero aside button.bg-white:hover,
-.theme-frutiger-aero aside button.dark\:bg-gray-900:hover {
+.theme-frutiger-aero aside button.bg-white:hover {
   background: linear-gradient(
     180deg,
     #ffffff 0%,
@@ -286,6 +284,50 @@ body.theme-frutiger-aero,
     inset 0 1px 0 #ffffff,
     0 0 12px rgba(56, 189, 248, 0.55),
     0 2px 7px rgba(20, 80, 140, 0.22) !important;
+}
+
+/* Sidebar "+ Neu" Button in Aero (Dark Mode) - sleek dark aero glass with cyan glow */
+.dark.theme-frutiger-aero aside button.dark\:bg-gray-900,
+.theme-frutiger-aero.dark aside button.dark\:bg-gray-900,
+.dark .theme-frutiger-aero aside button.dark\:bg-gray-900 {
+  background: linear-gradient(
+    180deg,
+    rgba(30, 58, 92, 0.88) 0%,
+    rgba(18, 40, 68, 0.9) 48%,
+    rgba(12, 28, 50, 0.92) 50%,
+    rgba(16, 36, 62, 0.95) 100%
+  ) !important;
+  color: #bae6fd !important;
+  border: 1px solid rgba(125, 211, 252, 0.4) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.3),
+    0 4px 12px rgba(0, 0, 0, 0.45) !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+}
+
+.dark.theme-frutiger-aero aside button.dark\:bg-gray-900:hover,
+.theme-frutiger-aero.dark aside button.dark\:bg-gray-900:hover,
+.dark .theme-frutiger-aero aside button.dark\:bg-gray-900:hover {
+  background: linear-gradient(
+    180deg,
+    rgba(42, 80, 122, 0.92) 0%,
+    rgba(26, 56, 90, 0.94) 48%,
+    rgba(18, 42, 70, 0.96) 50%,
+    rgba(24, 52, 84, 0.98) 100%
+  ) !important;
+  color: #e0f2fe !important;
+  border-color: rgba(56, 189, 248, 0.75) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.5),
+    0 0 14px rgba(56, 189, 248, 0.55),
+    0 4px 12px rgba(0, 0, 0, 0.5) !important;
+}
+
+.dark.theme-frutiger-aero aside button.dark\:bg-gray-900 span,
+.theme-frutiger-aero.dark aside button.dark\:bg-gray-900 span,
+.dark .theme-frutiger-aero aside button.dark\:bg-gray-900 span {
+  color: #bae6fd !important;
 }
 
 /* 3. Sidebar Active Navigation Pill in Aero */
