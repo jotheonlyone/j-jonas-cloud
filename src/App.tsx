@@ -67,7 +67,6 @@ import { AudioPlayerProvider, useAudioPlayer } from './context/AudioPlayerContex
 import { AudioPlayerBar, AudioPlayerModal } from './components/AudioPlayer';
 import { isAudioFile } from './utils/audioPlayerUtils';
 import { FrutigerAeroBackground } from './components/FrutigerAeroBackground';
-import { useFrutigerAmbience } from './hooks/useFrutigerAmbience';
 
 const DARK_MODE_KEY = 'jjcloud_dark_mode';
 const VIEW_MODE_KEY = 'jjcloud_view_mode';
@@ -76,7 +75,13 @@ const FRUTIGER_AERO_KEY = 'jjcloud_frutiger_aero';
 
 function MainApp() {
   const { addToast } = useToast();
-  const { playTrack, isPlaying: isCloudAudioPlaying, isPlayerVisible: isMainPlayerVisible } = useAudioPlayer();
+  const {
+    playTrack,
+    isPlaying: isCloudAudioPlaying,
+    currentTrack: audioCurrentTrack,
+    pause: pauseAudio,
+    setRepeatMode,
+  } = useAudioPlayer();
 
   // Multi-account persistent session
   const [user, setUser] = useState<UserAccount | null>(() => getActiveUser());
@@ -336,22 +341,88 @@ function MainApp() {
   // Folder opened via 'Als Playlist starten' to auto-expand playlist view
   const [activePlaylistFolder, setActivePlaylistFolder] = useState<string | null>(null);
 
-  // Frutiger Aero Aquatic Ambience: Automatically pauses when cloud audio, video or cinema is playing
-  const isVideoViewing = Boolean(viewerItem && isVideoFile(viewerItem));
-  const isExternalMediaPlaying = isCloudAudioPlaying || isVideoViewing || isCinemaMode || isTvMode;
+  // Frutiger Aero Automatic Ambience: Plays via normal AudioPlayerBar
+  const hasTriggeredAeroMusicRef = useRef(false);
 
-  const {
-    currentTrack: ambienceTrack,
-    isPlaying: isAmbiencePlaying,
-    isMuted: isAmbienceMuted,
-    progressPercent: ambienceProgress,
-    toggleMute: toggleAmbienceMute,
-    togglePlay: toggleAmbiencePlay,
-  } = useFrutigerAmbience({
-    isActive: isFrutigerAero,
-    username: user?.username || '',
-    isExternalMediaPlaying,
-  });
+  useEffect(() => {
+    if (!isFrutigerAero || !user?.username) {
+      hasTriggeredAeroMusicRef.current = false;
+      return;
+    }
+
+    if (hasTriggeredAeroMusicRef.current) return;
+
+    let isCancelled = false;
+
+    const findAndPlayAmbience = async () => {
+      try {
+        const TARGET_1 = 'aquatic ambience.mp3';
+        const TARGET_2 = 'slowed  reverb - aquatic ambience.mp3';
+
+        const queue: string[] = [''];
+        const visited = new Set<string>();
+        const found: FileItemData[] = [];
+        let iterations = 0;
+
+        while (queue.length > 0 && iterations < 30) {
+          iterations++;
+          const dir = queue.shift()!;
+          if (visited.has(dir)) continue;
+          visited.add(dir);
+
+          try {
+            const res = await listFiles(user.username, dir);
+            if (isCancelled) return;
+            const items = res?.items || [];
+
+            for (const item of items) {
+              if (item.type === 'file') {
+                const norm = item.name.toLowerCase().trim();
+                if (norm === TARGET_1 || norm === TARGET_2) {
+                  if (!found.some((f) => (f.path || f.name) === (item.path || item.name))) {
+                    found.push(item);
+                  }
+                }
+              } else if (item.type === 'folder' && queue.length < 30) {
+                const sub = dir ? `${dir}/${item.name}` : item.name;
+                queue.push(sub);
+              }
+            }
+          } catch {}
+        }
+
+        if (isCancelled || found.length === 0) return;
+
+        found.sort((a, b) => {
+          if (a.name.toLowerCase().includes('slowed')) return 1;
+          if (b.name.toLowerCase().includes('slowed')) return -1;
+          return 0;
+        });
+
+        hasTriggeredAeroMusicRef.current = true;
+        setRepeatMode(found.length > 1 ? 'all' : 'one');
+        playTrack(found[0], found, user.username);
+      } catch (err) {
+        console.warn('Frutiger Aero Ambience search skipped:', err);
+      }
+    };
+
+    findAndPlayAmbience();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [isFrutigerAero, user?.username, playTrack, setRepeatMode]);
+
+  // When Frutiger Aero is deactivated, automatically pause if currently playing ambience
+  useEffect(() => {
+    if (!isFrutigerAero && audioCurrentTrack) {
+      const name = audioCurrentTrack.name.toLowerCase();
+      if (name.includes('aquatic ambience')) {
+        pauseAudio();
+      }
+    }
+  }, [isFrutigerAero, audioCurrentTrack, pauseAudio]);
 
   // File upload input ref
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1123,15 +1194,7 @@ function MainApp() {
     <div className={`h-full flex flex-col ${isAnyCinemaMode ? 'bg-[#141414] text-white' : isFrutigerAero ? 'bg-transparent text-gray-900 dark:text-gray-100' : 'bg-[#f8fafd] dark:bg-gray-950 text-gray-900 dark:text-gray-100'} overflow-hidden font-sans relative`}>
       {/* Dynamic Frutiger Aero Animated Glass Horizon & Bubbles */}
       {isFrutigerAero && !isAnyCinemaMode && (
-        <FrutigerAeroBackground
-          currentTrack={ambienceTrack}
-          isPlaying={isAmbiencePlaying}
-          isMuted={isAmbienceMuted}
-          progressPercent={ambienceProgress}
-          onToggleMute={toggleAmbienceMute}
-          onTogglePlay={toggleAmbiencePlay}
-          isMainPlayerVisible={isMainPlayerVisible}
-        />
+        <FrutigerAeroBackground />
       )}
 
       <input

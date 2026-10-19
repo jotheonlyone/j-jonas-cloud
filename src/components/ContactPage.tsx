@@ -98,14 +98,14 @@ export const ContactPage: React.FC<ContactPageProps> = ({
   };
 
   return (
-    <div className="contact-page min-h-screen flex flex-col bg-[#f8fafd] dark:bg-gray-950 text-gray-900 dark:text-gray-100 font-sans">
+    <div className="contact-page no-aero-scope min-h-screen flex flex-col bg-[#f8fafd] dark:bg-gray-950 text-gray-900 dark:text-gray-100 font-sans">
       {/* Navigation Header */}
       <header className="sticky top-0 z-30 flex items-center justify-between px-4 sm:px-8 py-3.5 bg-white/80 dark:bg-gray-900/80 backdrop-blur-md border-b border-gray-200/80 dark:border-gray-800">
         <div className="flex items-center gap-4">
           <button
             type="button"
             onClick={onBack}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors cursor-pointer"
+            className="normal-btn flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors cursor-pointer"
             aria-label="Zurück zur Übersicht"
           >
             <ArrowLeft className="w-4 h-4 text-gray-500" />
@@ -168,14 +168,14 @@ export const ContactPage: React.FC<ContactPageProps> = ({
                 <button
                   type="button"
                   onClick={handleResetForm}
-                  className="px-4 py-2 text-xs font-semibold rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors cursor-pointer"
+                  className="normal-btn px-4 py-2 text-xs font-semibold rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors cursor-pointer"
                 >
                   Weitere Nachricht schreiben
                 </button>
                 <button
                   type="button"
                   onClick={onBack}
-                  className="px-4 py-2 text-xs font-semibold rounded-xl bg-blue-600 hover:bg-blue-700 text-white transition-colors cursor-pointer"
+                  className="normal-btn px-4 py-2 text-xs font-semibold rounded-xl bg-blue-600 hover:bg-blue-700 text-white transition-colors cursor-pointer"
                 >
                   Zurück zur Cloud
                 </button>
@@ -281,7 +281,7 @@ export const ContactPage: React.FC<ContactPageProps> = ({
                 <button
                   type="submit"
                   disabled={status === 'loading'}
-                  className="px-6 py-2.5 text-xs font-semibold rounded-xl bg-blue-600 hover:bg-blue-700 text-white transition-all disabled:opacity-50 cursor-pointer shadow-xs active:scale-98"
+                  className="normal-btn px-6 py-2.5 text-xs font-semibold rounded-xl bg-blue-600 hover:bg-blue-700 text-white transition-all disabled:opacity-50 cursor-pointer shadow-xs active:scale-98"
                 >
                   {status === 'loading' ? 'Wird gesendet...' : 'Nachricht absenden'}
                 </button>
@@ -301,7 +301,7 @@ export const ContactPage: React.FC<ContactPageProps> = ({
             <button
               type="button"
               onClick={handleCopyEmail}
-              className="inline-flex items-center justify-center px-4 py-2 rounded-xl bg-gray-100 hover:bg-gray-200/80 dark:bg-gray-800 dark:hover:bg-gray-750 text-gray-900 dark:text-gray-100 font-mono text-xs font-semibold transition-all cursor-pointer active:scale-98 border border-gray-200 dark:border-gray-700 shadow-xs"
+              className="normal-btn inline-flex items-center justify-center px-4 py-2 rounded-xl bg-gray-100 hover:bg-gray-200/80 dark:bg-gray-800 dark:hover:bg-gray-750 text-gray-900 dark:text-gray-100 font-mono text-xs font-semibold transition-all cursor-pointer active:scale-98 border border-gray-200 dark:border-gray-700 shadow-xs"
               title="Klicken zum Kopieren"
             >
               <span>{copied ? '✓ In Zwischenablage kopiert!' : 'cloud@j-jonas.com'}</span>

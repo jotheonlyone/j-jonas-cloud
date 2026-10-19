@@ -1,16 +1,4 @@
-import React, { useMemo, useState, useEffect } from 'react';
-import { Volume2, VolumeX, Music, Play, Pause } from 'lucide-react';
-import type { FileItemData } from '../types';
-
-interface FrutigerAeroBackgroundProps {
-  currentTrack: FileItemData | null;
-  isPlaying: boolean;
-  isMuted: boolean;
-  progressPercent?: number;
-  onToggleMute: () => void;
-  onTogglePlay?: () => void;
-  isMainPlayerVisible?: boolean;
-}
+import React, { useMemo } from 'react';
 
 interface BubbleConfig {
   id: number;
@@ -22,15 +10,7 @@ interface BubbleConfig {
   opacity: number;
 }
 
-export const FrutigerAeroBackground: React.FC<FrutigerAeroBackgroundProps> = ({
-  currentTrack,
-  isPlaying,
-  isMuted,
-  progressPercent = 0,
-  onToggleMute,
-  onTogglePlay,
-  isMainPlayerVisible = false,
-}) => {
+export const FrutigerAeroBackground: React.FC = () => {
   // Pre-generate stable bubbles
   const bubbles: BubbleConfig[] = useMemo(() => {
     const list: BubbleConfig[] = [];
@@ -48,23 +28,6 @@ export const FrutigerAeroBackground: React.FC<FrutigerAeroBackgroundProps> = ({
     }
     return list;
   }, []);
-
-  // Windows 7 Aero Balloon Notification on song start
-  const [showStartToast, setShowStartToast] = useState(false);
-
-  useEffect(() => {
-    if (currentTrack && isPlaying) {
-      setShowStartToast(true);
-      const timer = setTimeout(() => {
-        setShowStartToast(false);
-      }, 4500);
-      return () => clearTimeout(timer);
-    }
-  }, [currentTrack?.name, isPlaying]);
-
-  const cleanTrackName = currentTrack
-    ? currentTrack.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ')
-    : '';
 
   return (
     <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden select-none frutiger-aero-backdrop">
@@ -123,106 +86,6 @@ export const FrutigerAeroBackground: React.FC<FrutigerAeroBackgroundProps> = ({
           </div>
         ))}
       </div>
-
-      {/* 5. Frutiger Aero Corner Music Widget (Unten rechts im Bildschirm) */}
-      {currentTrack && !isMainPlayerVisible && (
-        <div className="fixed bottom-5 right-5 z-40 pointer-events-auto select-none animate-in fade-in zoom-in-95 duration-300">
-          {/* Windows 7 Aero Style Start Balloon Notification */}
-          {showStartToast && (
-            <div className="absolute -top-12 right-0 px-3 py-1.5 rounded-full bg-white/90 dark:bg-slate-900/90 text-sky-950 dark:text-sky-100 text-xs font-bold shadow-xl backdrop-blur-xl border border-white/80 dark:border-sky-400/40 pointer-events-none whitespace-nowrap animate-in slide-in-from-bottom-2 fade-in duration-200 flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-sky-500 animate-ping" />
-              <span>🎵 {cleanTrackName} gestartet</span>
-            </div>
-          )}
-
-          {/* Floating Aero Glass Orb / Pill Widget */}
-          <div
-            className="group relative flex items-center gap-2.5 p-2 sm:p-2.5 rounded-full bg-white/85 dark:bg-slate-900/85 backdrop-blur-2xl border border-white/90 dark:border-sky-400/30 shadow-2xl hover:shadow-sky-400/30 hover:scale-105 active:scale-95 transition-all cursor-pointer ring-2 ring-sky-400/30"
-            title={`"${cleanTrackName}" (Aquatic Ambience · Frutiger Aero)`}
-          >
-            {/* Circular Progress & Glass Ring around Music Icon */}
-            <div className="relative w-10 h-10 flex items-center justify-center shrink-0">
-              <svg className="w-full h-full -rotate-90 transform" viewBox="0 0 36 36">
-                <path
-                  className="text-sky-200/50 dark:text-slate-800"
-                  strokeWidth="2.5"
-                  stroke="currentColor"
-                  fill="none"
-                  d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                />
-                <path
-                  className="text-sky-500 transition-all duration-300"
-                  strokeDasharray={`${progressPercent}, 100`}
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  stroke="currentColor"
-                  fill="none"
-                  d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                />
-              </svg>
-              <div className="absolute inset-0 flex items-center justify-center">
-                {isPlaying && !isMuted ? (
-                  <div className="flex items-end gap-0.5 h-3">
-                    <span className="w-0.5 bg-sky-500 h-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                    <span className="w-0.5 bg-sky-500 h-2/3 animate-bounce" style={{ animationDelay: '150ms' }} />
-                    <span className="w-0.5 bg-sky-500 h-4/5 animate-bounce" style={{ animationDelay: '300ms' }} />
-                  </div>
-                ) : (
-                  <Music className="w-4 h-4 text-sky-600 dark:text-sky-400" />
-                )}
-              </div>
-            </div>
-
-            {/* Expanded details on hover / view */}
-            <div className="hidden group-hover:flex items-center gap-2 pr-2 animate-in fade-in duration-150">
-              <div className="max-w-[150px] min-w-0">
-                <p className="text-xs font-bold text-sky-950 dark:text-sky-100 truncate capitalize">
-                  {cleanTrackName}
-                </p>
-                <p className="text-[10px] text-sky-700/80 dark:text-sky-300/80 truncate">
-                  Aquatic Ambience
-                </p>
-              </div>
-
-              {/* Play / Pause Toggle Button */}
-              {onTogglePlay && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onTogglePlay();
-                  }}
-                  className="p-1.5 rounded-full text-white shadow-xs cursor-pointer aero-gloss-btn flex items-center justify-center"
-                  title={isPlaying ? 'Pause' : 'Abspielen'}
-                >
-                  {isPlaying ? (
-                    <Pause className="w-3 h-3 fill-white" />
-                  ) : (
-                    <Play className="w-3 h-3 fill-white ml-0.5" />
-                  )}
-                </button>
-              )}
-
-              {/* Mute Toggle Button */}
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onToggleMute();
-                }}
-                className="p-1.5 rounded-full hover:bg-sky-100/50 dark:hover:bg-slate-800 transition-colors cursor-pointer text-sky-800 dark:text-sky-200"
-                title={isMuted ? 'Stummschaltung aufheben' : 'Stummschalten'}
-              >
-                {isMuted ? (
-                  <VolumeX className="w-3.5 h-3.5 text-red-500" />
-                ) : (
-                  <Volume2 className="w-3.5 h-3.5" />
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

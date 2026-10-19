@@ -214,15 +214,14 @@ body.theme-frutiger-aero,
 }
 
 /* ==========================================================================
-   Comprehensive Frutiger Aero 7 Gel-Button & Icon Design System (100% Coverage)
+   Frutiger Aero 7 Gel-Button & Audio Player Design System
+   (Scoped strictly to Cloud Header, Sidebar, Explorer & Audio Player)
    ========================================================================== */
 
-/* 1. Primary & Blue Action Buttons (e.g. "Neuen Ordner teilen", "Playlist starten", Upload, Speichern) */
-.theme-frutiger-aero button.bg-blue-600,
-.theme-frutiger-aero button.bg-blue-500,
-.theme-frutiger-aero button[class*="bg-blue-"],
-.theme-frutiger-aero .aero-gloss-btn,
-.theme-frutiger-aero .aero-primary-btn {
+/* 1. Primary & Blue Action Buttons in Main App (e.g. "Neuen Ordner teilen", "Playlist starten") */
+.theme-frutiger-aero main button.bg-blue-600,
+.theme-frutiger-aero .shared-section button.bg-blue-600,
+.theme-frutiger-aero .aero-gloss-btn {
   background: linear-gradient(
     180deg,
     #5fc3fa 0%,
@@ -241,9 +240,8 @@ body.theme-frutiger-aero,
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
 }
 
-.theme-frutiger-aero button.bg-blue-600:hover,
-.theme-frutiger-aero button.bg-blue-500:hover,
-.theme-frutiger-aero button[class*="bg-blue-"]:hover,
+.theme-frutiger-aero main button.bg-blue-600:hover,
+.theme-frutiger-aero .shared-section button.bg-blue-600:hover,
 .theme-frutiger-aero .aero-gloss-btn:hover {
   background: linear-gradient(
     180deg,
@@ -256,26 +254,11 @@ body.theme-frutiger-aero,
     inset 0 1px 0 #ffffff,
     0 0 14px rgba(66, 185, 255, 0.75),
     0 3px 8px rgba(12, 85, 150, 0.45) !important;
-  transform: translateY(-0.5px);
 }
 
-.theme-frutiger-aero button.bg-blue-600:active,
-.theme-frutiger-aero button.bg-blue-500:active,
-.theme-frutiger-aero .aero-gloss-btn:active {
-  background: linear-gradient(
-    180deg,
-    #1782d4 0%,
-    #1c8ee2 50%,
-    #299be8 100%
-  ) !important;
-  box-shadow:
-    inset 0 2px 4px rgba(0, 40, 80, 0.5),
-    0 1px 2px rgba(0, 0, 0, 0.2) !important;
-  transform: translateY(0.5px);
-}
-
-/* 2. All Standard / Secondary / Light Buttons (Sidebar "+ Neu", Modals, Toolbars, Icon Buttons) */
-.theme-frutiger-aero button:not(.bg-blue-600):not(.bg-blue-500):not([class*="bg-blue-"]):not(.bg-red-600):not(.bg-red-500):not([class*="bg-red-"]):not(.bg-emerald-600):not(.bg-emerald-500):not([class*="bg-emerald-"]):not(.bg-green-600):not([class*="text-red-"]):not([class*="hover:underline"]) {
+/* 2. Sidebar "+ Neu" Button in Aero */
+.theme-frutiger-aero aside button.bg-white,
+.theme-frutiger-aero aside button.dark\:bg-gray-900 {
   background: linear-gradient(
     180deg,
     rgba(255, 255, 255, 0.95) 0%,
@@ -287,13 +270,11 @@ body.theme-frutiger-aero,
   border: 1px solid rgba(255, 255, 255, 0.9) !important;
   box-shadow:
     inset 0 1px 0 #ffffff,
-    inset 0 -1px 0 rgba(120, 170, 220, 0.3),
-    0 2px 5px rgba(20, 80, 140, 0.16) !important;
-  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.9) !important;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    0 2px 6px rgba(20, 80, 140, 0.16) !important;
 }
 
-.theme-frutiger-aero button:not(.bg-blue-600):not(.bg-blue-500):not([class*="bg-blue-"]):not(.bg-red-600):not(.bg-red-500):not([class*="bg-red-"]):not(.bg-emerald-600):not(.bg-emerald-500):not([class*="bg-emerald-"]):not(.bg-green-600):not([class*="text-red-"]):not([class*="hover:underline"]):hover {
+.theme-frutiger-aero aside button.bg-white:hover,
+.theme-frutiger-aero aside button.dark\:bg-gray-900:hover {
   background: linear-gradient(
     180deg,
     #ffffff 0%,
@@ -301,93 +282,13 @@ body.theme-frutiger-aero,
     #d2e9fc 50%,
     #e2f2fd 100%
   ) !important;
-  color: #0369a1 !important;
-  border-color: rgba(56, 189, 248, 0.75) !important;
   box-shadow:
     inset 0 1px 0 #ffffff,
     0 0 12px rgba(56, 189, 248, 0.55),
     0 2px 7px rgba(20, 80, 140, 0.22) !important;
 }
 
-/* Dark Mode Aero Gel Buttons */
-.dark.theme-frutiger-aero button:not(.bg-blue-600):not(.bg-blue-500):not([class*="bg-blue-"]):not(.bg-red-600):not(.bg-red-500):not([class*="bg-red-"]):not(.bg-emerald-600):not(.bg-emerald-500):not([class*="bg-emerald-"]):not(.bg-green-600):not([class*="text-red-"]):not([class*="hover:underline"]),
-.theme-frutiger-aero.dark button:not(.bg-blue-600):not(.bg-blue-500):not([class*="bg-blue-"]):not(.bg-red-600):not(.bg-red-500):not([class*="bg-red-"]):not(.bg-emerald-600):not(.bg-emerald-500):not([class*="bg-emerald-"]):not(.bg-green-600):not([class*="text-red-"]):not([class*="hover:underline"]) {
-  background: linear-gradient(
-    180deg,
-    rgba(32, 60, 92, 0.9) 0%,
-    rgba(22, 46, 74, 0.88) 48%,
-    rgba(15, 36, 60, 0.9) 50%,
-    rgba(20, 44, 72, 0.95) 100%
-  ) !important;
-  color: #e0f2fe !important;
-  border: 1px solid rgba(125, 211, 252, 0.45) !important;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.4),
-    0 2px 6px rgba(0, 0, 0, 0.4) !important;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7) !important;
-}
-
-.dark.theme-frutiger-aero button:not(.bg-blue-600):not(.bg-blue-500):not([class*="bg-blue-"]):not(.bg-red-600):not(.bg-red-500):not([class*="bg-red-"]):not(.bg-emerald-600):not(.bg-emerald-500):not([class*="bg-emerald-"]):not(.bg-green-600):not([class*="text-red-"]):not([class*="hover:underline"]):hover,
-.theme-frutiger-aero.dark button:not(.bg-blue-600):not(.bg-blue-500):not([class*="bg-blue-"]):not(.bg-red-600):not(.bg-red-500):not([class*="bg-red-"]):not(.bg-emerald-600):not(.bg-emerald-500):not([class*="bg-emerald-"]):not(.bg-green-600):not([class*="text-red-"]):not([class*="hover:underline"]):hover {
-  background: linear-gradient(
-    180deg,
-    rgba(44, 82, 124, 0.95) 0%,
-    rgba(30, 64, 100, 0.9) 48%,
-    rgba(22, 52, 84, 0.92) 50%,
-    rgba(28, 62, 96, 0.96) 100%
-  ) !important;
-  border-color: rgba(56, 189, 248, 0.7) !important;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.55),
-    0 0 14px rgba(56, 189, 248, 0.6),
-    0 2px 8px rgba(0, 0, 0, 0.5) !important;
-}
-
-/* 3. Green / Success Gel Buttons */
-.theme-frutiger-aero button.bg-emerald-600,
-.theme-frutiger-aero button.bg-emerald-500,
-.theme-frutiger-aero button[class*="bg-emerald-"],
-.theme-frutiger-aero button.bg-green-600,
-.theme-frutiger-aero button[class*="bg-green-"] {
-  background: linear-gradient(
-    180deg,
-    #5eead4 0%,
-    #22c55e 48%,
-    #16a34a 50%,
-    #15803d 100%
-  ) !important;
-  color: #ffffff !important;
-  border: 1px solid rgba(255, 255, 255, 0.85) !important;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.95),
-    inset 0 -1px 0 rgba(0, 50, 20, 0.4),
-    0 2px 6px rgba(16, 100, 45, 0.35) !important;
-  text-shadow: 0 1px 1px rgba(0, 40, 15, 0.6) !important;
-}
-
-/* 4. Red / Danger Gel Buttons (Logout, Delete) */
-.theme-frutiger-aero button.bg-red-600,
-.theme-frutiger-aero button.bg-red-500,
-.theme-frutiger-aero button[class*="bg-red-"],
-.theme-frutiger-aero button[class*="text-red-600"]:hover,
-.theme-frutiger-aero button[class*="hover:bg-red-50"]:hover {
-  background: linear-gradient(
-    180deg,
-    #f87171 0%,
-    #ef4444 48%,
-    #dc2626 50%,
-    #b91c1c 100%
-  ) !important;
-  color: #ffffff !important;
-  border: 1px solid rgba(255, 255, 255, 0.8) !important;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.9),
-    inset 0 -1px 0 rgba(80, 0, 0, 0.4),
-    0 2px 6px rgba(180, 20, 20, 0.35) !important;
-  text-shadow: 0 1px 1px rgba(60, 0, 0, 0.5) !important;
-}
-
-/* 5. Sidebar Active Navigation Pill in Aero */
+/* 3. Sidebar Active Navigation Pill in Aero */
 .theme-frutiger-aero nav button.bg-\[\#c2e7ff\],
 .theme-frutiger-aero nav button[class*="bg-blue-950"] {
   background: linear-gradient(
@@ -405,13 +306,7 @@ body.theme-frutiger-aero,
   font-weight: 700 !important;
 }
 
-/* 6. Aero Icon & Symbol Glows */
-.theme-frutiger-aero button svg,
-.theme-frutiger-aero a svg {
-  filter: drop-shadow(0 1px 1.5px rgba(0, 30, 70, 0.25));
-}
-
-/* 7. Windows 7 Security / Alert Banner ("Server offline") */
+/* 4. Windows 7 Security / Alert Banner ("Server offline") */
 .theme-frutiger-aero .maintenance-banner {
   background: linear-gradient(
     180deg,
@@ -451,30 +346,57 @@ body.theme-frutiger-aero,
   text-shadow: 0 1px 0 rgba(255, 255, 255, 0.8) !important;
 }
 
-/* ==========================================================================
-   8. Exceptions: Retain Normal Button Design for Contact, Help & Settings
-   ========================================================================== */
-.theme-frutiger-aero .contact-page button,
-.theme-frutiger-aero .settings-modal button,
-.theme-frutiger-aero .help-modal button,
-.contact-page button,
-.settings-modal button,
-.help-modal button {
-  background: revert !important;
-  color: revert !important;
-  border: revert !important;
-  box-shadow: revert !important;
-  text-shadow: none !important;
-  font-weight: revert !important;
-  transform: none !important;
-  filter: none !important;
+/* 5. Windows 7 Frutiger Aero Glass Audio Player Bar */
+.theme-frutiger-aero .audio-player-bar > div,
+.theme-frutiger-aero .audio-player-bar div.bg-white\/95,
+.theme-frutiger-aero .audio-player-bar div.dark\:bg-gray-900\/95 {
+  background: rgba(255, 255, 255, 0.75) !important;
+  backdrop-filter: blur(24px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(180%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.9) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 1),
+    0 12px 36px rgba(10, 60, 120, 0.22) !important;
 }
 
-.theme-frutiger-aero .contact-page button svg,
-.theme-frutiger-aero .settings-modal button svg,
-.theme-frutiger-aero .help-modal button svg {
-  filter: none !important;
+.dark.theme-frutiger-aero .audio-player-bar > div,
+.dark.theme-frutiger-aero .audio-player-bar div.dark\:bg-gray-900\/95,
+.theme-frutiger-aero.dark .audio-player-bar > div,
+.theme-frutiger-aero.dark .audio-player-bar div.dark\:bg-gray-900\/95 {
+  background: rgba(14, 30, 52, 0.85) !important;
+  border: 1px solid rgba(120, 200, 255, 0.45) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    0 12px 40px rgba(0, 0, 0, 0.6) !important;
 }
+
+.theme-frutiger-aero .audio-player-bar button.bg-blue-600 {
+  background: linear-gradient(
+    180deg,
+    #5fc3fa 0%,
+    #299be8 48%,
+    #1682d4 50%,
+    #1e92e4 100%
+  ) !important;
+  border: 1px solid rgba(255, 255, 255, 0.85) !important;
+  box-shadow:
+    inset 0 1px 0 #ffffff,
+    0 2px 6px rgba(12, 85, 150, 0.4) !important;
+}
+
+.theme-frutiger-aero .audio-player-bar button.bg-blue-600:hover {
+  background: linear-gradient(
+    180deg,
+    #7ad3fd 0%,
+    #3db3f5 48%,
+    #2094e6 50%,
+    #2ba7f6 100%
+  ) !important;
+  box-shadow:
+    inset 0 1px 0 #ffffff,
+    0 0 12px rgba(66, 185, 255, 0.75) !important;
+}
+
 
 
 

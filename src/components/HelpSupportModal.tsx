@@ -99,8 +99,8 @@ export const HelpSupportModal: React.FC<HelpSupportModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs select-none animate-in fade-in duration-150">
-      <div className="help-modal w-full max-w-xl rounded-2xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 shadow-2xl p-6 sm:p-8 animate-in zoom-in-95 duration-150 max-h-[92vh] flex flex-col overflow-hidden">
+    <div className="no-aero-scope fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs select-none animate-in fade-in duration-150">
+      <div className="help-modal no-aero-scope w-full max-w-xl rounded-2xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 shadow-2xl p-6 sm:p-8 animate-in zoom-in-95 duration-150 max-h-[92vh] flex flex-col overflow-hidden">
         {/* Header */}
         <div className="flex items-start justify-between pb-4 border-b border-gray-100 dark:border-gray-800 shrink-0">
           <div>
@@ -113,8 +113,9 @@ export const HelpSupportModal: React.FC<HelpSupportModalProps> = ({
           </div>
 
           <button
+            type="button"
             onClick={onClose}
-            className="p-1.5 rounded-xl text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors cursor-pointer shrink-0"
+            className="normal-btn p-1.5 rounded-xl text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors cursor-pointer shrink-0"
             aria-label="Schließen"
           >
             <X className="w-5 h-5" />
@@ -143,14 +144,14 @@ export const HelpSupportModal: React.FC<HelpSupportModalProps> = ({
                 <button
                   type="button"
                   onClick={handleResetForm}
-                  className="px-4 py-2 text-xs font-semibold rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors cursor-pointer"
+                  className="normal-btn px-4 py-2 text-xs font-semibold rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors cursor-pointer"
                 >
                   Weitere Nachricht schreiben
                 </button>
                 <button
                   type="button"
                   onClick={onClose}
-                  className="px-4 py-2 text-xs font-semibold rounded-xl bg-blue-600 hover:bg-blue-700 text-white transition-colors cursor-pointer"
+                  className="normal-btn px-4 py-2 text-xs font-semibold rounded-xl bg-blue-600 hover:bg-blue-700 text-white transition-colors cursor-pointer"
                 >
                   Fertig
                 </button>
@@ -250,7 +251,7 @@ export const HelpSupportModal: React.FC<HelpSupportModalProps> = ({
                 <button
                   type="submit"
                   disabled={status === 'loading'}
-                  className="px-5 py-2.5 text-xs font-semibold rounded-xl bg-blue-600 hover:bg-blue-700 text-white transition-all disabled:opacity-50 cursor-pointer shadow-xs active:scale-98"
+                  className="normal-btn px-5 py-2.5 text-xs font-semibold rounded-xl bg-blue-600 hover:bg-blue-700 text-white transition-all disabled:opacity-50 cursor-pointer shadow-xs active:scale-98"
                 >
                   {status === 'loading' ? 'Wird gesendet...' : 'Nachricht absenden'}
                 </button>
@@ -270,7 +271,7 @@ export const HelpSupportModal: React.FC<HelpSupportModalProps> = ({
             <button
               type="button"
               onClick={handleCopyEmail}
-              className="inline-flex items-center justify-center px-4 py-2 rounded-xl bg-gray-100 hover:bg-gray-200/80 dark:bg-gray-800 dark:hover:bg-gray-750 text-gray-900 dark:text-gray-100 font-mono text-xs font-semibold transition-all cursor-pointer active:scale-98 border border-gray-200 dark:border-gray-700 shadow-xs"
+              className="normal-btn inline-flex items-center justify-center px-4 py-2 rounded-xl bg-gray-100 hover:bg-gray-200/80 dark:bg-gray-800 dark:hover:bg-gray-750 text-gray-900 dark:text-gray-100 font-mono text-xs font-semibold transition-all cursor-pointer active:scale-98 border border-gray-200 dark:border-gray-700 shadow-xs"
               title="Klicken zum Kopieren"
             >
               <span>{copied ? '✓ In Zwischenablage kopiert!' : 'cloud@j-jonas.com'}</span>
@@ -283,7 +284,7 @@ export const HelpSupportModal: React.FC<HelpSupportModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="hover:text-gray-600 dark:hover:text-gray-300 underline cursor-pointer"
+            className="normal-btn hover:text-gray-600 dark:hover:text-gray-300 underline cursor-pointer"
           >
             Schließen
           </button>

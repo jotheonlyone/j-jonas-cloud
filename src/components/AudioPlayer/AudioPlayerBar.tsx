@@ -77,7 +77,7 @@ export const AudioPlayerBar: React.FC = () => {
   // --------------------------------------------------------------------------
   if (isMinimized) {
     return (
-      <div className="fixed bottom-5 right-5 z-40 select-none animate-in fade-in zoom-in-95 duration-200">
+      <div className="audio-player-bar fixed bottom-5 right-5 z-40 select-none animate-in fade-in zoom-in-95 duration-200">
         {keyboardFeedback && (
           <div className="absolute -top-9 right-0 px-2.5 py-0.5 rounded-full bg-gray-900/90 dark:bg-black/90 text-white text-[11px] font-semibold shadow-lg backdrop-blur-md border border-white/10 pointer-events-none whitespace-nowrap">
             {keyboardFeedback}
@@ -161,7 +161,7 @@ export const AudioPlayerBar: React.FC = () => {
       onMouseEnter={pauseAutoMinimizeTimer}
       onMouseLeave={resumeAutoMinimizeTimer}
       onClick={resetAutoMinimizeTimer}
-      className="fixed bottom-3 left-3 right-3 sm:left-6 sm:right-6 md:left-auto md:right-8 md:w-[720px] lg:w-[820px] xl:w-[900px] z-40 max-w-full animate-in slide-in-from-bottom-5 duration-200"
+      className="audio-player-bar fixed bottom-3 left-3 right-3 sm:left-6 sm:right-6 md:left-auto md:right-8 md:w-[720px] lg:w-[820px] xl:w-[900px] z-40 max-w-full animate-in slide-in-from-bottom-5 duration-200"
     >
       {/* Keyboard Shortcut HUD Toast */}
       {keyboardFeedback && (
