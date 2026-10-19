@@ -10,6 +10,7 @@ import {
   Repeat1,
   Shuffle,
   Minimize2,
+  Maximize2,
   X,
   Loader2,
   Music,
@@ -34,6 +35,7 @@ export const AudioPlayerBar: React.FC = () => {
     isMuted,
     isPlayerVisible,
     isMinimized,
+    isMobile,
     isShuffle,
     repeatMode,
     playbackRate,
@@ -50,6 +52,7 @@ export const AudioPlayerBar: React.FC = () => {
     toggleShuffle,
     setPlaybackRate,
     setIsMinimized,
+    openMobileModal,
     pauseAutoMinimizeTimer,
     resumeAutoMinimizeTimer,
     resetAutoMinimizeTimer,
@@ -378,15 +381,26 @@ export const AudioPlayerBar: React.FC = () => {
               compact={true}
             />
 
-            {/* MINIMIZE BUTTON (Umgedrehter Knopf: Verkleinert zu Musiknote unten rechts) */}
-            <button
-              type="button"
-              onClick={() => setIsMinimized(true)}
-              className="p-1.5 rounded-lg text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors cursor-pointer"
-              title="Player verkleinern (zur Musiknote minimieren)"
-            >
-              <Minimize2 className="w-4 h-4" />
-            </button>
+            {/* MINIMIZE OR EXPAND BUTTON: On mobile opens the big full menu; On desktop minimizes to music note */}
+            {isMobile ? (
+              <button
+                type="button"
+                onClick={openMobileModal}
+                className="p-1.5 rounded-lg text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 transition-colors cursor-pointer"
+                title="Großes Menü / Vollbildplayer öffnen"
+              >
+                <Maximize2 className="w-4 h-4" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setIsMinimized(true)}
+                className="p-1.5 rounded-lg text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors cursor-pointer"
+                title="Player verkleinern (zur Musiknote minimieren)"
+              >
+                <Minimize2 className="w-4 h-4" />
+              </button>
+            )}
 
             {/* Close / Stop Player */}
             <button
@@ -403,7 +417,11 @@ export const AudioPlayerBar: React.FC = () => {
         {/* MOBILE COMPACT VIEW (< 640px) */}
         <div className="sm:hidden flex flex-col gap-1.5">
           <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2.5 min-w-0 flex-1">
+            <div
+              onClick={openMobileModal}
+              className="flex items-center gap-2.5 min-w-0 flex-1 cursor-pointer hover:opacity-90 active:scale-[0.98] transition-all"
+              title="Tippen für großes Player-Menü"
+            >
               <AudioCoverArt
                 filePath={trackPath}
                 currentUser={trackOwner}
@@ -457,14 +475,14 @@ export const AudioPlayerBar: React.FC = () => {
                 <RotateCw className="w-4 h-4" />
               </button>
 
-              {/* Minimize to Music Note */}
+              {/* Großes Menü öffnen auf dem Handy */}
               <button
                 type="button"
-                onClick={() => setIsMinimized(true)}
-                className="p-1.5 rounded-lg text-gray-500"
-                title="Player verkleinern"
+                onClick={openMobileModal}
+                className="p-1.5 rounded-lg text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 cursor-pointer"
+                title="Großes Menü öffnen"
               >
-                <ChevronDown className="w-4 h-4" />
+                <Maximize2 className="w-4 h-4" />
               </button>
 
               {/* Close */}

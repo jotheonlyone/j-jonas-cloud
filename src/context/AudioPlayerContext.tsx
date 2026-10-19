@@ -35,6 +35,8 @@ export interface AudioPlayerContextType {
   playbackRate: number;
   currentUser: string;
   keyboardFeedback: string | null;
+  isMobile: boolean;
+  isMobileModalOpen: boolean;
 
   // Actions
   playTrack: (track: FileItemData, trackList?: FileItemData[], userOwner?: string) => void;
@@ -53,6 +55,9 @@ export interface AudioPlayerContextType {
   setPlaybackRate: (rate: number) => void;
   setIsMinimized: (minimized: boolean) => void;
   toggleMinimized: () => void;
+  setIsMobileModalOpen: (open: boolean) => void;
+  openMobileModal: () => void;
+  closeMobileModal: () => void;
   resetAutoMinimizeTimer: () => void;
   pauseAutoMinimizeTimer: () => void;
   resumeAutoMinimizeTimer: () => void;
@@ -82,6 +87,14 @@ function shuffleArray<T>(array: T[]): T[] {
   return result;
 }
 
+function checkIsMobileDevice(): boolean {
+  if (typeof window === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  const isMobileUa = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua);
+  const isMobileWidth = window.innerWidth <= 768;
+  return isMobileUa || isMobileWidth;
+}
+
 export const AudioPlayerProvider: React.FC<AudioPlayerProviderProps> = ({
   children,
   defaultUser = 'user',
@@ -98,6 +111,8 @@ export const AudioPlayerProvider: React.FC<AudioPlayerProviderProps> = ({
   const [bufferedPercent, setBufferedPercent] = useState<number>(0);
   const [isPlayerVisible, setIsPlayerVisible] = useState<boolean>(false);
   const [isMinimized, setIsMinimizedState] = useState<boolean>(false);
+  const [isMobile, setIsMobile] = useState<boolean>(checkIsMobileDevice);
+  const [isMobileModalOpen, setIsMobileModalOpen] = useState<boolean>(false);
   const [isShuffle, setIsShuffle] = useState<boolean>(false);
   const [repeatMode, setRepeatMode] = useState<RepeatMode>('all');
   const [playbackRate, setPlaybackRateState] = useState<number>(1);
@@ -105,6 +120,31 @@ export const AudioPlayerProvider: React.FC<AudioPlayerProviderProps> = ({
 
   const feedbackTimerRef = useRef<NodeJS.Timeout | null>(null);
   const autoMinimizeTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Synchronize mobile screen / orientation change detection
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(checkIsMobileDevice());
+    };
+    window.addEventListener('resize', handleResize);
+    window.addEventListener('orientationchange', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('orientationchange', handleResize);
+    };
+  }, []);
+
+  const openMobileModal = useCallback(() => {
+    setIsMobileModalOpen(true);
+    if (autoMinimizeTimerRef.current) {
+      clearTimeout(autoMinimizeTimerRef.current);
+      autoMinimizeTimerRef.current = null;
+    }
+  }, []);
+
+  const closeMobileModal = useCallback(() => {
+    setIsMobileModalOpen(false);
+  }, []);
 
   // Spotify-style Smart Shuffle State:
   // - shuffledQueue: remaining tracks to play in this shuffle cycle
@@ -145,7 +185,7 @@ export const AudioPlayerProvider: React.FC<AudioPlayerProviderProps> = ({
     }
   }, [defaultUser]);
 
-  // 10-Second Auto-Minimize Management
+  // 10-Second Auto-Minimize Management (Desktop only)
   const clearAutoMinimizeTimer = useCallback(() => {
     if (autoMinimizeTimerRef.current) {
       clearTimeout(autoMinimizeTimerRef.current);
@@ -155,6 +195,8 @@ export const AudioPlayerProvider: React.FC<AudioPlayerProviderProps> = ({
 
   const startAutoMinimizeTimer = useCallback(() => {
     clearAutoMinimizeTimer();
+    // Do NOT auto-minimize on mobile devices
+    if (checkIsMobileDevice()) return;
     autoMinimizeTimerRef.current = setTimeout(() => {
       setIsMinimizedState(true);
     }, AUTO_MINIMIZE_DELAY_MS);
@@ -544,6 +586,7 @@ export const AudioPlayerProvider: React.FC<AudioPlayerProviderProps> = ({
     setIsPlaying(false);
     setIsPlayerVisible(false);
     setIsMinimizedState(false);
+    setIsMobileModalOpen(false);
     setCurrentTrack(null);
     setCurrentTime(0);
     shuffledQueueRef.current = [];
@@ -674,6 +717,8 @@ export const AudioPlayerProvider: React.FC<AudioPlayerProviderProps> = ({
         isMuted,
         isPlayerVisible,
         isMinimized,
+        isMobile,
+        isMobileModalOpen,
         isShuffle,
         repeatMode,
         playbackRate,
@@ -695,6 +740,9 @@ export const AudioPlayerProvider: React.FC<AudioPlayerProviderProps> = ({
         setPlaybackRate,
         setIsMinimized,
         toggleMinimized,
+        setIsMobileModalOpen,
+        openMobileModal,
+        closeMobileModal,
         resetAutoMinimizeTimer,
         pauseAutoMinimizeTimer,
         resumeAutoMinimizeTimer,

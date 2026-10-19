@@ -7,12 +7,20 @@ import {
   ArrowUp,
   AlertCircle,
   Play,
+  Pause,
+  Shuffle,
+  Disc,
+  Music,
+  MoreVertical,
 } from 'lucide-react';
 import type { FileItemData, ViewMode } from '../types';
 import { Breadcrumbs } from './Breadcrumbs';
 import { FileItem } from './FileItem';
 import { ContextMenu, EmptyAreaContextMenu, type ContextMenuPosition } from './ContextMenu';
-import { isAudioFile } from '../utils/audioPlayerUtils';
+import { isAudioFile, parseAudioTitle } from '../utils/audioPlayerUtils';
+import { useAudioPlayer } from '../context/AudioPlayerContext';
+import { AudioCoverArt } from './AudioPlayer/AudioCoverArt';
+import { formatBytes } from '../services/storageApi';
 
 interface FileExplorerProps {
   currentPath: string;
@@ -107,6 +115,9 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
     return () => window.removeEventListener('keydown', handleExplorerKeyDown);
   }, [selectedItem, clipboard, onCopyItem, onCutItem, onPaste, isActionsDisabled]);
 
+  // Audio Player Context for global Shuffle and current track state
+  const { isShuffle, toggleShuffle, currentTrack, isPlaying } = useAudioPlayer();
+
   // Filter items by search
   const filteredItems = items.filter((item) =>
     item.name.toLowerCase().includes(searchTerm.toLowerCase())
@@ -115,6 +126,9 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
   const folders = filteredItems.filter((i) => i.type === 'folder');
   const files = filteredItems.filter((i) => i.type === 'file');
   const audioFiles = files.filter(isAudioFile);
+  const nonAudioFiles = files.filter((f) => !isAudioFile(f));
+  const isMusicFolder = Boolean(currentPath) && audioFiles.length > 0;
+  const currentFolderName = currentPath ? currentPath.split('/').filter(Boolean).pop() : rootLabel;
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -229,17 +243,40 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
-          {audioFiles.length > 0 && (
-            <button
-              type="button"
-              onClick={() => onOpenFile(audioFiles[0])}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white shadow-xs transition-all active:scale-95 cursor-pointer shrink-0"
-              title={`Alle ${audioFiles.length} Musiktitel als Playlist abspielen`}
-            >
-              <Play className="w-3.5 h-3.5 fill-white" />
-              <span className="hidden sm:inline">Playlist starten</span>
-              <span className="text-[10px] bg-white/20 px-1.5 py-0.2 rounded-full font-mono">{audioFiles.length}</span>
-            </button>
+          {/* Playlist and Shuffle Buttons: ONLY inside folders, NEVER on the start page */}
+          {Boolean(currentPath) && audioFiles.length > 0 && (
+            <>
+              {/* Shuffle button prominent at top */}
+              <button
+                type="button"
+                onClick={() => {
+                  toggleShuffle();
+                  if (!isPlaying) {
+                    onOpenFile(audioFiles[0]);
+                  }
+                }}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all active:scale-95 cursor-pointer shrink-0 border ${
+                  isShuffle
+                    ? 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-500 shadow-xs ring-2 ring-emerald-400/30'
+                    : 'bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 border-gray-200 dark:border-gray-700'
+                }`}
+                title={isShuffle ? 'Shuffle-Modus ist AKTIV (klicken zum Ausschalten)' : 'Shuffle-Modus aktivieren'}
+              >
+                <Shuffle className="w-3.5 h-3.5" />
+                <span>Shuffle: {isShuffle ? 'AN' : 'AUS'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => onOpenFile(audioFiles[0])}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white shadow-xs transition-all active:scale-95 cursor-pointer shrink-0"
+                title={`Alle ${audioFiles.length} Musiktitel als Playlist abspielen`}
+              >
+                <Play className="w-3.5 h-3.5 fill-white" />
+                <span className="hidden sm:inline">Playlist starten</span>
+                <span className="text-[10px] bg-white/20 px-1.5 py-0.2 rounded-full font-mono">{audioFiles.length}</span>
+              </button>
+            </>
           )}
 
           <button
@@ -344,160 +381,510 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
         ) : (
           // Populated Files & Folders View
           <div className="space-y-6 pb-12">
-            {/* Folders Section */}
-            {folders.length > 0 && (
-              <div>
-                <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">
-                  Ordner ({folders.length})
-                </h4>
-                {viewMode === 'grid' ? (
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-                    {folders.map((item) => (
-                      <div
-                        key={item.name}
-                        data-file-item="true"
-                        onClick={() => setSelectedItem(item)}
-                      >
-                        <FileItem
-                          item={item}
-                          viewMode="grid"
-                          isSelected={selectedItem?.name === item.name}
-                          isCut={clipboard?.action === 'cut' && clipboard?.item.name === item.name}
-                          onOpen={handleSafeOpenFile}
-                          onDownload={onDownloadFile}
-                          onDelete={onDeleteItem}
-                          onRename={onRenameItem}
-                          onShare={onShareFolder}
-                          onManageShares={onManageShares}
-                          onContextMenu={(it, x, y, rect) => {
-                            setSelectedItem(it);
-                            setEmptyContextMenu(null);
-                            setContextMenu({ item: it, x, y, triggerRect: rect });
-                          }}
-                          onMetadata={onMetadataItem}
-                          onPublicShare={onPublicShareItem}
-                          isActionsDisabled={isActionsDisabled}
-                        />
+            {isMusicFolder ? (
+              // ================================================================
+              // SPOTIFY-STYLE PLAYLIST VIEW (inside folders with music)
+              // ================================================================
+              <div className="space-y-6">
+                {/* 1. Prominent Playlist Header Banner */}
+                <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-blue-600/15 via-indigo-600/10 to-purple-600/15 dark:from-blue-950/50 dark:via-indigo-950/40 dark:to-purple-950/50 border border-blue-200/80 dark:border-blue-900/60 p-4 sm:p-6 shadow-sm backdrop-blur-sm">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-5">
+                    {/* Left: Artwork / Cover & Info */}
+                    <div className="flex items-center gap-4 min-w-0">
+                      <div className="relative w-16 h-16 sm:w-22 sm:h-22 rounded-2xl overflow-hidden shadow-lg bg-gradient-to-br from-blue-600 to-indigo-700 shrink-0 flex items-center justify-center text-white ring-2 ring-white/40 dark:ring-white/10">
+                        {audioFiles.length > 0 ? (
+                          <AudioCoverArt
+                            filePath={audioFiles[0].path || audioFiles[0].name}
+                            currentUser={audioFiles[0].owner}
+                            title={audioFiles[0].name}
+                            className="w-full h-full object-cover"
+                            iconClassName="w-10 h-10"
+                          />
+                        ) : (
+                          <Disc className="w-10 h-10 text-white/80 animate-spin-slow" />
+                        )}
+                        {isPlaying && currentTrack && (
+                          <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                            <div className="flex items-end gap-1 h-5">
+                              <span className="w-1 bg-white h-3 animate-pulse rounded-full" />
+                              <span className="w-1 bg-white h-5 animate-bounce rounded-full" />
+                              <span className="w-1 bg-white h-4 animate-pulse rounded-full" />
+                            </div>
+                          </div>
+                        )}
                       </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="space-y-1">
-                    {folders.map((item) => (
-                      <div
-                        key={item.name}
-                        data-file-item="true"
-                        onClick={() => setSelectedItem(item)}
-                      >
-                        <FileItem
-                          item={item}
-                          viewMode="list"
-                          isSelected={selectedItem?.name === item.name}
-                          isCut={clipboard?.action === 'cut' && clipboard?.item.name === item.name}
-                          onOpen={handleSafeOpenFile}
-                          onDownload={onDownloadFile}
-                          onDelete={onDeleteItem}
-                          onRename={onRenameItem}
-                          onShare={onShareFolder}
-                          onManageShares={onManageShares}
-                          onContextMenu={(it, x, y, rect) => {
-                            setSelectedItem(it);
-                            setEmptyContextMenu(null);
-                            setContextMenu({ item: it, x, y, triggerRect: rect });
-                          }}
-                          onMetadata={onMetadataItem}
-                          onPublicShare={onPublicShareItem}
-                          isActionsDisabled={isActionsDisabled}
-                        />
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
 
-            {/* Files Section */}
-            {files.length > 0 && (
-              <div>
-                <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">
-                  Dateien ({files.length})
-                </h4>
-
-                {viewMode === 'grid' ? (
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-                    {files.map((item) => (
-                      <div
-                        key={item.name}
-                        data-file-item="true"
-                        onClick={() => setSelectedItem(item)}
-                      >
-                        <FileItem
-                          item={item}
-                          viewMode="grid"
-                          isSelected={selectedItem?.name === item.name}
-                          isCut={clipboard?.action === 'cut' && clipboard?.item.name === item.name}
-                          onOpen={(it) => {
-                            setSelectedItem(it);
-                            onOpenFile(it);
-                          }}
-                          onDownload={onDownloadFile}
-                          onDelete={onDeleteItem}
-                          onRename={onRenameItem}
-                          onContextMenu={(it, x, y, rect) => {
-                            setSelectedItem(it);
-                            setEmptyContextMenu(null);
-                            setContextMenu({ item: it, x, y, triggerRect: rect });
-                          }}
-                          onMetadata={onMetadataItem}
-                          onPublicShare={onPublicShareItem}
-                          isActionsDisabled={isActionsDisabled}
-                        />
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                          <span className="inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-blue-600 text-white shadow-xs">
+                            <Disc className="w-3.5 h-3.5" />
+                            Playlist
+                          </span>
+                          <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">
+                            {audioFiles.length} {audioFiles.length === 1 ? 'Musiktitel' : 'Musiktitel'}
+                          </span>
+                          {nonAudioFiles.length > 0 && (
+                            <span className="text-xs text-gray-500 dark:text-gray-400">
+                              • {nonAudioFiles.length} weitere Datei(en)
+                            </span>
+                          )}
+                        </div>
+                        <h2 className="text-xl sm:text-2xl font-black text-gray-900 dark:text-white truncate tracking-tight">
+                          {currentFolderName}
+                        </h2>
+                        <p className="text-xs text-gray-500 dark:text-gray-400 truncate mt-0.5">
+                          Alle Musiktitel in diesem Ordner direkt als Playlist abspielen
+                        </p>
                       </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between px-3.5 py-1.5 text-[11px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider border-b border-gray-200 dark:border-gray-800">
-                      <span>Name</span>
-                      <div className="hidden sm:flex items-center gap-6">
-                        <span className="w-20 text-right">Größe</span>
-                        <span className="w-24 text-right">Geändert</span>
-                      </div>
-                      <span className="w-6"></span>
                     </div>
 
-                    {files.map((item) => (
-                      <div
-                        key={item.name}
-                        data-file-item="true"
-                        onClick={() => setSelectedItem(item)}
+                    {/* Right: Big Play and Big Shuffle Buttons */}
+                    <div className="flex items-center flex-wrap gap-3 shrink-0 pt-3 sm:pt-0 border-t sm:border-t-0 border-gray-200/50 dark:border-gray-800/60">
+                      {/* Prominent Shuffle Button */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          toggleShuffle();
+                          if (!isPlaying && audioFiles.length > 0) {
+                            onOpenFile(audioFiles[0]);
+                          }
+                        }}
+                        className={`flex items-center gap-2 px-4 py-2.5 rounded-full text-xs sm:text-sm font-bold transition-all shadow-sm active:scale-95 cursor-pointer border ${
+                          isShuffle
+                            ? 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-400 shadow-emerald-600/30 ring-2 ring-emerald-400/40'
+                            : 'bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-800 dark:text-gray-200 border-gray-300 dark:border-gray-700'
+                        }`}
+                        title={
+                          isShuffle
+                            ? 'Shuffle ist AKTIV: Titel werden in intelligenter Zufallsreihenfolge abgespielt (kein Song doppelt hintereinander)'
+                            : 'Shuffle ist AUS: Klicken zum Einschalten der Zufallswiedergabe'
+                        }
                       >
-                        <FileItem
-                          item={item}
-                          viewMode="list"
-                          isSelected={selectedItem?.name === item.name}
-                          isCut={clipboard?.action === 'cut' && clipboard?.item.name === item.name}
-                          onOpen={(it) => {
-                            setSelectedItem(it);
-                            onOpenFile(it);
-                          }}
-                          onDownload={onDownloadFile}
-                          onDelete={onDeleteItem}
-                          onRename={onRenameItem}
-                          onContextMenu={(it, x, y, rect) => {
-                            setSelectedItem(it);
-                            setEmptyContextMenu(null);
-                            setContextMenu({ item: it, x, y, triggerRect: rect });
-                          }}
-                          onMetadata={onMetadataItem}
-                          onPublicShare={onPublicShareItem}
-                          isActionsDisabled={isActionsDisabled}
-                        />
+                        <Shuffle className={`w-4 h-4 ${isShuffle ? 'stroke-[2.5]' : ''}`} />
+                        <span>Shuffle-Modus: {isShuffle ? 'AN' : 'AUS'}</span>
+                      </button>
+
+                      {/* Play Playlist Button */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (audioFiles.length > 0) {
+                            onOpenFile(audioFiles[0]);
+                          }
+                        }}
+                        className="flex items-center gap-2 px-5 py-2.5 rounded-full text-xs sm:text-sm font-bold bg-blue-600 hover:bg-blue-500 text-white shadow-md hover:shadow-lg transition-all active:scale-95 cursor-pointer"
+                        title="Playlist starten"
+                      >
+                        <Play className="w-4 h-4 fill-white" />
+                        <span>Playlist starten</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Subfolders in playlist folder if any exist */}
+                {folders.length > 0 && (
+                  <div>
+                    <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">
+                      Unterordner ({folders.length})
+                    </h4>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+                      {folders.map((item) => (
+                        <div
+                          key={item.name}
+                          data-file-item="true"
+                          onClick={() => setSelectedItem(item)}
+                        >
+                          <FileItem
+                            item={item}
+                            viewMode="grid"
+                            isSelected={selectedItem?.name === item.name}
+                            isCut={clipboard?.action === 'cut' && clipboard?.item.name === item.name}
+                            onOpen={handleSafeOpenFile}
+                            onDownload={onDownloadFile}
+                            onDelete={onDeleteItem}
+                            onRename={onRenameItem}
+                            onShare={onShareFolder}
+                            onManageShares={onManageShares}
+                            onContextMenu={(it, x, y, rect) => {
+                              setSelectedItem(it);
+                              setEmptyContextMenu(null);
+                              setContextMenu({ item: it, x, y, triggerRect: rect });
+                            }}
+                            onMetadata={onMetadataItem}
+                            onPublicShare={onPublicShareItem}
+                            isActionsDisabled={isActionsDisabled}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* 2. Songs Listed Vertically Underneath Each Other (Spotify Table Style) */}
+                <div>
+                  <div className="flex items-center justify-between mb-2 px-1">
+                    <h4 className="text-xs font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wider flex items-center gap-1.5">
+                      <Music className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                      Titel in dieser Playlist ({audioFiles.length})
+                    </h4>
+                    <span className="text-[11px] text-gray-400">Tippen oder Doppelklick zum Abspielen</span>
+                  </div>
+
+                  {/* Table Header */}
+                  <div className="flex items-center justify-between px-3 py-2 text-[11px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider border-b border-gray-200 dark:border-gray-800 select-none">
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
+                      <span className="w-6 text-center">#</span>
+                      <span>Titel</span>
+                    </div>
+                    <div className="flex items-center gap-4 shrink-0">
+                      <span className="w-16 text-right hidden sm:inline">Größe</span>
+                      <span className="w-8"></span>
+                    </div>
+                  </div>
+
+                  {/* Songs Rows */}
+                  <div className="divide-y divide-gray-100 dark:divide-gray-800/60 mt-1">
+                    {audioFiles.map((item, index) => {
+                      const isCurrent =
+                        currentTrack &&
+                        (currentTrack.path || currentTrack.name) === (item.path || item.name);
+                      const isCurrentPlaying = isCurrent && isPlaying;
+                      const { cleanTitle, artistHint, ext } = parseAudioTitle(item.name);
+
+                      return (
+                        <div
+                          key={item.name}
+                          data-file-item="true"
+                          onClick={() => setSelectedItem(item)}
+                          onDoubleClick={() => onOpenFile(item)}
+                          className={`group flex items-center justify-between px-3 py-2.5 rounded-xl transition-all select-none cursor-pointer ${
+                            isCurrent
+                              ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 font-semibold ring-1 ring-blue-500/20'
+                              : selectedItem?.name === item.name
+                              ? 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100'
+                              : 'hover:bg-gray-50 dark:hover:bg-gray-800/50 text-gray-800 dark:text-gray-200'
+                          }`}
+                        >
+                          {/* Left: # Index or Sound wave, Cover Art, Title & Artist */}
+                          <div
+                            className="flex items-center gap-3 min-w-0 flex-1"
+                            onClick={() => onOpenFile(item)}
+                          >
+                            <div className="w-6 flex items-center justify-center shrink-0">
+                              {isCurrentPlaying ? (
+                                <div className="flex items-end gap-0.5 h-3.5">
+                                  <span className="w-0.5 bg-blue-600 dark:bg-blue-400 h-2 animate-bounce" />
+                                  <span className="w-0.5 bg-blue-600 dark:bg-blue-400 h-3.5 animate-pulse" />
+                                  <span className="w-0.5 bg-blue-600 dark:bg-blue-400 h-2.5 animate-bounce" />
+                                </div>
+                              ) : (
+                                <>
+                                  <span className="text-xs text-gray-400 group-hover:hidden font-mono">
+                                    {index + 1}
+                                  </span>
+                                  <Play className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 hidden group-hover:block fill-blue-600" />
+                                </>
+                              )}
+                            </div>
+
+                            <AudioCoverArt
+                              filePath={item.path || item.name}
+                              currentUser={item.owner}
+                              title={item.name}
+                              className="w-9 h-9 rounded-lg shadow-2xs shrink-0"
+                              iconClassName="w-4 h-4"
+                            />
+
+                            <div className="min-w-0 flex-1 pr-2">
+                              <p className={`text-xs sm:text-sm font-semibold truncate ${
+                                isCurrent ? 'text-blue-600 dark:text-blue-400' : 'text-gray-900 dark:text-gray-100'
+                              }`}>
+                                {cleanTitle}
+                              </p>
+                              <div className="flex items-center gap-2 mt-0.5 text-[11px] text-gray-400">
+                                <span className="uppercase text-[9px] font-bold px-1.5 py-0.2 rounded bg-gray-100 dark:bg-gray-800 text-gray-500">
+                                  {ext}
+                                </span>
+                                <span className="truncate">
+                                  {artistHint || (item.owner ? `@${item.owner}` : 'Audio')}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Right: File Size & 3-Dots Menu */}
+                          <div className="flex items-center gap-3 shrink-0">
+                            <span className="text-xs text-gray-400 hidden sm:inline w-16 text-right font-mono">
+                              {formatBytes(item.size)}
+                            </span>
+
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedItem(item);
+                                const rect = e.currentTarget.getBoundingClientRect();
+                                setContextMenu({
+                                  item,
+                                  x: rect.right,
+                                  y: rect.bottom,
+                                  triggerRect: rect,
+                                });
+                              }}
+                              className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-200/60 dark:hover:bg-gray-700/60 transition-colors cursor-pointer"
+                              title="Weitere Aktionen"
+                            >
+                              <MoreVertical className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* 3. Non-Audio Files Section ("Wo die Musikdateien angezeigt werden, zeigt das auch andere Dateien im Ordner an, die eben nicht") */}
+                {nonAudioFiles.length > 0 && (
+                  <div className="pt-6 border-t border-gray-100 dark:border-gray-800">
+                    <div className="mb-3">
+                      <h4 className="text-xs font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wider">
+                        Weitere Dateien im Ordner ({nonAudioFiles.length})
+                      </h4>
+                      <p className="text-[11px] text-gray-400">
+                        Dateien in diesem Ordner, die keine Musikdateien sind (Bilder, Dokumente, Videos, etc.)
+                      </p>
+                    </div>
+
+                    {viewMode === 'grid' ? (
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+                        {nonAudioFiles.map((item) => (
+                          <div
+                            key={item.name}
+                            data-file-item="true"
+                            onClick={() => setSelectedItem(item)}
+                          >
+                            <FileItem
+                              item={item}
+                              viewMode="grid"
+                              isSelected={selectedItem?.name === item.name}
+                              isCut={clipboard?.action === 'cut' && clipboard?.item.name === item.name}
+                              onOpen={(it) => {
+                                setSelectedItem(it);
+                                onOpenFile(it);
+                              }}
+                              onDownload={onDownloadFile}
+                              onDelete={onDeleteItem}
+                              onRename={onRenameItem}
+                              onContextMenu={(it, x, y, rect) => {
+                                setSelectedItem(it);
+                                setEmptyContextMenu(null);
+                                setContextMenu({ item: it, x, y, triggerRect: rect });
+                              }}
+                              onMetadata={onMetadataItem}
+                              onPublicShare={onPublicShareItem}
+                              isActionsDisabled={isActionsDisabled}
+                            />
+                          </div>
+                        ))}
                       </div>
-                    ))}
+                    ) : (
+                      <div className="space-y-1">
+                        {nonAudioFiles.map((item) => (
+                          <div
+                            key={item.name}
+                            data-file-item="true"
+                            onClick={() => setSelectedItem(item)}
+                          >
+                            <FileItem
+                              item={item}
+                              viewMode="list"
+                              isSelected={selectedItem?.name === item.name}
+                              isCut={clipboard?.action === 'cut' && clipboard?.item.name === item.name}
+                              onOpen={(it) => {
+                                setSelectedItem(it);
+                                onOpenFile(it);
+                              }}
+                              onDownload={onDownloadFile}
+                              onDelete={onDeleteItem}
+                              onRename={onRenameItem}
+                              onContextMenu={(it, x, y, rect) => {
+                                setSelectedItem(it);
+                                setEmptyContextMenu(null);
+                                setContextMenu({ item: it, x, y, triggerRect: rect });
+                              }}
+                              onMetadata={onMetadataItem}
+                              onPublicShare={onPublicShareItem}
+                              isActionsDisabled={isActionsDisabled}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
+            ) : (
+              // ================================================================
+              // STANDARD VIEW (Normal Folders & Root/Start Page)
+              // ================================================================
+              <>
+                {/* Folders Section */}
+                {folders.length > 0 && (
+                  <div>
+                    <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">
+                      Ordner ({folders.length})
+                    </h4>
+                    {viewMode === 'grid' ? (
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+                        {folders.map((item) => (
+                          <div
+                            key={item.name}
+                            data-file-item="true"
+                            onClick={() => setSelectedItem(item)}
+                          >
+                            <FileItem
+                              item={item}
+                              viewMode="grid"
+                              isSelected={selectedItem?.name === item.name}
+                              isCut={clipboard?.action === 'cut' && clipboard?.item.name === item.name}
+                              onOpen={handleSafeOpenFile}
+                              onDownload={onDownloadFile}
+                              onDelete={onDeleteItem}
+                              onRename={onRenameItem}
+                              onShare={onShareFolder}
+                              onManageShares={onManageShares}
+                              onContextMenu={(it, x, y, rect) => {
+                                setSelectedItem(it);
+                                setEmptyContextMenu(null);
+                                setContextMenu({ item: it, x, y, triggerRect: rect });
+                              }}
+                              onMetadata={onMetadataItem}
+                              onPublicShare={onPublicShareItem}
+                              isActionsDisabled={isActionsDisabled}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="space-y-1">
+                        {folders.map((item) => (
+                          <div
+                            key={item.name}
+                            data-file-item="true"
+                            onClick={() => setSelectedItem(item)}
+                          >
+                            <FileItem
+                              item={item}
+                              viewMode="list"
+                              isSelected={selectedItem?.name === item.name}
+                              isCut={clipboard?.action === 'cut' && clipboard?.item.name === item.name}
+                              onOpen={handleSafeOpenFile}
+                              onDownload={onDownloadFile}
+                              onDelete={onDeleteItem}
+                              onRename={onRenameItem}
+                              onShare={onShareFolder}
+                              onManageShares={onManageShares}
+                              onContextMenu={(it, x, y, rect) => {
+                                setSelectedItem(it);
+                                setEmptyContextMenu(null);
+                                setContextMenu({ item: it, x, y, triggerRect: rect });
+                              }}
+                              onMetadata={onMetadataItem}
+                              onPublicShare={onPublicShareItem}
+                              isActionsDisabled={isActionsDisabled}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Files Section */}
+                {files.length > 0 && (
+                  <div>
+                    <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">
+                      Dateien ({files.length})
+                    </h4>
+
+                    {viewMode === 'grid' ? (
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+                        {files.map((item) => (
+                          <div
+                            key={item.name}
+                            data-file-item="true"
+                            onClick={() => setSelectedItem(item)}
+                          >
+                            <FileItem
+                              item={item}
+                              viewMode="grid"
+                              isSelected={selectedItem?.name === item.name}
+                              isCut={clipboard?.action === 'cut' && clipboard?.item.name === item.name}
+                              onOpen={(it) => {
+                                setSelectedItem(it);
+                                onOpenFile(it);
+                              }}
+                              onDownload={onDownloadFile}
+                              onDelete={onDeleteItem}
+                              onRename={onRenameItem}
+                              onContextMenu={(it, x, y, rect) => {
+                                setSelectedItem(it);
+                                setEmptyContextMenu(null);
+                                setContextMenu({ item: it, x, y, triggerRect: rect });
+                              }}
+                              onMetadata={onMetadataItem}
+                              onPublicShare={onPublicShareItem}
+                              isActionsDisabled={isActionsDisabled}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between px-3.5 py-1.5 text-[11px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider border-b border-gray-200 dark:border-gray-800">
+                          <span>Name</span>
+                          <div className="hidden sm:flex items-center gap-6">
+                            <span className="w-20 text-right">Größe</span>
+                            <span className="w-24 text-right">Geändert</span>
+                          </div>
+                          <span className="w-6"></span>
+                        </div>
+
+                        {files.map((item) => (
+                          <div
+                            key={item.name}
+                            data-file-item="true"
+                            onClick={() => setSelectedItem(item)}
+                          >
+                            <FileItem
+                              item={item}
+                              viewMode="list"
+                              isSelected={selectedItem?.name === item.name}
+                              isCut={clipboard?.action === 'cut' && clipboard?.item.name === item.name}
+                              onOpen={(it) => {
+                                setSelectedItem(it);
+                                onOpenFile(it);
+                              }}
+                              onDownload={onDownloadFile}
+                              onDelete={onDeleteItem}
+                              onRename={onRenameItem}
+                              onContextMenu={(it, x, y, rect) => {
+                                setSelectedItem(it);
+                                setEmptyContextMenu(null);
+                                setContextMenu({ item: it, x, y, triggerRect: rect });
+                              }}
+                              onMetadata={onMetadataItem}
+                              onPublicShare={onPublicShareItem}
+                              isActionsDisabled={isActionsDisabled}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}

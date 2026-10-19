@@ -64,7 +64,7 @@ import {
 } from './services/accountManager';
 import { resolveFolderPath } from './utils/pathResolver';
 import { AudioPlayerProvider, useAudioPlayer } from './context/AudioPlayerContext';
-import { AudioPlayerBar } from './components/AudioPlayer';
+import { AudioPlayerBar, AudioPlayerModal } from './components/AudioPlayer';
 import { isAudioFile } from './utils/audioPlayerUtils';
 
 const DARK_MODE_KEY = 'jjcloud_dark_mode';
@@ -883,11 +883,15 @@ function MainApp() {
     }
   }, [isCinemaMode, isTvMode, handleOpenFolder, items, playTrack, user, openFilesInNewTab, handleOpenFileInNewTab]);
 
-  // Start entire folder as a music playlist
+  // Start entire folder as a music playlist and navigate directly into the folder
   const handlePlayFolderAsPlaylist = useCallback(async (folder: FileItemData) => {
     if (!user) return;
     const folderOwner = folder.owner || user.username;
     const targetFolderRelPath = folder.path || (currentPath ? `${currentPath}/${folder.name}` : folder.name);
+
+    // 1. Immediately navigate into the folder so the user enters the playlist view
+    const nextPath = resolveFolderPath(currentPath, folder);
+    setCurrentPath(nextPath);
 
     addToast('info', 'Lade Playlist...', `Suche Musiktitel in "${folder.name}"`);
 
@@ -1431,8 +1435,13 @@ function MainApp() {
         onClose={() => setUploadTask(null)}
       />
 
-      {/* Modern Audio Player: Floating Bar and Minimized Music Note Widget */}
-      {!isAnyCinemaMode && <AudioPlayerBar />}
+      {/* Modern Audio Player: Floating Bar, Minimized Music Note Widget, and Mobile Modal */}
+      {!isAnyCinemaMode && (
+        <>
+          <AudioPlayerBar />
+          <AudioPlayerModal />
+        </>
+      )}
     </div>
   );
 }
