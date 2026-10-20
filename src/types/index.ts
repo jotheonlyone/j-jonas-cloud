@@ -3,8 +3,10 @@ export type UserStatus = 'active' | 'pending' | 'rejected';
 
 export interface UserAccount {
   username: string;
-  passwordHash: string;
-  salt: string;
+  email?: string;
+  uid?: string;
+  passwordHash?: string;
+  salt?: string;
   role: UserRole;
   status: UserStatus;
   quota_gb: number;

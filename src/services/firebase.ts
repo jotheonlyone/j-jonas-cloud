@@ -377,7 +377,7 @@ export async function registerUser(usernameRaw: string, passwordRaw: string): Pr
   const dummyEmail = formatDummyEmail(username);
 
   try {
-    // 1. Create in Firebase Auth
+    // 1. Erstellen des Nutzers in Firebase Auth
     let userCredential;
     try {
       userCredential = await createUserWithEmailAndPassword(auth, dummyEmail, passwordRaw);
@@ -391,53 +391,54 @@ export async function registerUser(usernameRaw: string, passwordRaw: string): Pr
       return { success: false, error: getFirebaseAuthErrorMessage(authErr) };
     }
 
-    if (auth.currentUser) {
-      const token = await auth.currentUser.getIdToken();
-      setCachedAuthToken(token);
+    if (!auth.currentUser) {
+      return { success: false, error: 'Nutzer konnte nicht registriert werden.' };
     }
 
-    // 2. Determine if this is the very first user (Master-Account)
-    const localUsers = getLocalUsers();
-    let isMaster = false;
+    // 2. Schreibe das Dokument in die bereits existierende Kollektion 'users':
+    await setDoc(doc(db, 'users', auth.currentUser.uid), {
+      username: username.trim().toLowerCase(),
+      email: dummyEmail,
+      status: 'pending',
+      role: 'user',
+      quota_gb: 100,
+      createdAt: new Date().toISOString()
+    });
+
+    // Zusätzlicher Schreibvorgang mit Username als Doc-ID für Rückwärtskompatibilität
     try {
-      const allUsersSnap = await getDocs(collection(db, 'users'));
-      isMaster = allUsersSnap.empty;
-    } catch {
-      isMaster = localUsers.length === 0;
-    }
-
-    const salt = generateSalt();
-    const passwordHash = await hashPassword(passwordRaw, salt);
+      await setDoc(doc(db, 'users', username), {
+        username: username.trim().toLowerCase(),
+        email: dummyEmail,
+        status: 'pending',
+        role: 'user',
+        quota_gb: 100,
+        uid: auth.currentUser.uid,
+        createdAt: new Date().toISOString()
+      });
+    } catch {}
 
     const newUser: UserAccount = {
       username,
-      passwordHash,
-      salt,
-      role: isMaster ? 'master' : 'user',
-      status: isMaster ? 'active' : 'pending',
-      quota_gb: isMaster ? 1000 : 100, // Master gets 1000GB, regular gets 100GB default
+      role: 'user',
+      status: 'pending',
+      quota_gb: 100,
       createdAt: new Date().toISOString(),
     };
 
-    // Save to Firestore
-    const userDocRef = doc(db, 'users', username);
-    try {
-      await setDoc(userDocRef, {
-        ...newUser,
-        serverTime: serverTimestamp(),
-      });
-    } catch (fsErr) {
-      console.warn('Could not write to Firestore directly, saving to local fallback store:', fsErr);
-    }
-
-    // Always keep local store in sync
+    // Lokalen Cache aktualisieren
+    const localUsers = getLocalUsers();
     localUsers.push(newUser);
     saveLocalUsers(localUsers);
+
+    // 3. Erst danach den Nutzer mit signOut(auth) abmelden und die Meldung anzeigen, dass das Konto freigeschaltet werden muss.
+    await signOut(auth);
+    setCachedAuthToken('');
 
     return {
       success: true,
       user: newUser,
-      isFirstMaster: isMaster,
+      isFirstMaster: false,
     };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Registrierung fehlgeschlagen.';
@@ -460,10 +461,6 @@ export async function loginUser(usernameRaw: string, passwordRaw: string): Promi
 
   try {
     // 1. Authenticate with Firebase Auth
-    // Nutze signInWithEmailAndPassword(auth, dummyEmail, password).
-    // Falls der Account bei der Anmeldung noch nicht existiert (Fehlercode 'auth/user-not-found'),
-    // registriere den Nutzer automatisch mit createUserWithEmailAndPassword(auth, dummyEmail, password)
-    // und setze den displayName auf den reinen Benutzernamen (updateProfile(auth.currentUser, { displayName: username })).
     let userCredential;
     let autoRegistered = false;
 
@@ -496,17 +493,41 @@ export async function loginUser(usernameRaw: string, passwordRaw: string): Promi
       setCachedAuthToken(token);
     }
 
-    // 2. Fetch or initialize user profile in Firestore
+    // 2. Fetch user profile from Firestore: check by uid first, then by username, or query
     let userData: UserAccount | null = null;
-    const userDocRef = doc(db, 'users', username);
+    const currentUid = auth.currentUser?.uid;
 
-    try {
-      const userSnap = await getDoc(userDocRef);
-      if (userSnap.exists()) {
-        userData = userSnap.data() as UserAccount;
+    if (currentUid) {
+      try {
+        const uidSnap = await getDoc(doc(db, 'users', currentUid));
+        if (uidSnap.exists()) {
+          userData = uidSnap.data() as UserAccount;
+        }
+      } catch (fsErr) {
+        console.warn('Firestore read error by uid:', fsErr);
       }
-    } catch (fsErr) {
-      console.warn('Firestore read error during login, falling back to local store:', fsErr);
+    }
+
+    if (!userData) {
+      const userDocRef = doc(db, 'users', username);
+      try {
+        const userSnap = await getDoc(userDocRef);
+        if (userSnap.exists()) {
+          userData = userSnap.data() as UserAccount;
+        }
+      } catch (fsErr) {
+        console.warn('Firestore read error during login:', fsErr);
+      }
+    }
+
+    if (!userData) {
+      try {
+        const q = query(collection(db, 'users'), where('username', '==', username));
+        const qSnap = await getDocs(q);
+        if (!qSnap.empty) {
+          userData = qSnap.docs[0].data() as UserAccount;
+        }
+      } catch (err) {}
     }
 
     if (!userData) {
@@ -517,7 +538,7 @@ export async function loginUser(usernameRaw: string, passwordRaw: string): Promi
       }
     }
 
-    // If account was auto-registered or not yet in Firestore, create user doc
+    // If account was auto-registered and not found in Firestore, create doc
     if (!userData) {
       const localUsers = getLocalUsers();
       let isMaster = false;
@@ -528,27 +549,36 @@ export async function loginUser(usernameRaw: string, passwordRaw: string): Promi
         isMaster = localUsers.length === 0;
       }
 
-      const salt = generateSalt();
-      const passwordHash = await hashPassword(passwordRaw, salt);
-
       userData = {
         username,
-        passwordHash,
-        salt,
         role: isMaster ? 'master' : 'user',
-        status: 'active',
+        status: isMaster ? 'active' : 'pending',
         quota_gb: isMaster ? 1000 : 100,
         createdAt: new Date().toISOString(),
       };
 
+      if (currentUid) {
+        try {
+          await setDoc(doc(db, 'users', currentUid), {
+            ...userData,
+            email: dummyEmail,
+            serverTime: serverTimestamp(),
+          });
+        } catch {}
+      }
       try {
-        await setDoc(userDocRef, {
+        await setDoc(doc(db, 'users', username), {
           ...userData,
+          email: dummyEmail,
           serverTime: serverTimestamp(),
         });
       } catch (fsErr) {
         console.warn('Could not write new user doc to Firestore:', fsErr);
       }
+    }
+
+    if (!userData) {
+      return { success: false, error: 'Benutzerkonto konnte nicht initialisiert werden.' };
     }
 
     // Keep local cache in sync
@@ -563,6 +593,8 @@ export async function loginUser(usernameRaw: string, passwordRaw: string): Promi
 
     // Check account status
     if (userData.status === 'pending') {
+      await signOut(auth);
+      setCachedAuthToken('');
       return {
         success: false,
         pendingApproval: true,
@@ -571,6 +603,8 @@ export async function loginUser(usernameRaw: string, passwordRaw: string): Promi
     }
 
     if (userData.status === 'rejected') {
+      await signOut(auth);
+      setCachedAuthToken('');
       return {
         success: false,
         error: 'Dein Account wurde vom Administrator abgelehnt.',
@@ -792,7 +826,23 @@ export async function getAllUsers(): Promise<UserAccount[]> {
   try {
     const snap = await getDocs(collection(db, 'users'));
     if (!snap.empty) {
-      const users = snap.docs.map(d => d.data() as UserAccount);
+      const usersMap = new Map<string, UserAccount>();
+      for (const d of snap.docs) {
+        const data = d.data() as UserAccount;
+        if (data.username) {
+          const key = data.username.toLowerCase();
+          if (!usersMap.has(key)) {
+            usersMap.set(key, data);
+          } else {
+            const existing = usersMap.get(key)!;
+            // Prefer active/master over pending
+            if (data.status === 'active' && existing.status !== 'active') {
+              usersMap.set(key, data);
+            }
+          }
+        }
+      }
+      const users = Array.from(usersMap.values());
       saveLocalUsers(users);
       return users;
     }
@@ -803,15 +853,26 @@ export async function getAllUsers(): Promise<UserAccount[]> {
 }
 
 export async function updateUserStatus(username: string, status: UserStatus, quota_gb = 100): Promise<boolean> {
+  const normUser = username.toLowerCase();
   try {
-    const userDocRef = doc(db, 'users', username);
-    await updateDoc(userDocRef, { status, quota_gb });
+    const userDocRef = doc(db, 'users', normUser);
+    const snap = await getDoc(userDocRef);
+    if (snap.exists()) {
+      await updateDoc(userDocRef, { status, quota_gb });
+    }
+    const q = query(collection(db, 'users'), where('username', '==', normUser));
+    const qSnap = await getDocs(q);
+    for (const d of qSnap.docs) {
+      if (d.id !== normUser) {
+        await updateDoc(d.ref, { status, quota_gb });
+      }
+    }
   } catch (err) {
     console.warn('Firestore update status failed, updating local:', err);
   }
 
   const localUsers = getLocalUsers();
-  const index = localUsers.findIndex(u => u.username.toLowerCase() === username.toLowerCase());
+  const index = localUsers.findIndex(u => u.username.toLowerCase() === normUser);
   if (index !== -1) {
     localUsers[index].status = status;
     localUsers[index].quota_gb = quota_gb;
@@ -821,15 +882,26 @@ export async function updateUserStatus(username: string, status: UserStatus, quo
 }
 
 export async function updateUserQuota(username: string, quota_gb: number): Promise<boolean> {
+  const normUser = username.toLowerCase();
   try {
-    const userDocRef = doc(db, 'users', username);
-    await updateDoc(userDocRef, { quota_gb });
+    const userDocRef = doc(db, 'users', normUser);
+    const snap = await getDoc(userDocRef);
+    if (snap.exists()) {
+      await updateDoc(userDocRef, { quota_gb });
+    }
+    const q = query(collection(db, 'users'), where('username', '==', normUser));
+    const qSnap = await getDocs(q);
+    for (const d of qSnap.docs) {
+      if (d.id !== normUser) {
+        await updateDoc(d.ref, { quota_gb });
+      }
+    }
   } catch (err) {
     console.warn('Firestore update quota failed, updating local:', err);
   }
 
   const localUsers = getLocalUsers();
-  const index = localUsers.findIndex(u => u.username.toLowerCase() === username.toLowerCase());
+  const index = localUsers.findIndex(u => u.username.toLowerCase() === normUser);
   if (index !== -1) {
     localUsers[index].quota_gb = quota_gb;
     saveLocalUsers(localUsers);
@@ -842,6 +914,11 @@ export async function deleteUser(username: string): Promise<boolean> {
   try {
     const userDocRef = doc(db, 'users', normUser);
     await deleteDoc(userDocRef);
+    const q = query(collection(db, 'users'), where('username', '==', normUser));
+    const qSnap = await getDocs(q);
+    for (const d of qSnap.docs) {
+      await deleteDoc(d.ref);
+    }
   } catch (err) {
     console.warn('Firestore delete user failed:', err);
   }
