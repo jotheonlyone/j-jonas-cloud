@@ -10,7 +10,7 @@ import {
   Sparkles,
   Tv
 } from 'lucide-react';
-import { registerUser, loginUser } from '../services/firebase';
+import { registerUser, loginUser, cleanUsername } from '../services/firebase';
 import type { UserAccount } from '../types';
 import { LegalLinks } from './LegalLinks';
 
@@ -95,6 +95,18 @@ export const CinemaTvAuthModal: React.FC<CinemaTvAuthModalProps> = ({
     if (!username.trim() || !password) {
       setErrorMsg('Bitte Benutzername und Passwort angeben.');
       return;
+    }
+
+    if (isRegistering) {
+      if (/\s/.test(username)) {
+        setErrorMsg('Benutzername darf keine Leerzeichen enthalten.');
+        return;
+      }
+      const cleanU = cleanUsername(username);
+      if (!cleanU || !/^[a-z0-9_-]+$/.test(cleanU)) {
+        setErrorMsg('Benutzername darf nur Kleinbuchstaben (a-z), Zahlen, Bindestriche (-) und Unterstriche (_) enthalten.');
+        return;
+      }
     }
 
     if (isRegistering && password !== confirmPassword) {

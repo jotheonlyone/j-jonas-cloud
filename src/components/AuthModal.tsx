@@ -23,6 +23,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 }) => {
   const [isRegistering, setIsRegistering] = useState(false);
   const [username, setUsername] = useState(initialUsername || '');
+  const [usernameError, setUsernameError] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -30,6 +31,22 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [errorMsg, setErrorMsg] = useState('');
   const [infoMsg, setInfoMsg] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleUsernameChange = (val: string) => {
+    if (isSwitchMode) return;
+    setUsername(val);
+    if (isRegistering) {
+      if (/\s/.test(val)) {
+        setUsernameError('Benutzername darf keine Leerzeichen enthalten.');
+      } else if (val && !/^[a-z0-9_-]+$/.test(val.toLowerCase())) {
+        setUsernameError('Benutzername darf nur Kleinbuchstaben (a-z), Zahlen, Bindestriche (-) und Unterstriche (_) enthalten.');
+      } else {
+        setUsernameError('');
+      }
+    } else {
+      setUsernameError('');
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -39,6 +56,19 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     if (!username.trim() || !password) {
       setErrorMsg('Bitte Benutzername und Passwort angeben.');
       return;
+    }
+
+    if (isRegistering) {
+      if (/\s/.test(username)) {
+        setErrorMsg('Benutzername darf keine Leerzeichen enthalten.');
+        setUsernameError('Benutzername darf keine Leerzeichen enthalten.');
+        return;
+      }
+      const cleanU = username.trim().toLowerCase().replace(/\s+/g, '');
+      if (!cleanU || !/^[a-z0-9_-]+$/.test(cleanU)) {
+        setErrorMsg('Benutzername darf nur Kleinbuchstaben (a-z), Zahlen, Bindestriche (-) und Unterstriche (_) enthalten.');
+        return;
+      }
     }
 
     if (isRegistering && password !== confirmPassword) {
@@ -173,14 +203,24 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   type="text"
                   required
                   value={username}
-                  onChange={(e) => !isSwitchMode && setUsername(e.target.value)}
+                  onChange={(e) => handleUsernameChange(e.target.value)}
                   readOnly={isSwitchMode}
                   placeholder="Benutzername"
-                  className={`w-full pl-10 pr-4 py-2.5 text-sm rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:outline-none focus:border-blue-500 focus:bg-white dark:focus:bg-gray-800 transition-colors ${
+                  className={`w-full pl-10 pr-4 py-2.5 text-sm rounded-xl border bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:outline-none transition-colors ${
+                    isRegistering && usernameError
+                      ? 'border-red-500 focus:border-red-500 ring-1 ring-red-500/20'
+                      : 'border-gray-200 dark:border-gray-700 focus:border-blue-500 focus:bg-white dark:focus:bg-gray-800'
+                  } ${
                     isSwitchMode ? 'opacity-85 cursor-not-allowed select-none bg-gray-100/80 dark:bg-gray-800/60' : ''
                   }`}
                 />
               </div>
+              {isRegistering && usernameError && (
+                <p className="text-[11px] text-red-600 dark:text-red-400 mt-1.5 flex items-center gap-1 font-medium">
+                  <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                  <span>{usernameError}</span>
+                </p>
+              )}
             </div>
 
             <div>
@@ -261,6 +301,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     type="button"
                     onClick={() => {
                       setIsRegistering(false);
+                      setUsernameError('');
                       setErrorMsg('');
                       setInfoMsg('');
                     }}
@@ -276,6 +317,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     type="button"
                     onClick={() => {
                       setIsRegistering(true);
+                      setUsernameError('');
                       setErrorMsg('');
                       setInfoMsg('');
                     }}

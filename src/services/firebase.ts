@@ -41,9 +41,14 @@ const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 export const db = getFirestore(app);
 export const auth = getAuth(app);
 
-// 1. Bereinigte E-Mail (keine Leerzeichen):
+// 1. Benutzername-Bereinigung:
+// - Bereinigungsfunktion, die alle Leerzeichen entfernt und Kleinbuchstaben erzwingt
+export const cleanUsername = (u: string): string =>
+  (u || '').trim().toLowerCase().replace(/\s+/g, '');
+
+// - Die Firebase-Auth-E-Mail lautet IMMER: `${cleanUsername}@cloud.j-jonas.com`
 export const getSafeEmail = (u: string): string =>
-  `${u.trim().toLowerCase().replace(/\s+/g, '_')}@cloud.j-jonas.com`;
+  `${cleanUsername(u)}@cloud.j-jonas.com`;
 
 export const formatDummyEmail = getSafeEmail;
 
@@ -367,15 +372,19 @@ export async function registerUser(usernameRaw: string, passwordRaw: string): Pr
   error?: string;
   isFirstMaster?: boolean;
 }> {
-  const username = usernameRaw.trim().toLowerCase();
-  if (!username || username.length < 3) {
+  const cleanU = cleanUsername(usernameRaw);
+  if (!cleanU || cleanU.length < 3) {
     return { success: false, error: 'Benutzername muss mindestens 3 Zeichen lang sein.' };
+  }
+  if (!/^[a-z0-9_-]+$/.test(cleanU)) {
+    return { success: false, error: 'Benutzername darf keine Leerzeichen enthalten und nur aus a-z, 0-9, _ und - bestehen.' };
   }
   if (!passwordRaw || passwordRaw.length < 6) {
     return { success: false, error: 'Passwort muss mindestens 6 Zeichen lang sein.' };
   }
 
-  const safeEmail = getSafeEmail(username);
+  // Die Firebase-Auth-E-Mail lautet IMMER: `${cleanUsername}@cloud.j-jonas.com`
+  const safeEmail = getSafeEmail(cleanU);
 
   try {
     // 1. Erstellen des Nutzers in Firebase Auth
@@ -383,7 +392,7 @@ export async function registerUser(usernameRaw: string, passwordRaw: string): Pr
     try {
       userCredential = await createUserWithEmailAndPassword(auth, safeEmail, passwordRaw);
       if (auth.currentUser) {
-        await updateProfile(auth.currentUser, { displayName: username });
+        await updateProfile(auth.currentUser, { displayName: cleanU });
       }
     } catch (authErr: any) {
       if (authErr?.code === 'auth/email-already-in-use') {
@@ -396,10 +405,9 @@ export async function registerUser(usernameRaw: string, passwordRaw: string): Pr
       return { success: false, error: 'Nutzer konnte nicht registriert werden.' };
     }
 
-    const cleanUsername = username.trim().toLowerCase();
-    await setDoc(doc(db, 'users', cleanUsername), {
+    await setDoc(doc(db, 'users', cleanU), {
       uid: auth.currentUser.uid,
-      username: cleanUsername,
+      username: cleanU,
       email: safeEmail,
       status: 'pending',
       role: 'user',
@@ -408,7 +416,7 @@ export async function registerUser(usernameRaw: string, passwordRaw: string): Pr
     });
 
     const newUser: UserAccount = {
-      username: cleanUsername,
+      username: cleanU,
       email: safeEmail,
       uid: auth.currentUser.uid,
       role: 'user',
@@ -443,71 +451,111 @@ export async function loginUser(usernameRaw: string, passwordRaw: string): Promi
   error?: string;
   pendingApproval?: boolean;
 }> {
-  const username = usernameRaw.trim().toLowerCase();
-  const cleanUsername = username;
-  if (!cleanUsername || !passwordRaw) {
+  const originalTrimmed = (usernameRaw || '').trim();
+  const cleanU = cleanUsername(usernameRaw);
+  if (!cleanU || !passwordRaw) {
     return { success: false, error: 'Bitte Benutzername und Passwort eingeben.' };
   }
 
-  // 1. Bereinigte E-Mail (keine Leerzeichen)
-  const safeEmail = getSafeEmail(cleanUsername);
+  // 1. Die Firebase-Auth-E-Mail lautet IMMER: `${cleanUsername}@cloud.j-jonas.com`
+  const email = `${cleanU}@cloud.j-jonas.com`;
 
   try {
-    // 2. Einmalige Übernahme bestehender Altkonten (KEINE automatische Neuregistrierung):
-    // Versuche zuerst den regulären Login via signInWithEmailAndPassword
+    // 2. Robuster Login mit automatischer Firestore-Migration:
+    // Führe zuerst signInWithEmailAndPassword(auth, email, password) aus.
     let userCredential;
     try {
-      userCredential = await signInWithEmailAndPassword(auth, safeEmail, passwordRaw);
+      userCredential = await signInWithEmailAndPassword(auth, email, passwordRaw);
     } catch (authErr: any) {
-      if (
-        authErr?.code === 'auth/user-not-found' ||
-        authErr?.code === 'auth/invalid-credential'
-      ) {
-        // 1. Suche in Firestore unter 'users' nach dem Dokument mit der ID cleanUsername
-        const userDocRef = doc(db, 'users', cleanUsername);
-        let userSnap;
+      const code = authErr?.code;
+      if (code === 'auth/user-not-found' || code === 'auth/invalid-credential') {
+        // 1. Suche in Firestore ZUERST nach doc(db, 'users', cleanUsername).
+        let matchedDocSnap: any = null;
+        let matchedDocId = cleanU;
+
         try {
-          userSnap = await getDoc(userDocRef);
+          const snap = await getDoc(doc(db, 'users', cleanU));
+          if (snap.exists()) {
+            matchedDocSnap = snap;
+          }
         } catch (fsErr) {
-          console.warn('Firestore read error during legacy check:', fsErr);
+          console.warn('Firestore read error for cleanUsername:', fsErr);
         }
 
-        // 2. WICHTIGE SPERRE: Existiert das Firestore-Dokument NICHT oder enthält es KEINE Felder 'passwordHash' und 'salt',
-        // brich SOFORT ab und zeige die Fehlermeldung: "Benutzername oder Passwort falsch."
-        // Es darf unter keinen Umständen automatisch ein neues Konto registriert werden! Registrierungen sind ausschließlich über die Registrierungsseite gestattet.
-        if (!userSnap || !userSnap.exists()) {
+        // 2. Existiert das Dokument nicht, suche als Fallback nach dem Original-Namen: doc(db, 'users', username.trim()).
+        if (!matchedDocSnap && originalTrimmed && originalTrimmed !== cleanU) {
+          try {
+            const fallbackSnap = await getDoc(doc(db, 'users', originalTrimmed));
+            if (fallbackSnap.exists()) {
+              matchedDocSnap = fallbackSnap;
+              matchedDocId = originalTrimmed;
+            }
+          } catch (fsErr) {
+            console.warn('Firestore read error for fallback doc:', fsErr);
+          }
+        }
+
+        // 3. Wird KEIN Dokument gefunden oder fehlen passwordHash/salt: Fehlermeldung "Benutzername oder Passwort falsch." anzeigen und abbrechen.
+        if (!matchedDocSnap || !matchedDocSnap.exists()) {
           return { success: false, error: 'Benutzername oder Passwort falsch.' };
         }
 
-        const legacyData = userSnap.data();
+        const legacyData = matchedDocSnap.data();
         if (!legacyData || !legacyData.passwordHash || !legacyData.salt) {
           return { success: false, error: 'Benutzername oder Passwort falsch.' };
         }
 
-        // 3. Existieren 'passwordHash' und 'salt': Verifiziere das eingegebene Passwort mit der bisherigen Hash-Logik (PBKDF2/SHA256).
+        // 4. Wird ein Dokument gefunden: Prüfe das Passwort mit dem hinterlegten Salt/Hash.
         const computedHash = await hashPassword(passwordRaw, legacyData.salt);
 
-        // 4. Ist der Hash UNGÜLTIG: Fehlermeldung "Benutzername oder Passwort falsch." anzeigen und abbrechen.
+        // 6. Wenn das Passwort FALSCH ist: Fehlermeldung anzeigen und abbrechen.
         if (computedHash !== legacyData.passwordHash) {
           return { success: false, error: 'Benutzername oder Passwort falsch.' };
         }
 
-        // 5. Ist der Hash GÜLTIG (Altkonto verifiziert): Erstelle das Auth-Konto einmalig im Hintergrund mit createUserWithEmailAndPassword,
-        // aktualisiere das bestehende Firestore-Dokument mit { uid: auth.currentUser.uid } und führe den Login durch.
+        // 5. Wenn das Passwort KORREKT ist:
+        // - Erstelle den Account in Firebase Auth: createUserWithEmailAndPassword(auth, email, password).
         try {
-          userCredential = await createUserWithEmailAndPassword(auth, safeEmail, passwordRaw);
+          userCredential = await createUserWithEmailAndPassword(auth, email, passwordRaw);
           if (auth.currentUser) {
-            await updateProfile(auth.currentUser, { displayName: username });
-            await updateDoc(userDocRef, {
-              uid: auth.currentUser.uid,
-              email: safeEmail,
-            });
+            await updateProfile(auth.currentUser, { displayName: cleanU });
           }
         } catch (createErr: any) {
           if (createErr?.code === 'auth/email-already-in-use') {
-            return { success: false, error: 'Benutzername oder Passwort falsch.' };
+            userCredential = await signInWithEmailAndPassword(auth, email, passwordRaw).catch(() => null);
+            if (!userCredential) {
+              return { success: false, error: 'Benutzername oder Passwort falsch.' };
+            }
+          } else {
+            return { success: false, error: getFirebaseAuthErrorMessage(createErr) };
           }
-          return { success: false, error: getFirebaseAuthErrorMessage(createErr) };
+        }
+
+        if (!auth.currentUser) {
+          return { success: false, error: 'Benutzername oder Passwort falsch.' };
+        }
+
+        // - Speichere die Nutzerdaten unter der neuen ID doc(db, 'users', cleanUsername) mit { uid: auth.currentUser.uid, username: cleanUsername }.
+        const migratedData: any = {
+          ...legacyData,
+          uid: auth.currentUser.uid,
+          username: cleanU,
+          email,
+          quota_gb: typeof legacyData.quota_gb === 'number' ? legacyData.quota_gb : 100,
+          status: legacyData.status || 'approved',
+          role: legacyData.role || 'user',
+          updatedAt: new Date().toISOString(),
+        };
+
+        await setDoc(doc(db, 'users', cleanU), migratedData);
+
+        // - Falls das Dokument vorher unter dem alten Namen mit Leerzeichen (z. B. "Wolf 1") lag: Lösche das alte Dokument nach dem Kopieren.
+        if (matchedDocId !== cleanU) {
+          try {
+            await deleteDoc(doc(db, 'users', matchedDocId));
+          } catch (delErr) {
+            console.warn(`Altes Dokument ${matchedDocId} konnte nicht gelöscht werden:`, delErr);
+          }
         }
       } else {
         return { success: false, error: getFirebaseAuthErrorMessage(authErr) };
@@ -524,13 +572,13 @@ export async function loginUser(usernameRaw: string, passwordRaw: string): Promi
     const currentUid = auth.currentUser?.uid;
 
     try {
-      const userDocRef = doc(db, 'users', cleanUsername);
+      const userDocRef = doc(db, 'users', cleanU);
       const userSnap = await getDoc(userDocRef);
       if (userSnap.exists()) {
         const d = userSnap.data();
         userData = {
           ...d,
-          username: d.username || cleanUsername,
+          username: d.username || cleanU,
           quota_gb: typeof d.quota_gb === 'number' ? d.quota_gb : 100,
           status: d.status || 'pending',
           role: d.role || 'user',
@@ -549,7 +597,7 @@ export async function loginUser(usernameRaw: string, passwordRaw: string): Promi
           const d = uidSnap.data();
           userData = {
             ...d,
-            username: d.username || cleanUsername,
+            username: d.username || cleanU,
             quota_gb: typeof d.quota_gb === 'number' ? d.quota_gb : 100,
             status: d.status || 'pending',
             role: d.role || 'user',
@@ -563,7 +611,7 @@ export async function loginUser(usernameRaw: string, passwordRaw: string): Promi
 
     if (!userData) {
       const localUsers = getLocalUsers();
-      const found = localUsers.find(u => u.username.toLowerCase() === cleanUsername);
+      const found = localUsers.find(u => u.username.toLowerCase() === cleanU);
       if (found) {
         userData = found;
       }
@@ -578,7 +626,7 @@ export async function loginUser(usernameRaw: string, passwordRaw: string): Promi
 
     // Keep local cache in sync
     const localUsers = getLocalUsers();
-    const idx = localUsers.findIndex(u => u.username.toLowerCase() === cleanUsername);
+    const idx = localUsers.findIndex(u => u.username.toLowerCase() === cleanU);
     if (idx !== -1) {
       localUsers[idx] = { ...localUsers[idx], ...userData };
     } else {

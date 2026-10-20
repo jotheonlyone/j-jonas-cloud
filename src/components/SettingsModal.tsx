@@ -537,55 +537,35 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </form>
               )}
 
-              {/* Form 2: Username Change */}
+              {/* Form 2: Username View (readOnly / disabled) */}
               {accountSubTab === 'username' && (
-                <form onSubmit={handleUsernameSubmit} className="space-y-3 pt-1">
-                  {usernameError && (
-                    <div className="p-3 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 flex items-start gap-2 text-xs text-red-700 dark:text-red-300">
-                      <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                      <span>{usernameError}</span>
-                    </div>
-                  )}
-
+                <div className="space-y-3 pt-1">
                   <div>
                     <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
-                      Aktueller Benutzername
-                    </label>
-                    <p className="text-xs font-mono px-3 py-2 rounded-xl bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400">
-                      @{user.username}
-                    </p>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
-                      Neuer Benutzername
+                      Benutzername
                     </label>
                     <div className="relative">
                       <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                       <input
                         type="text"
-                        required
-                        value={newUsername}
-                        onChange={(e) => setNewUsername(e.target.value)}
-                        placeholder="Neuer Benutzername"
-                        className="w-full pl-9 pr-3 py-2 text-xs rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:outline-none focus:border-blue-500 focus:bg-white dark:focus:bg-gray-800"
+                        readOnly
+                        disabled
+                        value={user.username}
+                        className="w-full pl-9 pr-3 py-2 text-xs rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 font-mono cursor-not-allowed select-none focus:outline-none"
                       />
                     </div>
-                    <p className="text-[11px] text-gray-500 mt-1">
-                      Wird in Firestore auf Verfügbarkeit überprüft.
-                    </p>
                   </div>
 
-                  <div className="flex items-center justify-end gap-2 pt-2 border-t border-gray-100 dark:border-gray-800">
-                    <button
-                      type="submit"
-                      disabled={isUsernameSubmitting}
-                      className="normal-btn px-4 py-2 text-xs font-semibold rounded-xl bg-blue-600 hover:bg-blue-700 text-white shadow-xs transition-colors disabled:opacity-50 cursor-pointer"
-                    >
-                      {isUsernameSubmitting ? 'Wird geprüft...' : 'Benutzername ändern'}
-                    </button>
+                  <div className="p-3 rounded-xl bg-blue-50/80 dark:bg-blue-950/30 border border-blue-200/60 dark:border-blue-900/40 flex items-start gap-2.5 text-xs text-blue-700 dark:text-blue-300">
+                    <ShieldCheck className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
+                    <div className="space-y-0.5">
+                      <p className="font-semibold">Benutzername ist geschützt</p>
+                      <p className="text-[11px] text-blue-600/90 dark:text-blue-400/90">
+                        System-Benutzername ist fest an das Speicherverzeichnis gebunden.
+                      </p>
+                    </div>
                   </div>
-                </form>
+                </div>
               )}
             </div>
           )}

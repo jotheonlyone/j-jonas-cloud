@@ -1,7 +1,7 @@
 import type { FileItemData, StorageUsage } from '../types';
 import { getActiveUser, CURRENT_USER_KEY } from './accountManager';
 import { sanitizeUploadFileName, validateItemName } from '../utils/nameSanitizer';
-import { auth, getCachedAuthToken, setCachedAuthToken, getAuthToken } from './firebase';
+import { auth, getCachedAuthToken, setCachedAuthToken, getAuthToken, cleanUsername } from './firebase';
 
 // Feste Konstante gemäß Vorgabe – kein Einstellungsfenster / keine dynamische Überschreibung
 export const STORAGE_BASE_URL = 'https://storage.j-jonas.com';
@@ -130,8 +130,9 @@ export async function checkServerStatus(): Promise<ServerStatus> {
  * Liefert { status, user, usedBytes, usedGB, limitBytes, limitGB } direkt vom Mini-PC Server.
  */
 export async function getStorageUsage(username: string): Promise<StorageUsage> {
+  const safeU = cleanUsername(username || getActiveUser()?.username || '');
   try {
-    const res = await storageFetch(`${STORAGE_BASE_URL}/storage-usage?user=${encodeURIComponent(username)}`, {
+    const res = await storageFetch(`${STORAGE_BASE_URL}/storage-usage?user=${encodeURIComponent(safeU)}`, {
       method: 'GET',
       headers: { 'Accept': 'application/json' },
     });
@@ -160,10 +161,11 @@ export async function getStorageUsage(username: string): Promise<StorageUsage> {
  * Das Backend liefert { files: [...], currentPath: ... }.
  */
 export async function listFiles(owner: string, relativePath = ''): Promise<{ items: FileItemData[]; error?: string }> {
+  const safeOwner = cleanUsername(owner || getActiveUser()?.username || '');
   const cleanPath = relativePath.trim().replace(/^\/+|\/+$/g, '') || '.';
 
   try {
-    const url = `${STORAGE_BASE_URL}/files?user=${encodeURIComponent(owner)}&path=${encodeURIComponent(cleanPath)}`;
+    const url = `${STORAGE_BASE_URL}/files?user=${encodeURIComponent(safeOwner)}&path=${encodeURIComponent(cleanPath)}`;
     const res = await storageFetch(url, {
       method: 'GET',
       headers: { 'Accept': 'application/json' },
@@ -256,16 +258,17 @@ async function uploadSingleDirect(
   owner: string,
   cleanPath: string
 ): Promise<{ success: boolean; error?: string }> {
+  const safeOwner = cleanUsername(owner || getActiveUser()?.username || '');
   try {
     const safeFileName = sanitizeUploadFileName(file.name);
     const formData = new FormData();
-    formData.append('user', owner);
+    formData.append('user', safeOwner);
     formData.append('path', cleanPath);
     formData.append('file', file, safeFileName);
     formData.append('files', file, safeFileName);
     formData.append('fileName', safeFileName);
 
-    const uploadUrl = `${STORAGE_BASE_URL}/upload?user=${encodeURIComponent(owner)}&path=${encodeURIComponent(cleanPath)}&fileName=${encodeURIComponent(safeFileName)}`;
+    const uploadUrl = `${STORAGE_BASE_URL}/upload?user=${encodeURIComponent(safeOwner)}&path=${encodeURIComponent(cleanPath)}&fileName=${encodeURIComponent(safeFileName)}`;
     const res = await storageFetch(uploadUrl, {
       method: 'POST',
       body: formData,
@@ -298,6 +301,7 @@ export async function uploadFileInChunks(
   relativePath: string,
   onProgress?: UploadProgressCallback
 ): Promise<{ success: boolean; error?: string }> {
+  const safeOwner = cleanUsername(owner || getActiveUser()?.username || '');
   const cleanPath = relativePath.trim().replace(/^\/+|\/+$/g, '') || '.';
   const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
   const safeFileName = sanitizeUploadFileName(file.name);
@@ -308,7 +312,7 @@ export async function uploadFileInChunks(
     const chunkBlob = file.slice(start, end);
 
     const formData = new FormData();
-    formData.append('user', owner);
+    formData.append('user', safeOwner);
     formData.append('path', cleanPath);
     formData.append('fileName', safeFileName);
     formData.append('chunkIndex', String(chunkIndex));
@@ -316,7 +320,7 @@ export async function uploadFileInChunks(
     formData.append('chunk', chunkBlob, safeFileName);
 
     const queryParams = new URLSearchParams({
-      user: owner,
+      user: safeOwner,
       path: cleanPath,
       fileName: safeFileName,
       chunkIndex: String(chunkIndex),
@@ -417,6 +421,7 @@ export async function createFolder(
   relativePath: string,
   folderNameRaw: string
 ): Promise<{ success: boolean; error?: string }> {
+  const safeOwner = cleanUsername(owner || getActiveUser()?.username || '');
   const folder_name = folderNameRaw.trim();
   if (!folder_name) {
     return { success: false, error: 'Ordnername darf nicht leer sein.' };
@@ -429,14 +434,14 @@ export async function createFolder(
 
   try {
     const payload = {
-      user: owner,
+      user: safeOwner,
       path: cleanPath,
       name: folder_name,
       folderName: folder_name,
       folder_name,
     };
 
-    const queryParams = `user=${encodeURIComponent(owner)}&path=${encodeURIComponent(cleanPath)}&name=${encodeURIComponent(folder_name)}`;
+    const queryParams = `user=${encodeURIComponent(safeOwner)}&path=${encodeURIComponent(cleanPath)}&name=${encodeURIComponent(folder_name)}`;
 
     // 1. Primär: POST /folders (Mini-PC Backend)
     let res = await storageFetch(`${STORAGE_BASE_URL}/folders?${queryParams}`, {
@@ -498,7 +503,7 @@ export function getStreamUrl(itemPath: string, user?: string, explicitToken?: st
   }
 
   const clean = itemPath.replace(/^\/+/, '');
-  const username = (user || getActiveUser()?.username || '').trim();
+  const username = cleanUsername(user || getActiveUser()?.username || '');
   const userParam = username ? `user=${encodeURIComponent(username)}&` : '';
 
   return `${STORAGE_BASE_URL}/stream?${userParam}path=${encodeURIComponent(clean)}&file=${encodeURIComponent(clean)}${tokenParam}`;
@@ -540,8 +545,8 @@ export function getThumbnailUrl(item: FileItemData | string, user?: string, expl
   const cleanPath = filePath.replace(/^\/+/, '').trim();
   if (!cleanPath) return '';
 
-  // Sicherstellen, dass currentUser niemals leer oder undefined ist
-  const currentUser = (itemOwner || activeUsername || user || 'user').trim() || 'user';
+  // Sicherstellen, dass currentUser niemals leer oder undefined ist und cleanUsername nutzt
+  const currentUser = cleanUsername((itemOwner || activeUsername || user || 'user').trim() || 'user');
 
   return `${STORAGE_BASE_URL}/thumbnail?user=${encodeURIComponent(currentUser)}&path=${encodeURIComponent(cleanPath)}${tokenParam}`;
 }
@@ -552,7 +557,7 @@ export function getThumbnailUrl(item: FileItemData | string, user?: string, expl
  */
 export async function triggerDirectDownload(owner: string, filePath: string, filename: string): Promise<void> {
   const cleanPath = filePath.trim().replace(/^\/+/, '');
-  const username = (owner || getActiveUser()?.username || '').trim();
+  const username = cleanUsername(owner || getActiveUser()?.username || '');
   const userParam = username ? `user=${encodeURIComponent(username)}&` : '';
   const token = await getAuthToken();
   const tokenParam = token ? `&token=${encodeURIComponent(token)}` : '';
@@ -571,9 +576,10 @@ export async function triggerDirectDownload(owner: string, filePath: string, fil
  * Löscht das gesamte Verzeichnis des Nutzers vom Server.
  */
 export async function deleteUserServerDirectory(username: string): Promise<{ success: boolean; error?: string }> {
+  const safeU = cleanUsername(username);
   try {
     // 1. Try /delete-user endpoint
-    const res = await storageFetch(`${STORAGE_BASE_URL}/delete-user?user=${encodeURIComponent(username)}`, {
+    const res = await storageFetch(`${STORAGE_BASE_URL}/delete-user?user=${encodeURIComponent(safeU)}`, {
       method: 'DELETE',
     });
 
@@ -583,7 +589,7 @@ export async function deleteUserServerDirectory(username: string): Promise<{ suc
 
     // 2. Fallback to /delete root item
     const fallbackRes = await storageFetch(
-      `${STORAGE_BASE_URL}/delete?user=${encodeURIComponent(username)}&item=&path=`,
+      `${STORAGE_BASE_URL}/delete?user=${encodeURIComponent(safeU)}&item=&path=`,
       { method: 'DELETE' }
     );
 
@@ -613,13 +619,14 @@ export async function deleteItem(
   relativePath: string,
   itemName: string
 ): Promise<{ success: boolean; error?: string }> {
+  const safeOwner = cleanUsername(owner || getActiveUser()?.username || '');
   const cleanPath = relativePath.trim().replace(/^\/+|\/+$/g, '');
   const itemFullPath = cleanPath ? `${cleanPath}/${itemName}` : itemName;
 
   try {
-    const queryParams = `user=${encodeURIComponent(owner)}&item=${encodeURIComponent(itemFullPath)}&path=${encodeURIComponent(itemFullPath)}`;
+    const queryParams = `user=${encodeURIComponent(safeOwner)}&item=${encodeURIComponent(itemFullPath)}&path=${encodeURIComponent(itemFullPath)}`;
     const payload = {
-      user: owner,
+      user: safeOwner,
       item: itemFullPath,
       path: itemFullPath,
     };
@@ -667,13 +674,14 @@ export async function renameItem(
   oldName: string,
   newName: string
 ): Promise<{ success: boolean; error?: string }> {
+  const safeOwner = cleanUsername(owner || getActiveUser()?.username || '');
   const cleanPath = relativePath.trim().replace(/^\/+|\/+$/g, '');
   const oldPath = cleanPath ? `${cleanPath}/${oldName}` : oldName;
   const newPath = cleanPath ? `${cleanPath}/${newName}` : newName;
 
   try {
     const payload = {
-      user: owner,
+      user: safeOwner,
       old_path: oldPath,
       oldPath: oldPath,
       new_name: newName,
@@ -684,7 +692,7 @@ export async function renameItem(
       name: newName,
     };
 
-    const queryParams = `user=${encodeURIComponent(owner)}`;
+    const queryParams = `user=${encodeURIComponent(safeOwner)}`;
 
     // 1. POST /rename
     let res = await storageFetch(`${STORAGE_BASE_URL}/rename?${queryParams}`, {
@@ -1059,7 +1067,8 @@ export async function setFileMetadata(
  */
 export function getPublicStreamUrl(username: string, relativePath: string): string {
   const cleanPath = relativePath.trim().replace(/^\/+/, '');
-  return `${STORAGE_BASE_URL}/stream?user=${encodeURIComponent(username)}&path=${encodeURIComponent(cleanPath)}`;
+  const safeU = cleanUsername(username);
+  return `${STORAGE_BASE_URL}/stream?user=${encodeURIComponent(safeU)}&path=${encodeURIComponent(cleanPath)}`;
 }
 
 /**
@@ -1068,7 +1077,8 @@ export function getPublicStreamUrl(username: string, relativePath: string): stri
  */
 export function getPublicDownloadUrl(username: string, relativePath: string): string {
   const cleanPath = relativePath.trim().replace(/^\/+/, '');
-  return `${STORAGE_BASE_URL}/download?user=${encodeURIComponent(username)}&path=${encodeURIComponent(cleanPath)}&download=true`;
+  const safeU = cleanUsername(username);
+  return `${STORAGE_BASE_URL}/download?user=${encodeURIComponent(safeU)}&path=${encodeURIComponent(cleanPath)}&download=true`;
 }
 
 /**
@@ -1079,10 +1089,11 @@ export async function getPublicFolderFiles(
   username: string,
   relativePath: string
 ): Promise<{ isFolder: boolean; items: FileItemData[]; error?: string }> {
+  const safeU = cleanUsername(username);
   const cleanPath = relativePath.trim().replace(/^\/+|\/+$/g, '');
   try {
     const res = await storageFetch(
-      `${STORAGE_BASE_URL}/public-files/${encodeURIComponent(username)}/${cleanPath ? encodeURIComponent(cleanPath) : ''}`,
+      `${STORAGE_BASE_URL}/public-files/${encodeURIComponent(safeU)}/${cleanPath ? encodeURIComponent(cleanPath) : ''}`,
       {
         method: 'GET',
         headers: { Accept: 'application/json' },
