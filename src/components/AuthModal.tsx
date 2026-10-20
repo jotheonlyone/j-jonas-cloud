@@ -9,6 +9,8 @@ interface AuthModalProps {
   darkMode?: boolean;
   onClose?: () => void;
   isAddAccountMode?: boolean;
+  initialUsername?: string;
+  isSwitchMode?: boolean;
 }
 
 export const AuthModal: React.FC<AuthModalProps> = ({
@@ -16,9 +18,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   darkMode = false,
   onClose,
   isAddAccountMode = false,
+  initialUsername = '',
+  isSwitchMode = false,
 }) => {
   const [isRegistering, setIsRegistering] = useState(false);
-  const [username, setUsername] = useState('');
+  const [username, setUsername] = useState(initialUsername || '');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -122,18 +126,25 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         <div className="flex items-center justify-between pb-4 mb-4 border-b border-gray-100 dark:border-gray-800 pr-8">
           <div>
             <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">
-              {isAddAccountMode
+              {isSwitchMode
+                ? 'Konto wechseln'
+                : isAddAccountMode
                 ? (isRegistering ? 'Weiteres Konto registrieren' : 'Weiteres Konto hinzufügen')
                 : (isRegistering ? 'Konto erstellen' : 'Anmelden')}
             </h2>
-            {isAddAccountMode && (
+            {isSwitchMode && (
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                Passwort eingeben, um zu <span className="font-semibold text-blue-600 dark:text-blue-400">@{initialUsername || username}</span> zu wechseln.
+              </p>
+            )}
+            {!isSwitchMode && isAddAccountMode && (
               <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
                 Dein bisheriges Konto bleibt im Hintergrund gespeichert.
               </p>
             )}
           </div>
           <span className="text-xs font-medium text-gray-400 dark:text-gray-500">
-            {isRegistering ? 'Registrierung' : 'Login'}
+            {isSwitchMode ? 'Account-Wechsel' : isRegistering ? 'Registrierung' : 'Login'}
           </span>
         </div>
 
@@ -162,9 +173,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   type="text"
                   required
                   value={username}
-                  onChange={(e) => setUsername(e.target.value)}
+                  onChange={(e) => !isSwitchMode && setUsername(e.target.value)}
+                  readOnly={isSwitchMode}
                   placeholder="Benutzername"
-                  className="w-full pl-10 pr-4 py-2.5 text-sm rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:outline-none focus:border-blue-500 focus:bg-white dark:focus:bg-gray-800 transition-colors"
+                  className={`w-full pl-10 pr-4 py-2.5 text-sm rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:outline-none focus:border-blue-500 focus:bg-white dark:focus:bg-gray-800 transition-colors ${
+                    isSwitchMode ? 'opacity-85 cursor-not-allowed select-none bg-gray-100/80 dark:bg-gray-800/60' : ''
+                  }`}
                 />
               </div>
             </div>
@@ -230,7 +244,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 <span>Wird verarbeitet...</span>
               ) : (
                 <>
-                  <span>{isRegistering ? 'Registrieren' : 'Anmelden'}</span>
+                  <span>{isSwitchMode ? 'Anmelden & Wechseln' : isRegistering ? 'Registrieren' : 'Anmelden'}</span>
                   <ArrowRight className="w-4 h-4" />
                 </>
               )}
@@ -238,39 +252,41 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           </form>
 
           {/* Toggle between Login and Register */}
-          <div className="mt-5 pt-4 border-t border-gray-100 dark:border-gray-800 text-center">
-            {isRegistering ? (
-              <p className="text-xs text-gray-600 dark:text-gray-400">
-                Bereits ein Konto?{' '}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsRegistering(false);
-                    setErrorMsg('');
-                    setInfoMsg('');
-                  }}
-                  className="font-semibold text-blue-600 dark:text-blue-400 hover:underline"
-                >
-                  Hier anmelden
-                </button>
-              </p>
-            ) : (
-              <p className="text-xs text-gray-600 dark:text-gray-400">
-                Noch kein Konto?{' '}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsRegistering(true);
-                    setErrorMsg('');
-                    setInfoMsg('');
-                  }}
-                  className="font-semibold text-blue-600 dark:text-blue-400 hover:underline"
-                >
-                  Jetzt registrieren
-                </button>
-              </p>
-            )}
-          </div>
+          {!isSwitchMode && (
+            <div className="mt-5 pt-4 border-t border-gray-100 dark:border-gray-800 text-center">
+              {isRegistering ? (
+                <p className="text-xs text-gray-600 dark:text-gray-400">
+                  Bereits ein Konto?{' '}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsRegistering(false);
+                      setErrorMsg('');
+                      setInfoMsg('');
+                    }}
+                    className="font-semibold text-blue-600 dark:text-blue-400 hover:underline"
+                  >
+                    Hier anmelden
+                  </button>
+                </p>
+              ) : (
+                <p className="text-xs text-gray-600 dark:text-gray-400">
+                  Noch kein Konto?{' '}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsRegistering(true);
+                      setErrorMsg('');
+                      setInfoMsg('');
+                    }}
+                    className="font-semibold text-blue-600 dark:text-blue-400 hover:underline"
+                  >
+                    Jetzt registrieren
+                  </button>
+                </p>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Rechtliche Pflichtlinks */}

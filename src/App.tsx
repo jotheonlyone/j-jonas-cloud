@@ -89,6 +89,7 @@ function MainApp() {
   const [user, setUser] = useState<UserAccount | null>(() => getActiveUser());
   const [savedAccounts, setSavedAccounts] = useState<UserAccount[]>(() => getSavedAccounts());
   const [showAddAccountModal, setShowAddAccountModal] = useState<boolean>(false);
+  const [switchingTargetUser, setSwitchingTargetUser] = useState<UserAccount | null>(null);
 
   // Frutiger Aero 7 Mode: Windows 7 aesthetic with persistent state & ambient sound
   const [isFrutigerAero, setIsFrutigerAero] = useState<boolean>(() => {
@@ -646,16 +647,27 @@ function MainApp() {
   };
 
   const handleSwitchAccount = (targetUser: UserAccount) => {
-    const switched = switchActiveAccount(targetUser.username);
-    if (switched) {
-      setUser(switched);
-      setCurrentPath('');
-      setItems([]);
-      loadDirectoryFiles(switched.username, '');
-      loadUsage(switched.username);
-      loadShares(switched.username);
-      addToast('success', 'Konto gewechselt', `Jetzt aktiv: @${switched.username}`);
+    if (user && targetUser.username.toLowerCase() === user.username.toLowerCase()) {
+      return;
     }
+    // Multi-Account-Wechsel erfordert erneute Authentifizierung für dieses Profil
+    setSwitchingTargetUser(targetUser);
+  };
+
+  const handleSwitchSuccess = (loggedInUser: UserAccount) => {
+    setSwitchingTargetUser(null);
+    const switched = switchActiveAccount(loggedInUser.username);
+    const active = switched || loggedInUser;
+    setUser(active);
+    setSavedAccounts(getSavedAccounts());
+    setCurrentPath('');
+    setItems([]);
+    // Erst nach erfolgreichem Login wird die Dateiliste des Zielkontos geladen, damit das passende Auth-Token aktiv ist
+    loadDirectoryFiles(active.username, '');
+    loadUsage(active.username);
+    loadShares(active.username);
+    loadAdminUsers();
+    addToast('success', 'Konto gewechselt', `Jetzt aktiv: @${active.username}`);
   };
 
   // 4. Token-Refresh & Session: Redirect to login when 401 session expires
@@ -1061,6 +1073,36 @@ function MainApp() {
   // Share handlers
   const handleAcceptShare = async (shareId: string) => {
     if (!user) return;
+    const normUser = user.username.toLowerCase();
+
+    // Sofortige UI-Aktualisierung: Ordner direkt unter den aktiven geteilten Ordnern listen
+    setShares((prevShares) =>
+      prevShares.map((s) => {
+        if (s.id === shareId || s.folder_path === shareId || (s.id && s.id.includes(shareId))) {
+          const updatedSharedWith = (s.shared_with || []).map((m) =>
+            m?.username && m.username.toLowerCase() === normUser
+              ? { ...m, status: 'accepted' as const }
+              : m
+          );
+          if (!updatedSharedWith.some((m) => m?.username && m.username.toLowerCase() === normUser)) {
+            updatedSharedWith.push({
+              username: normUser,
+              status: 'accepted',
+              can_see_members: true,
+              can_manage_members: false,
+              added_at: new Date().toISOString(),
+            });
+          }
+          return {
+            ...s,
+            status: 'accepted' as const,
+            shared_with: updatedSharedWith,
+          };
+        }
+        return s;
+      })
+    );
+
     await respondToShare(shareId, 'accepted', user.username);
     addToast('success', 'Einladung angenommen', 'Der Ordner wurde zum Geteilten Bereich hinzugefügt.');
     await loadShares(user.username);
@@ -1584,6 +1626,17 @@ function MainApp() {
           darkMode={darkMode}
           onClose={() => setShowAddAccountModal(false)}
           isAddAccountMode={true}
+        />
+      )}
+
+      {/* Switch Account Re-Authentication Modal */}
+      {user && switchingTargetUser && (
+        <AuthModal
+          onSuccess={handleSwitchSuccess}
+          darkMode={darkMode}
+          onClose={() => setSwitchingTargetUser(null)}
+          isSwitchMode={true}
+          initialUsername={switchingTargetUser.username}
         />
       )}
 

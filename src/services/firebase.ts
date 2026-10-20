@@ -41,10 +41,11 @@ const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 export const db = getFirestore(app);
 export const auth = getAuth(app);
 
-// Helper to convert plain username to dummy email
-export function formatDummyEmail(username: string): string {
-  return `${username.trim().toLowerCase()}@cloud.j-jonas.com`;
-}
+// 1. Bereinigte E-Mail (keine Leerzeichen):
+export const getSafeEmail = (u: string): string =>
+  `${u.trim().toLowerCase().replace(/\s+/g, '_')}@cloud.j-jonas.com`;
+
+export const formatDummyEmail = getSafeEmail;
 
 // Token cache in memory and storage for fast synchronous access by <img>, <video>, etc.
 const TOKEN_CACHE_KEY = 'jjcloud_cached_id_token';
@@ -374,13 +375,13 @@ export async function registerUser(usernameRaw: string, passwordRaw: string): Pr
     return { success: false, error: 'Passwort muss mindestens 6 Zeichen lang sein.' };
   }
 
-  const dummyEmail = formatDummyEmail(username);
+  const safeEmail = getSafeEmail(username);
 
   try {
     // 1. Erstellen des Nutzers in Firebase Auth
     let userCredential;
     try {
-      userCredential = await createUserWithEmailAndPassword(auth, dummyEmail, passwordRaw);
+      userCredential = await createUserWithEmailAndPassword(auth, safeEmail, passwordRaw);
       if (auth.currentUser) {
         await updateProfile(auth.currentUser, { displayName: username });
       }
@@ -399,7 +400,7 @@ export async function registerUser(usernameRaw: string, passwordRaw: string): Pr
     await setDoc(doc(db, 'users', cleanUsername), {
       uid: auth.currentUser.uid,
       username: cleanUsername,
-      email: dummyEmail,
+      email: safeEmail,
       status: 'pending',
       role: 'user',
       quota_gb: 100,
@@ -408,7 +409,7 @@ export async function registerUser(usernameRaw: string, passwordRaw: string): Pr
 
     const newUser: UserAccount = {
       username: cleanUsername,
-      email: dummyEmail,
+      email: safeEmail,
       uid: auth.currentUser.uid,
       role: 'user',
       status: 'pending',
@@ -443,33 +444,68 @@ export async function loginUser(usernameRaw: string, passwordRaw: string): Promi
   pendingApproval?: boolean;
 }> {
   const username = usernameRaw.trim().toLowerCase();
-  if (!username || !passwordRaw) {
+  const cleanUsername = username;
+  if (!cleanUsername || !passwordRaw) {
     return { success: false, error: 'Bitte Benutzername und Passwort eingeben.' };
   }
 
-  const dummyEmail = formatDummyEmail(username);
+  // 1. Bereinigte E-Mail (keine Leerzeichen)
+  const safeEmail = getSafeEmail(cleanUsername);
 
   try {
-    // 1. Authenticate with Firebase Auth
+    // 2. Einmalige Übernahme bestehender Altkonten (KEINE automatische Neuregistrierung):
+    // Versuche zuerst den regulären Login via signInWithEmailAndPassword
     let userCredential;
-    let autoRegistered = false;
-
     try {
-      userCredential = await signInWithEmailAndPassword(auth, dummyEmail, passwordRaw);
+      userCredential = await signInWithEmailAndPassword(auth, safeEmail, passwordRaw);
     } catch (authErr: any) {
       if (
         authErr?.code === 'auth/user-not-found' ||
         authErr?.code === 'auth/invalid-credential'
       ) {
+        // 1. Suche in Firestore unter 'users' nach dem Dokument mit der ID cleanUsername
+        const userDocRef = doc(db, 'users', cleanUsername);
+        let userSnap;
         try {
-          userCredential = await createUserWithEmailAndPassword(auth, dummyEmail, passwordRaw);
-          autoRegistered = true;
+          userSnap = await getDoc(userDocRef);
+        } catch (fsErr) {
+          console.warn('Firestore read error during legacy check:', fsErr);
+        }
+
+        // 2. WICHTIGE SPERRE: Existiert das Firestore-Dokument NICHT oder enthält es KEINE Felder 'passwordHash' und 'salt',
+        // brich SOFORT ab und zeige die Fehlermeldung: "Benutzername oder Passwort falsch."
+        // Es darf unter keinen Umständen automatisch ein neues Konto registriert werden! Registrierungen sind ausschließlich über die Registrierungsseite gestattet.
+        if (!userSnap || !userSnap.exists()) {
+          return { success: false, error: 'Benutzername oder Passwort falsch.' };
+        }
+
+        const legacyData = userSnap.data();
+        if (!legacyData || !legacyData.passwordHash || !legacyData.salt) {
+          return { success: false, error: 'Benutzername oder Passwort falsch.' };
+        }
+
+        // 3. Existieren 'passwordHash' und 'salt': Verifiziere das eingegebene Passwort mit der bisherigen Hash-Logik (PBKDF2/SHA256).
+        const computedHash = await hashPassword(passwordRaw, legacyData.salt);
+
+        // 4. Ist der Hash UNGÜLTIG: Fehlermeldung "Benutzername oder Passwort falsch." anzeigen und abbrechen.
+        if (computedHash !== legacyData.passwordHash) {
+          return { success: false, error: 'Benutzername oder Passwort falsch.' };
+        }
+
+        // 5. Ist der Hash GÜLTIG (Altkonto verifiziert): Erstelle das Auth-Konto einmalig im Hintergrund mit createUserWithEmailAndPassword,
+        // aktualisiere das bestehende Firestore-Dokument mit { uid: auth.currentUser.uid } und führe den Login durch.
+        try {
+          userCredential = await createUserWithEmailAndPassword(auth, safeEmail, passwordRaw);
           if (auth.currentUser) {
             await updateProfile(auth.currentUser, { displayName: username });
+            await updateDoc(userDocRef, {
+              uid: auth.currentUser.uid,
+              email: safeEmail,
+            });
           }
         } catch (createErr: any) {
           if (createErr?.code === 'auth/email-already-in-use') {
-            return { success: false, error: 'Benutzername oder Passwort ist falsch.' };
+            return { success: false, error: 'Benutzername oder Passwort falsch.' };
           }
           return { success: false, error: getFirebaseAuthErrorMessage(createErr) };
         }
@@ -483,9 +519,8 @@ export async function loginUser(usernameRaw: string, passwordRaw: string): Promi
       setCachedAuthToken(token);
     }
 
-    // 2. Fetch user profile from Firestore: directly via doc(db, 'users', cleanUsername)
+    // Nutzerdaten und Speicherplatz aus Firestore laden über doc(db, 'users', cleanUsername)
     let userData: UserAccount | null = null;
-    const cleanUsername = username.trim().toLowerCase();
     const currentUid = auth.currentUser?.uid;
 
     try {
@@ -527,16 +562,6 @@ export async function loginUser(usernameRaw: string, passwordRaw: string): Promi
     }
 
     if (!userData) {
-      try {
-        const q = query(collection(db, 'users'), where('username', '==', cleanUsername));
-        const qSnap = await getDocs(q);
-        if (!qSnap.empty) {
-          userData = qSnap.docs[0].data() as UserAccount;
-        }
-      } catch (err) {}
-    }
-
-    if (!userData) {
       const localUsers = getLocalUsers();
       const found = localUsers.find(u => u.username.toLowerCase() === cleanUsername);
       if (found) {
@@ -544,44 +569,16 @@ export async function loginUser(usernameRaw: string, passwordRaw: string): Promi
       }
     }
 
-    // If account was auto-registered and not found in Firestore, create doc
+    // Keine Neuanlage im Login!
     if (!userData) {
-      const localUsers = getLocalUsers();
-      let isMaster = false;
-      try {
-        const allUsersSnap = await getDocs(collection(db, 'users'));
-        isMaster = allUsersSnap.empty;
-      } catch {
-        isMaster = localUsers.length === 0;
-      }
-
-      userData = {
-        username: cleanUsername,
-        role: isMaster ? 'master' : 'user',
-        status: isMaster ? 'active' : 'pending',
-        quota_gb: isMaster ? 1000 : 100,
-        createdAt: new Date().toISOString(),
-      };
-
-      try {
-        await setDoc(doc(db, 'users', cleanUsername), {
-          ...userData,
-          email: dummyEmail,
-          uid: currentUid || '',
-          serverTime: serverTimestamp(),
-        });
-      } catch (fsErr) {
-        console.warn('Could not write new user doc to Firestore:', fsErr);
-      }
-    }
-
-    if (!userData) {
-      return { success: false, error: 'Benutzerkonto konnte nicht initialisiert werden.' };
+      await signOut(auth);
+      setCachedAuthToken('');
+      return { success: false, error: 'Benutzerkonto nicht gefunden.' };
     }
 
     // Keep local cache in sync
     const localUsers = getLocalUsers();
-    const idx = localUsers.findIndex(u => u.username.toLowerCase() === username);
+    const idx = localUsers.findIndex(u => u.username.toLowerCase() === cleanUsername);
     if (idx !== -1) {
       localUsers[idx] = { ...localUsers[idx], ...userData };
     } else {
@@ -642,8 +639,8 @@ export async function changePassword(
         await updatePassword(auth.currentUser, newPasswordRaw);
       } catch (updateErr: any) {
         if (updateErr?.code === 'auth/requires-recent-login') {
-          const dummyEmail = formatDummyEmail(username);
-          await signInWithEmailAndPassword(auth, dummyEmail, currentPasswordRaw);
+          const safeEmail = getSafeEmail(username);
+          await signInWithEmailAndPassword(auth, safeEmail, currentPasswordRaw);
           if (auth.currentUser) {
             await updatePassword(auth.currentUser, newPasswordRaw);
           }
@@ -1523,15 +1520,30 @@ export async function respondToShare(
   let currentShare: FolderShare | null = null;
   let targetDocId = shareId;
 
-  // 1. Fetch document directly from Firestore by shareId
+  // 1. Geteilte Ordner: Lade das Dokument primär aus der Kollektion 'shared'
+  let foundInSharedCollection = false;
   try {
-    const snap = await getDoc(doc(db, 'shares', shareId));
-    if (snap.exists()) {
-      currentShare = normalizeShareDoc({ ...snap.data(), id: snap.id });
-      targetDocId = snap.id;
+    const sharedSnap = await getDoc(doc(db, 'shared', shareId));
+    if (sharedSnap.exists()) {
+      currentShare = normalizeShareDoc({ ...sharedSnap.data(), id: sharedSnap.id });
+      targetDocId = sharedSnap.id;
+      foundInSharedCollection = true;
     }
   } catch (err) {
-    console.warn('Firestore get share to respond error:', err);
+    console.warn('Firestore get from collection "shared" error:', err);
+  }
+
+  // Fallback: Lade aus Kollektion 'shares'
+  if (!currentShare) {
+    try {
+      const snap = await getDoc(doc(db, 'shares', shareId));
+      if (snap.exists()) {
+        currentShare = normalizeShareDoc({ ...snap.data(), id: snap.id });
+        targetDocId = snap.id;
+      }
+    } catch (err) {
+      console.warn('Firestore get share to respond error:', err);
+    }
   }
 
   // 2. If shareId has owner__path format, try fetching by normalized calculated doc id
@@ -1543,32 +1555,55 @@ export async function respondToShare(
     const calcId = getSharedFolderDocId(ownerPart, decodedPath);
     if (calcId !== shareId) {
       try {
-        const snap = await getDoc(doc(db, 'shares', calcId));
-        if (snap.exists()) {
-          currentShare = normalizeShareDoc({ ...snap.data(), id: snap.id });
-          targetDocId = snap.id;
+        const snapShared = await getDoc(doc(db, 'shared', calcId));
+        if (snapShared.exists()) {
+          currentShare = normalizeShareDoc({ ...snapShared.data(), id: snapShared.id });
+          targetDocId = snapShared.id;
+          foundInSharedCollection = true;
         }
       } catch {}
+
+      if (!currentShare) {
+        try {
+          const snap = await getDoc(doc(db, 'shares', calcId));
+          if (snap.exists()) {
+            currentShare = normalizeShareDoc({ ...snap.data(), id: snap.id });
+            targetDocId = snap.id;
+          }
+        } catch {}
+      }
     }
   }
 
-  // 3. Search Firestore by query (shared_users array-contains targetUser)
+  // 3. Search Firestore by query if needed
   if (!currentShare && targetUser) {
     try {
-      const q = query(collection(db, 'shares'), where('shared_users', 'array-contains', targetUser));
-      const qSnap = await getDocs(q);
-      for (const d of qSnap.docs) {
-        const dData = d.data();
-        if (
-          d.id === shareId ||
-          (shareId.includes('__') && d.id.toLowerCase().includes(shareId.toLowerCase()))
-        ) {
-          currentShare = normalizeShareDoc({ ...dData, id: d.id });
+      const qShared = query(collection(db, 'shared'), where('shared_users', 'array-contains', targetUser));
+      const qSnapShared = await getDocs(qShared);
+      for (const d of qSnapShared.docs) {
+        if (d.id === shareId || (shareId.includes('__') && d.id.toLowerCase().includes(shareId.toLowerCase()))) {
+          currentShare = normalizeShareDoc({ ...d.data(), id: d.id });
           targetDocId = d.id;
+          foundInSharedCollection = true;
           break;
         }
       }
     } catch {}
+
+    if (!currentShare) {
+      try {
+        const q = query(collection(db, 'shares'), where('shared_users', 'array-contains', targetUser));
+        const qSnap = await getDocs(q);
+        for (const d of qSnap.docs) {
+          const dData = d.data();
+          if (d.id === shareId || (shareId.includes('__') && d.id.toLowerCase().includes(shareId.toLowerCase()))) {
+            currentShare = normalizeShareDoc({ ...dData, id: d.id });
+            targetDocId = d.id;
+            break;
+          }
+        }
+      } catch {}
+    }
   }
 
   // 4. Fallback to local shares if Firestore fetch failed or offline
@@ -1589,78 +1624,122 @@ export async function respondToShare(
 
   if (!currentShare) return false;
 
-  let member = currentShare.shared_with.find(m =>
+  // 2. Setze im Array 'shared_with' beim Objekt des aktuellen Nutzers den status = "accepted"
+  const existingSharedWith = Array.isArray(currentShare.shared_with) ? [...currentShare.shared_with] : [];
+  let memberIdx = existingSharedWith.findIndex(m =>
     m && m.username && (targetUser ? m.username.toLowerCase() === targetUser : m.status === 'pending')
   );
 
-  if (!member && targetUser && currentShare.invited_user && currentShare.invited_user.toLowerCase() === targetUser) {
-    member = {
+  if (memberIdx === -1 && targetUser && currentShare.invited_user && currentShare.invited_user.toLowerCase() === targetUser) {
+    existingSharedWith.push({
       username: targetUser,
       status: 'pending',
       can_see_members: true,
       can_manage_members: false,
       added_at: currentShare.created_at || new Date().toISOString(),
-    };
-    currentShare.shared_with.push(member);
+    });
+    memberIdx = existingSharedWith.length - 1;
   }
 
-  if (member) {
-    if (status === 'declined') {
-      currentShare.shared_with = currentShare.shared_with.filter(m => m !== member && m.username.toLowerCase() !== targetUser);
-      currentShare.status = 'declined';
-    } else {
-      member.status = 'accepted';
-      currentShare.status = 'accepted';
+  let updatedArray: SharedMember[] = [...existingSharedWith];
+  if (status === 'accepted') {
+    if (memberIdx !== -1) {
+      updatedArray[memberIdx] = {
+        ...updatedArray[memberIdx],
+        status: 'accepted',
+      };
+    } else if (targetUser) {
+      updatedArray.push({
+        username: targetUser,
+        status: 'accepted',
+        can_see_members: true,
+        can_manage_members: false,
+        added_at: new Date().toISOString(),
+      });
     }
-    currentShare.updated_at = new Date().toISOString();
+    currentShare.status = 'accepted';
+  } else {
+    // declined
+    updatedArray = updatedArray.filter(
+      m => m?.username && m.username.toLowerCase() !== targetUser
+    );
+    currentShare.status = 'declined';
   }
+
+  currentShare.shared_with = updatedArray;
+  currentShare.updated_at = new Date().toISOString();
 
   const calculatedDocId = getSharedFolderDocId(currentShare.owner, currentShare.folder_path);
 
-  if (currentShare.shared_with.length === 0) {
+  // 3. Führe updateDoc(doc(db, 'shared', shareDocId), { shared_with: updatedArray }) aus
+  try {
+    const docRefShared = doc(db, 'shared', targetDocId);
+    if (updatedArray.length === 0 && status === 'declined') {
+      await deleteDoc(docRefShared);
+      if (targetDocId !== calculatedDocId) {
+        try { await deleteDoc(doc(db, 'shared', calculatedDocId)); } catch {}
+      }
+    } else {
+      await updateDoc(docRefShared, {
+        shared_with: updatedArray,
+        status: currentShare.status,
+        shared_users: updatedArray.map(m => m.username.toLowerCase()),
+        updated_at: currentShare.updated_at,
+      });
+    }
+  } catch (sharedErr) {
+    // Falls Dokument noch mit setDoc initialisiert werden muss
     try {
-      await deleteDoc(doc(db, 'shares', targetDocId));
-    } catch (err) {
-      console.warn('Firestore delete empty share on decline error:', err);
+      await setDoc(doc(db, 'shared', targetDocId), {
+        ...currentShare,
+        shared_with: updatedArray,
+        shared_users: updatedArray.map(m => m.username.toLowerCase()),
+      }, { merge: true });
+    } catch {}
+  }
+
+  // Auch in 'shares' spiegeln für Abwärtskompatibilität
+  try {
+    const docRefShares = doc(db, 'shares', targetDocId);
+    if (updatedArray.length === 0 && status === 'declined') {
+      await deleteDoc(docRefShares);
+      if (targetDocId !== calculatedDocId) {
+        try { await deleteDoc(doc(db, 'shares', calculatedDocId)); } catch {}
+      }
+    } else {
+      await updateDoc(docRefShares, {
+        shared_with: updatedArray,
+        status: currentShare.status,
+        shared_users: updatedArray.map(m => m.username.toLowerCase()),
+        updated_at: currentShare.updated_at,
+      });
     }
-    if (targetDocId !== calculatedDocId) {
-      try {
-        await deleteDoc(doc(db, 'shares', calculatedDocId));
-      } catch {}
-    }
+  } catch {
+    try {
+      await setDoc(doc(db, 'shares', targetDocId), {
+        ...currentShare,
+        shared_with: updatedArray,
+        shared_users: updatedArray.map(m => m.username.toLowerCase()),
+      }, { merge: true });
+    } catch {}
+  }
+
+  // Lokalen Cache aktualisieren
+  if (updatedArray.length === 0 && status === 'declined') {
     const localShares = getLocalShares().filter(s => s.id !== shareId && s.id !== targetDocId && s.id !== calculatedDocId);
     saveLocalShares(localShares);
   } else {
-    try {
-      const updatedData = {
-        ...currentShare,
-        status: currentShare.status,
-        shared_users: currentShare.shared_with.filter(m => m && m.username).map(m => m.username.toLowerCase()),
-        updated_at: currentShare.updated_at,
-      };
-      await setDoc(doc(db, 'shares', targetDocId), updatedData, { merge: true });
-
-      if (targetDocId !== calculatedDocId) {
-        try {
-          await setDoc(doc(db, 'shares', calculatedDocId), updatedData, { merge: true });
-        } catch {}
-      }
-    } catch (err) {
-      console.warn('Firestore update share on response error:', err);
-    }
     updateLocalShare(currentShare);
   }
 
-  // 5. Also notify backend API (POST /api/shares/respond) if in browser
+  // Notify backend API
   if (typeof window !== 'undefined') {
     try {
       fetch('/api/shares/respond', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ shareId, status, username: targetUser }),
-      }).catch((apiErr) => {
-        console.warn('Backend API share respond sync warning (non-fatal):', apiErr);
-      });
+      }).catch(() => {});
     } catch {}
   }
 
@@ -1673,7 +1752,17 @@ export async function getSharedFolder(folder_path: string, ownerRaw: string): Pr
   const normalizedFolderPath = normalizePath(folder_path);
   const shareDocId = getSharedFolderDocId(owner, folder_path);
 
-  // 1. Always query Firestore first for fresh statuses & permissions!
+  // 1. Kollektion 'shared' prüfen
+  try {
+    const snap = await getDoc(doc(db, 'shared', shareDocId));
+    if (snap.exists()) {
+      const fresh = normalizeShareDoc({ ...snap.data(), id: snap.id });
+      updateLocalShare(fresh);
+      return fresh;
+    }
+  } catch {}
+
+  // 2. Kollektion 'shares' prüfen
   try {
     const snap = await getDoc(doc(db, 'shares', shareDocId));
     if (snap.exists()) {
@@ -1692,26 +1781,11 @@ export async function getSharedFolder(folder_path: string, ownerRaw: string): Pr
         return fresh;
       }
     }
-
-    // Additional scan across shares
-    const qAll = query(collection(db, 'shares'));
-    const allSnap = await getDocs(qAll);
-    for (const d of allSnap.docs) {
-      const data = d.data();
-      if (
-        (data.owner || '').toLowerCase() === owner &&
-        normalizePath(data.folder_path || '') === normalizedFolderPath
-      ) {
-        const fresh = normalizeShareDoc({ ...data, id: d.id });
-        updateLocalShare(fresh);
-        return fresh;
-      }
-    }
   } catch (err) {
     console.warn('Firestore getSharedFolder error, falling back to local cache:', err);
   }
 
-  // 2. Fallback to local cache
+  // Fallback to local cache
   const local = getLocalShares().find(
     s => s.owner.toLowerCase() === owner && normalizePath(s.folder_path) === normalizedFolderPath
   );
@@ -1729,6 +1803,28 @@ export async function getSharesForInvitedUser(usernameRaw: string): Promise<Fold
   const serverResults: FolderShare[] = [];
   let firestoreSuccess = false;
 
+  // Kollektion 'shared'
+  try {
+    const qShared1 = query(collection(db, 'shared'), where('shared_users', 'array-contains', normalized));
+    const snapShared1 = await getDocs(qShared1);
+    snapShared1.docs.forEach(d => {
+      const docData = d.data();
+      if (docData) serverResults.push(normalizeShareDoc({ ...docData, id: d.id }));
+    });
+    if (!snapShared1.empty) firestoreSuccess = true;
+  } catch {}
+
+  try {
+    const qShared2 = query(collection(db, 'shared'), where('invited_user', '==', normalized));
+    const snapShared2 = await getDocs(qShared2);
+    snapShared2.docs.forEach(d => {
+      const docData = d.data();
+      if (docData) serverResults.push(normalizeShareDoc({ ...docData, id: d.id }));
+    });
+    if (!snapShared2.empty) firestoreSuccess = true;
+  } catch {}
+
+  // Kollektion 'shares'
   try {
     const q1 = query(collection(db, 'shares'), where('shared_users', 'array-contains', normalized));
     const snap1 = await getDocs(q1);
@@ -1741,7 +1837,6 @@ export async function getSharesForInvitedUser(usernameRaw: string): Promise<Fold
     console.warn('Firestore get shares for user (array-contains) error:', err);
   }
 
-  // Legacy fallback query
   try {
     const q2 = query(collection(db, 'shares'), where('invited_user', '==', normalized));
     const snap2 = await getDocs(q2);
@@ -1750,9 +1845,7 @@ export async function getSharesForInvitedUser(usernameRaw: string): Promise<Fold
       if (docData) serverResults.push(normalizeShareDoc({ ...docData, id: d.id }));
     });
     firestoreSuccess = true;
-  } catch {
-    // ignore
-  }
+  } catch {}
 
   if (firestoreSuccess) {
     const consolidated = consolidateFolderShares(serverResults);
@@ -1779,6 +1872,18 @@ export async function getSharesByOwner(usernameRaw: string): Promise<FolderShare
   const serverResults: FolderShare[] = [];
   let firestoreSuccess = false;
 
+  // Kollektion 'shared'
+  try {
+    const qShared = query(collection(db, 'shared'), where('owner', '==', normalized));
+    const snapShared = await getDocs(qShared);
+    snapShared.docs.forEach(d => {
+      const docData = d.data();
+      if (docData) serverResults.push(normalizeShareDoc({ ...docData, id: d.id }));
+    });
+    if (!snapShared.empty) firestoreSuccess = true;
+  } catch {}
+
+  // Kollektion 'shares'
   try {
     const q = query(collection(db, 'shares'), where('owner', '==', normalized));
     const snap = await getDocs(q);
