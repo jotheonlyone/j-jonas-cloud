@@ -1,5 +1,6 @@
 import type { FileItemData } from '../types';
 import { STORAGE_BASE_URL } from '../services/storageApi';
+import { getCachedAuthToken } from '../services/firebase';
 
 export const AUDIO_EXTENSIONS = ['mp3', 'wav', 'flac', 'm4a', 'ogg', 'aac', 'opus', 'wma'] as const;
 
@@ -16,22 +17,26 @@ export function isAudioFile(itemOrName: FileItemData | string | null | undefined
 
 /**
  * Returns the exact streaming URL per specification:
- * https://storage.j-jonas.com/stream?user=${currentUser}&path=${encodeURIComponent(filePath)}
+ * https://storage.j-jonas.com/stream?user=${currentUser}&path=${encodeURIComponent(filePath)}&token=${encodeURIComponent(token)}
  */
-export function getAudioStreamUrl(filePath: string, currentUser: string): string {
+export function getAudioStreamUrl(filePath: string, currentUser: string, explicitToken?: string): string {
   const cleanPath = filePath.replace(/^\/+/, '').trim();
   const cleanUser = (currentUser || 'user').trim();
-  return `${STORAGE_BASE_URL}/stream?user=${encodeURIComponent(cleanUser)}&path=${encodeURIComponent(cleanPath)}`;
+  const token = explicitToken || getCachedAuthToken();
+  const tokenParam = token ? `&token=${encodeURIComponent(token)}` : '';
+  return `${STORAGE_BASE_URL}/stream?user=${encodeURIComponent(cleanUser)}&path=${encodeURIComponent(cleanPath)}${tokenParam}`;
 }
 
 /**
  * Returns the album cover URL per specification:
- * https://storage.j-jonas.com/thumbnail?user=${currentUser}&path=${encodeURIComponent(filePath)}
+ * https://storage.j-jonas.com/thumbnail?user=${currentUser}&path=${encodeURIComponent(filePath)}&token=${encodeURIComponent(token)}
  */
-export function getAudioCoverUrl(filePath: string, currentUser: string): string {
+export function getAudioCoverUrl(filePath: string, currentUser: string, explicitToken?: string): string {
   const cleanPath = filePath.replace(/^\/+/, '').trim();
   const cleanUser = (currentUser || 'user').trim();
-  return `${STORAGE_BASE_URL}/thumbnail?user=${encodeURIComponent(cleanUser)}&path=${encodeURIComponent(cleanPath)}`;
+  const token = explicitToken || getCachedAuthToken();
+  const tokenParam = token ? `&token=${encodeURIComponent(token)}` : '';
+  return `${STORAGE_BASE_URL}/thumbnail?user=${encodeURIComponent(cleanUser)}&path=${encodeURIComponent(cleanPath)}${tokenParam}`;
 }
 
 /**

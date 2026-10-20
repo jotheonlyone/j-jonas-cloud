@@ -19,7 +19,7 @@ app.use(express.json());
  */
 app.post('/api/files/copy', async (req, res) => {
   try {
-    const result = await handleBackendFileAction('copy', req.body);
+    const result = await handleBackendFileAction('copy', req.body, req.headers.authorization);
     res.status(result.status || (result.success ? 200 : 400)).json(result);
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message || 'Serverfehler beim Kopieren' });
@@ -32,7 +32,7 @@ app.post('/api/files/copy', async (req, res) => {
  */
 app.post('/api/files/move', async (req, res) => {
   try {
-    const result = await handleBackendFileAction('move', req.body);
+    const result = await handleBackendFileAction('move', req.body, req.headers.authorization);
     res.status(result.status || (result.success ? 200 : 400)).json(result);
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message || 'Serverfehler beim Verschieben' });
@@ -45,7 +45,7 @@ app.post('/api/files/move', async (req, res) => {
 app.post('/api/files/paste', async (req, res) => {
   try {
     const action = req.body.action === 'cut' ? 'move' : 'copy';
-    const result = await handleBackendFileAction(action, req.body);
+    const result = await handleBackendFileAction(action, req.body, req.headers.authorization);
     res.status(result.status || (result.success ? 200 : 400)).json(result);
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message || 'Serverfehler beim Einfügen' });

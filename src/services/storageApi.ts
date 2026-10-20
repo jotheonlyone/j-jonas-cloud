@@ -1,6 +1,7 @@
 import type { FileItemData, StorageUsage } from '../types';
-import { getActiveUser } from './accountManager';
+import { getActiveUser, CURRENT_USER_KEY } from './accountManager';
 import { sanitizeUploadFileName, validateItemName } from '../utils/nameSanitizer';
+import { auth, getCachedAuthToken, setCachedAuthToken, getAuthToken } from './firebase';
 
 // Feste Konstante gemäß Vorgabe – kein Einstellungsfenster / keine dynamische Überschreibung
 export const STORAGE_BASE_URL = 'https://storage.j-jonas.com';
@@ -9,6 +10,82 @@ export interface ServerStatus {
   isOnline: boolean;
   latencyMs?: number;
   error?: string;
+}
+
+/**
+ * 2. Token-Mitsendung bei API-Aufrufen (Fetch / Axios):
+ *    - Hole vor jedem Aufruf das aktuelle Token via:
+ *      const token = await auth.currentUser.getIdToken();
+ *    - Hänge das Token in den Header:
+ *      headers: {
+ *        'Authorization': `Bearer ${token}`
+ *      }
+ *
+ * 4. Token-Refresh & Session:
+ *    - Fange 401-Fehler (Unauthorized) ab: Versuche das Token einmalig mit getIdToken(true) zu aktualisieren und die Anfrage zu wiederholen.
+ *      Schlägt dies fehl, leite auf den Login weiter.
+ */
+export async function storageFetch(
+  input: string | URL,
+  init: RequestInit = {},
+  isRetry = false
+): Promise<Response> {
+  let token: string | null = null;
+
+  if (auth.currentUser) {
+    try {
+      token = await auth.currentUser.getIdToken(isRetry);
+      if (token) setCachedAuthToken(token);
+    } catch (err) {
+      console.warn('Failed getting Firebase ID token:', err);
+    }
+  }
+
+  // Fallback to cached token if currentUser is not immediately ready
+  if (!token) {
+    token = getCachedAuthToken();
+  }
+
+  const headers = new Headers(init.headers || {});
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+
+  const response = await fetch(input, {
+    ...init,
+    headers,
+  });
+
+  // 401 Unauthorized handling
+  if (response.status === 401) {
+    if (!isRetry && auth.currentUser) {
+      console.warn('Storage backend returned 401 Unauthorized. Retrying with refreshed ID token...');
+      try {
+        const refreshedToken = await auth.currentUser.getIdToken(true);
+        if (refreshedToken) {
+          setCachedAuthToken(refreshedToken);
+          return storageFetch(input, init, true);
+        }
+      } catch (refreshErr) {
+        console.error('Failed to refresh Firebase ID token:', refreshErr);
+      }
+    }
+
+    // Refresh failed or second 401 error: redirect to login
+    handleAuthSessionExpired();
+  }
+
+  return response;
+}
+
+export function handleAuthSessionExpired(): void {
+  if (typeof window !== 'undefined') {
+    try {
+      setCachedAuthToken('');
+      localStorage.removeItem(CURRENT_USER_KEY);
+      window.dispatchEvent(new CustomEvent('jjcloud:session-expired'));
+    } catch {}
+  }
 }
 
 /**
@@ -21,7 +98,7 @@ export async function checkServerStatus(): Promise<ServerStatus> {
   const timeoutId = setTimeout(() => controller.abort(), 4000);
 
   try {
-    const res = await fetch(`${STORAGE_BASE_URL}/storage-usage?user=ping_check`, {
+    const res = await storageFetch(`${STORAGE_BASE_URL}/storage-usage?user=ping_check`, {
       method: 'GET',
       mode: 'cors',
       signal: controller.signal,
@@ -54,7 +131,7 @@ export async function checkServerStatus(): Promise<ServerStatus> {
  */
 export async function getStorageUsage(username: string): Promise<StorageUsage> {
   try {
-    const res = await fetch(`${STORAGE_BASE_URL}/storage-usage?user=${encodeURIComponent(username)}`, {
+    const res = await storageFetch(`${STORAGE_BASE_URL}/storage-usage?user=${encodeURIComponent(username)}`, {
       method: 'GET',
       headers: { 'Accept': 'application/json' },
     });
@@ -87,7 +164,7 @@ export async function listFiles(owner: string, relativePath = ''): Promise<{ ite
 
   try {
     const url = `${STORAGE_BASE_URL}/files?user=${encodeURIComponent(owner)}&path=${encodeURIComponent(cleanPath)}`;
-    const res = await fetch(url, {
+    const res = await storageFetch(url, {
       method: 'GET',
       headers: { 'Accept': 'application/json' },
     });
@@ -189,7 +266,7 @@ async function uploadSingleDirect(
     formData.append('fileName', safeFileName);
 
     const uploadUrl = `${STORAGE_BASE_URL}/upload?user=${encodeURIComponent(owner)}&path=${encodeURIComponent(cleanPath)}&fileName=${encodeURIComponent(safeFileName)}`;
-    const res = await fetch(uploadUrl, {
+    const res = await storageFetch(uploadUrl, {
       method: 'POST',
       body: formData,
     });
@@ -249,7 +326,7 @@ export async function uploadFileInChunks(
     const url = `${STORAGE_BASE_URL}/upload-chunk?${queryParams.toString()}`;
 
     try {
-      const res = await fetch(url, {
+      const res = await storageFetch(url, {
         method: 'POST',
         body: formData,
       });
@@ -362,7 +439,7 @@ export async function createFolder(
     const queryParams = `user=${encodeURIComponent(owner)}&path=${encodeURIComponent(cleanPath)}&name=${encodeURIComponent(folder_name)}`;
 
     // 1. Primär: POST /folders (Mini-PC Backend)
-    let res = await fetch(`${STORAGE_BASE_URL}/folders?${queryParams}`, {
+    let res = await storageFetch(`${STORAGE_BASE_URL}/folders?${queryParams}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -370,7 +447,7 @@ export async function createFolder(
 
     // 2. Fallback: POST /mkdir
     if (!res.ok && (res.status === 404 || res.status === 405)) {
-      res = await fetch(`${STORAGE_BASE_URL}/mkdir?${queryParams}`, {
+      res = await storageFetch(`${STORAGE_BASE_URL}/mkdir?${queryParams}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -379,7 +456,7 @@ export async function createFolder(
 
     // 3. Fallback: POST /create-folder (Legacy)
     if (!res.ok && (res.status === 404 || res.status === 405)) {
-      res = await fetch(`${STORAGE_BASE_URL}/create-folder`, {
+      res = await storageFetch(`${STORAGE_BASE_URL}/create-folder`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -400,35 +477,56 @@ export async function createFolder(
 }
 
 /**
- * GET /stream?user=<username>&path=<relative_path>&file=<relative_path>
- * Liefert die direkte Streaming-/Vorschau-URL mit CORS und Range-Unterstützung
+ * GET /stream?user=<username>&path=<relative_path>&token=<token>
+ * Liefert die direkte Streaming-/Vorschau-URL mit CORS und Range-Unterstützung.
+ * Hängt das Token als URL-Parameter an: /stream?user=${user}&path=${encodeURIComponent(path)}&token=${encodeURIComponent(token)}
  */
-export function getStreamUrl(itemPath: string, user?: string): string {
+export function getStreamUrl(itemPath: string, user?: string, explicitToken?: string): string {
   if (!itemPath) return '';
-  if (itemPath.startsWith('http://') || itemPath.startsWith('https://') || itemPath.startsWith('blob:')) {
+  if (itemPath.startsWith('blob:')) {
     return itemPath;
   }
+  const token = explicitToken || getCachedAuthToken();
+  const tokenParam = token ? `&token=${encodeURIComponent(token)}` : '';
+
+  if (itemPath.startsWith('http://') || itemPath.startsWith('https://')) {
+    if (token && itemPath.includes('storage.j-jonas.com') && !itemPath.includes('token=')) {
+      const sep = itemPath.includes('?') ? '&' : '?';
+      return `${itemPath}${sep}token=${encodeURIComponent(token)}`;
+    }
+    return itemPath;
+  }
+
   const clean = itemPath.replace(/^\/+/, '');
   const username = (user || getActiveUser()?.username || '').trim();
   const userParam = username ? `user=${encodeURIComponent(username)}&` : '';
 
-  return `${STORAGE_BASE_URL}/stream?${userParam}path=${encodeURIComponent(clean)}&file=${encodeURIComponent(clean)}`;
+  return `${STORAGE_BASE_URL}/stream?${userParam}path=${encodeURIComponent(clean)}&file=${encodeURIComponent(clean)}${tokenParam}`;
 }
 
 /**
  * Liefert die direkte URL zum serverseitig generierten Video-Vorschaubild (FFmpeg / WebP).
- * Ruft direkt den Storage-Backend-Endpunkt auf:
- * GET https://storage.j-jonas.com/thumbnail?user={username}&path={relativer_dateipfad}
+ * GET /thumbnail?user=${user}&path=${encodeURIComponent(path)}&token=${encodeURIComponent(token)}
  */
-export function getThumbnailUrl(item: FileItemData | string, user?: string): string {
+export function getThumbnailUrl(item: FileItemData | string, user?: string, explicitToken?: string): string {
   if (!item) return '';
 
   const activeUsername = getActiveUser()?.username || '';
   let filePath = '';
   let itemOwner = '';
 
+  const token = explicitToken || getCachedAuthToken();
+  const tokenParam = token ? `&token=${encodeURIComponent(token)}` : '';
+
   if (typeof item === 'string') {
-    if (item.startsWith('http://') || item.startsWith('https://') || item.startsWith('data:') || item.startsWith('blob:')) {
+    if (item.startsWith('data:') || item.startsWith('blob:')) {
+      return item;
+    }
+    if (item.startsWith('http://') || item.startsWith('https://')) {
+      if (token && item.includes('storage.j-jonas.com') && !item.includes('token=')) {
+        const sep = item.includes('?') ? '&' : '?';
+        return `${item}${sep}token=${encodeURIComponent(token)}`;
+      }
       return item;
     }
     filePath = item;
@@ -445,19 +543,20 @@ export function getThumbnailUrl(item: FileItemData | string, user?: string): str
   // Sicherstellen, dass currentUser niemals leer oder undefined ist
   const currentUser = (itemOwner || activeUsername || user || 'user').trim() || 'user';
 
-  return `${STORAGE_BASE_URL}/thumbnail?user=${encodeURIComponent(currentUser)}&path=${encodeURIComponent(cleanPath)}`;
+  return `${STORAGE_BASE_URL}/thumbnail?user=${encodeURIComponent(currentUser)}&path=${encodeURIComponent(cleanPath)}${tokenParam}`;
 }
 
-
 /**
- * GET /download?user=<owner>&path=<relative_path>&file=<relative_path>
- * Direkter Download im Browser.
+ * GET /download?user=<owner>&path=<relative_path>&download=true&token=<token>
+ * Direkter Download im Browser mit Token.
  */
-export function triggerDirectDownload(owner: string, filePath: string, filename: string): void {
+export async function triggerDirectDownload(owner: string, filePath: string, filename: string): Promise<void> {
   const cleanPath = filePath.trim().replace(/^\/+/, '');
   const username = (owner || getActiveUser()?.username || '').trim();
   const userParam = username ? `user=${encodeURIComponent(username)}&` : '';
-  const downloadUrl = `${STORAGE_BASE_URL}/download?${userParam}path=${encodeURIComponent(cleanPath)}&download=true`;
+  const token = await getAuthToken();
+  const tokenParam = token ? `&token=${encodeURIComponent(token)}` : '';
+  const downloadUrl = `${STORAGE_BASE_URL}/download?${userParam}path=${encodeURIComponent(cleanPath)}&download=true${tokenParam}`;
 
   const a = document.createElement('a');
   a.href = downloadUrl;
@@ -474,7 +573,7 @@ export function triggerDirectDownload(owner: string, filePath: string, filename:
 export async function deleteUserServerDirectory(username: string): Promise<{ success: boolean; error?: string }> {
   try {
     // 1. Try /delete-user endpoint
-    const res = await fetch(`${STORAGE_BASE_URL}/delete-user?user=${encodeURIComponent(username)}`, {
+    const res = await storageFetch(`${STORAGE_BASE_URL}/delete-user?user=${encodeURIComponent(username)}`, {
       method: 'DELETE',
     });
 
@@ -483,7 +582,7 @@ export async function deleteUserServerDirectory(username: string): Promise<{ suc
     }
 
     // 2. Fallback to /delete root item
-    const fallbackRes = await fetch(
+    const fallbackRes = await storageFetch(
       `${STORAGE_BASE_URL}/delete?user=${encodeURIComponent(username)}&item=&path=`,
       { method: 'DELETE' }
     );
@@ -526,7 +625,7 @@ export async function deleteItem(
     };
 
     // 1. DELETE /delete mit Query-Parametern und Body
-    let res = await fetch(`${STORAGE_BASE_URL}/delete?${queryParams}`, {
+    let res = await storageFetch(`${STORAGE_BASE_URL}/delete?${queryParams}`, {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -538,7 +637,7 @@ export async function deleteItem(
 
     // 2. Fallback: DELETE /files
     if (res.status === 404 || res.status === 405) {
-      res = await fetch(`${STORAGE_BASE_URL}/files?${queryParams}`, {
+      res = await storageFetch(`${STORAGE_BASE_URL}/files?${queryParams}`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -588,7 +687,7 @@ export async function renameItem(
     const queryParams = `user=${encodeURIComponent(owner)}`;
 
     // 1. POST /rename
-    let res = await fetch(`${STORAGE_BASE_URL}/rename?${queryParams}`, {
+    let res = await storageFetch(`${STORAGE_BASE_URL}/rename?${queryParams}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -600,7 +699,7 @@ export async function renameItem(
 
     // 2. Fallback: PUT /rename
     if (res.status === 404 || res.status === 405) {
-      res = await fetch(`${STORAGE_BASE_URL}/rename?${queryParams}`, {
+      res = await storageFetch(`${STORAGE_BASE_URL}/rename?${queryParams}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -646,7 +745,7 @@ export async function copyItem(
 
   // 1. Try local full-stack endpoint /api/files/copy with authorization check
   try {
-    const localRes = await fetch('/api/files/copy', {
+    const localRes = await storageFetch('/api/files/copy', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -697,14 +796,14 @@ export async function copyItem(
       can_write: options?.canWrite ?? true,
     };
 
-    let res = await fetch(`${STORAGE_BASE_URL}/copy`, {
+    let res = await storageFetch(`${STORAGE_BASE_URL}/copy`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
 
     if (!res.ok && (res.status === 404 || res.status === 405)) {
-      res = await fetch(`${STORAGE_BASE_URL}/files/copy`, {
+      res = await storageFetch(`${STORAGE_BASE_URL}/files/copy`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -719,7 +818,7 @@ export async function copyItem(
     if (sourceOwner.toLowerCase() !== targetOwner.toLowerCase()) {
       try {
         const streamUrl = getStreamUrl(cleanSource, sourceOwner);
-        const fileRes = await fetch(streamUrl);
+        const fileRes = await storageFetch(streamUrl);
         if (fileRes.ok) {
           const blob = await fileRes.blob();
           const fileName = cleanDest.split('/').pop() || cleanSource.split('/').pop() || 'file';
@@ -766,7 +865,7 @@ export async function moveItem(
 
   // 1. Try local full-stack endpoint /api/files/move with authorization check
   try {
-    const localRes = await fetch('/api/files/move', {
+    const localRes = await storageFetch('/api/files/move', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -817,14 +916,14 @@ export async function moveItem(
       can_write: options?.canWrite ?? true,
     };
 
-    let res = await fetch(`${STORAGE_BASE_URL}/move`, {
+    let res = await storageFetch(`${STORAGE_BASE_URL}/move`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
 
     if (!res.ok && (res.status === 404 || res.status === 405)) {
-      res = await fetch(`${STORAGE_BASE_URL}/files/move`, {
+      res = await storageFetch(`${STORAGE_BASE_URL}/files/move`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -839,7 +938,7 @@ export async function moveItem(
     if (sourceOwner.toLowerCase() !== targetOwner.toLowerCase()) {
       try {
         const streamUrl = getStreamUrl(cleanSource, sourceOwner);
-        const fileRes = await fetch(streamUrl);
+        const fileRes = await storageFetch(streamUrl);
         if (fileRes.ok) {
           const blob = await fileRes.blob();
           const fileName = cleanDest.split('/').pop() || cleanSource.split('/').pop() || 'file';
@@ -884,7 +983,7 @@ export async function getFileMetadata(
   const userParam = username ? `user=${encodeURIComponent(username)}&` : '';
 
   try {
-    const res = await fetch(`${STORAGE_BASE_URL}/metadata?${userParam}path=${encodeURIComponent(cleanPath)}`, {
+    const res = await storageFetch(`${STORAGE_BASE_URL}/metadata?${userParam}path=${encodeURIComponent(cleanPath)}`, {
       method: 'GET',
       headers: { Accept: 'application/json' },
     });
@@ -935,7 +1034,7 @@ export async function setFileMetadata(
       description: description.trim(),
     };
 
-    const res = await fetch(`${STORAGE_BASE_URL}/set-metadata`, {
+    const res = await storageFetch(`${STORAGE_BASE_URL}/set-metadata`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -982,7 +1081,7 @@ export async function getPublicFolderFiles(
 ): Promise<{ isFolder: boolean; items: FileItemData[]; error?: string }> {
   const cleanPath = relativePath.trim().replace(/^\/+|\/+$/g, '');
   try {
-    const res = await fetch(
+    const res = await storageFetch(
       `${STORAGE_BASE_URL}/public-files/${encodeURIComponent(username)}/${cleanPath ? encodeURIComponent(cleanPath) : ''}`,
       {
         method: 'GET',

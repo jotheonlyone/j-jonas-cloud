@@ -17,6 +17,7 @@ import {
   getSharesForInvitedUser,
   getSharesByOwner,
   respondToShare,
+  logoutFirebaseAuth,
 } from './services/firebase';
 import {
   listFiles,
@@ -657,8 +658,23 @@ function MainApp() {
     }
   };
 
+  // 4. Token-Refresh & Session: Redirect to login when 401 session expires
+  useEffect(() => {
+    const handleSessionExpired = () => {
+      logoutFirebaseAuth().catch(() => {});
+      setUser(null);
+      setSavedAccounts([]);
+      setCurrentPath('');
+      setItems([]);
+      addToast('error', 'Sitzung abgelaufen', 'Deine Sitzung ist abgelaufen. Bitte melde dich erneut an.');
+    };
+    window.addEventListener('jjcloud:session-expired', handleSessionExpired);
+    return () => window.removeEventListener('jjcloud:session-expired', handleSessionExpired);
+  }, [addToast]);
+
   const handleLogoutCurrentAccount = () => {
     if (!user) return;
+    logoutFirebaseAuth().catch(() => {});
     const { remainingAccounts, nextUser } = logoutCurrentAccount(user.username);
     setSavedAccounts(remainingAccounts);
     setCurrentPath('');
@@ -676,6 +692,7 @@ function MainApp() {
   };
 
   const handleLogoutAllAccounts = () => {
+    logoutFirebaseAuth().catch(() => {});
     logoutAllAccounts();
     setUser(null);
     setSavedAccounts([]);

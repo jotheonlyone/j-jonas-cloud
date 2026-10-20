@@ -16,7 +16,7 @@ import {
   ArrowLeft
 } from 'lucide-react';
 import { getActiveUser } from '../services/accountManager';
-import { getStreamUrl, triggerDirectDownload, getFileMetadata } from '../services/storageApi';
+import { getStreamUrl, triggerDirectDownload, getFileMetadata, storageFetch } from '../services/storageApi';
 import { isImageFile, isVideoFile, isPdfFile } from './MediaViewerModal';
 import { getSmallFileIcon } from './FileItem';
 import { isAudioFile } from '../utils/audioPlayerUtils';
@@ -111,7 +111,7 @@ export const FileViewerPage: React.FC<FileViewerPageProps> = ({
     if (isTxt && streamUrl && activeUser) {
       setIsTextLoading(true);
       setTextError(null);
-      fetch(streamUrl)
+      storageFetch(streamUrl)
         .then((res) => {
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           return res.text();

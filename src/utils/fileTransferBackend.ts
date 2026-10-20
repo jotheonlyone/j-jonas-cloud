@@ -88,7 +88,8 @@ export async function validateTransferAuthorization(
  */
 export async function handleBackendFileAction(
   action: 'copy' | 'move',
-  payload: FileActionPayload
+  payload: FileActionPayload,
+  authHeader?: string
 ): Promise<{ success: boolean; error?: string; status?: number }> {
   // 1. Verify authorization
   const auth = await validateTransferAuthorization(payload);
@@ -125,18 +126,25 @@ export async function handleBackendFileAction(
     can_write: true,
   };
 
+  const reqHeaders: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (authHeader) {
+    reqHeaders['Authorization'] = authHeader;
+  }
+
   try {
     const endpoint = action === 'copy' ? '/copy' : '/move';
     let res = await fetch(`${STORAGE_BASE_URL}${endpoint}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: reqHeaders,
       body: JSON.stringify(forwardPayload),
     });
 
     if (!res.ok && (res.status === 404 || res.status === 405)) {
       res = await fetch(`${STORAGE_BASE_URL}/files${endpoint}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: reqHeaders,
         body: JSON.stringify(forwardPayload),
       });
     }

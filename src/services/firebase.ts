@@ -1,5 +1,16 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
+  getAuth,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  updateProfile,
+  updatePassword,
+  signOut,
+  onAuthStateChanged,
+  onIdTokenChanged,
+  type User as FirebaseUser,
+} from 'firebase/auth';
+import {
   getFirestore,
   doc,
   getDoc,
@@ -28,6 +39,123 @@ const firebaseConfig = {
 
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 export const db = getFirestore(app);
+export const auth = getAuth(app);
+
+// Helper to convert plain username to dummy email
+export function formatDummyEmail(username: string): string {
+  return `${username.trim().toLowerCase()}@cloud.j-jonas.com`;
+}
+
+// Token cache in memory and storage for fast synchronous access by <img>, <video>, etc.
+const TOKEN_CACHE_KEY = 'jjcloud_cached_id_token';
+
+let cachedIdToken: string = (() => {
+  try {
+    if (typeof window !== 'undefined') {
+      return sessionStorage.getItem(TOKEN_CACHE_KEY) || localStorage.getItem(TOKEN_CACHE_KEY) || '';
+    }
+  } catch {}
+  return '';
+})();
+
+export function getCachedAuthToken(): string {
+  return cachedIdToken;
+}
+
+export function setCachedAuthToken(token: string): void {
+  cachedIdToken = token;
+  try {
+    if (typeof window !== 'undefined') {
+      if (token) {
+        sessionStorage.setItem(TOKEN_CACHE_KEY, token);
+        localStorage.setItem(TOKEN_CACHE_KEY, token);
+      } else {
+        sessionStorage.removeItem(TOKEN_CACHE_KEY);
+        localStorage.removeItem(TOKEN_CACHE_KEY);
+      }
+    }
+  } catch {}
+}
+
+/**
+ * Holt vor jedem Aufruf das aktuelle Token via:
+ * const token = await auth.currentUser.getIdToken();
+ */
+export async function getAuthToken(forceRefresh = false): Promise<string> {
+  if (auth.currentUser) {
+    try {
+      const token = await auth.currentUser.getIdToken(forceRefresh);
+      if (token) setCachedAuthToken(token);
+      return token;
+    } catch (err) {
+      console.warn('Failed to retrieve Firebase ID token:', err);
+    }
+  }
+  return cachedIdToken || '';
+}
+
+/**
+ * Logout Firebase Auth session & clear tokens
+ */
+export async function logoutFirebaseAuth(): Promise<void> {
+  setCachedAuthToken('');
+  try {
+    await signOut(auth);
+  } catch (err) {
+    console.warn('Firebase signOut warning:', err);
+  }
+}
+
+/**
+ * Translates Firebase Auth error codes into friendly user messages
+ */
+export function getFirebaseAuthErrorMessage(err: any): string {
+  if (!err) return 'Authentifizierungsfehler.';
+  const code = err.code || '';
+  switch (code) {
+    case 'auth/user-not-found':
+    case 'auth/wrong-password':
+    case 'auth/invalid-credential':
+      return 'Benutzername oder Passwort ist falsch.';
+    case 'auth/email-already-in-use':
+      return 'Dieser Benutzername ist bereits vergeben.';
+    case 'auth/weak-password':
+      return 'Das Passwort muss mindestens 6 Zeichen lang sein.';
+    case 'auth/too-many-requests':
+      return 'Zu viele fehlgeschlagene Anmeldeversuche. Bitte warte einen Moment.';
+    case 'auth/network-request-failed':
+      return 'Netzwerkfehler: Keine Verbindung zum Authentifizierungsserver.';
+    case 'auth/user-disabled':
+      return 'Dieser Account wurde deaktiviert.';
+    default:
+      return err.message || 'Authentifizierung fehlgeschlagen.';
+  }
+}
+
+// Background sync on token or auth state changes
+if (typeof window !== 'undefined') {
+  onAuthStateChanged(auth, async (fbUser) => {
+    if (fbUser) {
+      try {
+        const token = await fbUser.getIdToken();
+        setCachedAuthToken(token);
+      } catch {}
+    } else {
+      setCachedAuthToken('');
+    }
+  });
+
+  onIdTokenChanged(auth, async (fbUser) => {
+    if (fbUser) {
+      try {
+        const token = await fbUser.getIdToken();
+        setCachedAuthToken(token);
+      } catch {}
+    } else {
+      setCachedAuthToken('');
+    }
+  });
+}
 
 // Client-side SHA-256 with salt helper
 export async function hashPassword(password: string, salt: string): Promise<string> {
@@ -246,27 +374,30 @@ export async function registerUser(usernameRaw: string, passwordRaw: string): Pr
     return { success: false, error: 'Passwort muss mindestens 6 Zeichen lang sein.' };
   }
 
+  const dummyEmail = formatDummyEmail(username);
+
   try {
-    // 1. Check if user already exists in Firestore
-    const userDocRef = doc(db, 'users', username);
-    let existingDoc;
+    // 1. Create in Firebase Auth
+    let userCredential;
     try {
-      existingDoc = await getDoc(userDocRef);
-    } catch (fsErr) {
-      console.warn('Firestore getDoc check error, checking local fallback:', fsErr);
+      userCredential = await createUserWithEmailAndPassword(auth, dummyEmail, passwordRaw);
+      if (auth.currentUser) {
+        await updateProfile(auth.currentUser, { displayName: username });
+      }
+    } catch (authErr: any) {
+      if (authErr?.code === 'auth/email-already-in-use') {
+        return { success: false, error: 'Dieser Benutzername ist bereits vergeben.' };
+      }
+      return { success: false, error: getFirebaseAuthErrorMessage(authErr) };
     }
 
-    if (existingDoc && existingDoc.exists()) {
-      return { success: false, error: 'Dieser Benutzername ist bereits vergeben.' };
-    }
-
-    // Also check local cache
-    const localUsers = getLocalUsers();
-    if (localUsers.some(u => u.username.toLowerCase() === username)) {
-      return { success: false, error: 'Dieser Benutzername ist bereits vergeben.' };
+    if (auth.currentUser) {
+      const token = await auth.currentUser.getIdToken();
+      setCachedAuthToken(token);
     }
 
     // 2. Determine if this is the very first user (Master-Account)
+    const localUsers = getLocalUsers();
     let isMaster = false;
     try {
       const allUsersSnap = await getDocs(collection(db, 'users'));
@@ -289,6 +420,7 @@ export async function registerUser(usernameRaw: string, passwordRaw: string): Pr
     };
 
     // Save to Firestore
+    const userDocRef = doc(db, 'users', username);
     try {
       await setDoc(userDocRef, {
         ...newUser,
@@ -324,12 +456,51 @@ export async function loginUser(usernameRaw: string, passwordRaw: string): Promi
     return { success: false, error: 'Bitte Benutzername und Passwort eingeben.' };
   }
 
-  try {
-    let userData: UserAccount | null = null;
+  const dummyEmail = formatDummyEmail(username);
 
-    // Try Firestore first
+  try {
+    // 1. Authenticate with Firebase Auth
+    // Nutze signInWithEmailAndPassword(auth, dummyEmail, password).
+    // Falls der Account bei der Anmeldung noch nicht existiert (Fehlercode 'auth/user-not-found'),
+    // registriere den Nutzer automatisch mit createUserWithEmailAndPassword(auth, dummyEmail, password)
+    // und setze den displayName auf den reinen Benutzernamen (updateProfile(auth.currentUser, { displayName: username })).
+    let userCredential;
+    let autoRegistered = false;
+
     try {
-      const userDocRef = doc(db, 'users', username);
+      userCredential = await signInWithEmailAndPassword(auth, dummyEmail, passwordRaw);
+    } catch (authErr: any) {
+      if (
+        authErr?.code === 'auth/user-not-found' ||
+        authErr?.code === 'auth/invalid-credential'
+      ) {
+        try {
+          userCredential = await createUserWithEmailAndPassword(auth, dummyEmail, passwordRaw);
+          autoRegistered = true;
+          if (auth.currentUser) {
+            await updateProfile(auth.currentUser, { displayName: username });
+          }
+        } catch (createErr: any) {
+          if (createErr?.code === 'auth/email-already-in-use') {
+            return { success: false, error: 'Benutzername oder Passwort ist falsch.' };
+          }
+          return { success: false, error: getFirebaseAuthErrorMessage(createErr) };
+        }
+      } else {
+        return { success: false, error: getFirebaseAuthErrorMessage(authErr) };
+      }
+    }
+
+    if (auth.currentUser) {
+      const token = await auth.currentUser.getIdToken();
+      setCachedAuthToken(token);
+    }
+
+    // 2. Fetch or initialize user profile in Firestore
+    let userData: UserAccount | null = null;
+    const userDocRef = doc(db, 'users', username);
+
+    try {
       const userSnap = await getDoc(userDocRef);
       if (userSnap.exists()) {
         userData = userSnap.data() as UserAccount;
@@ -338,7 +509,6 @@ export async function loginUser(usernameRaw: string, passwordRaw: string): Promi
       console.warn('Firestore read error during login, falling back to local store:', fsErr);
     }
 
-    // Fallback to local store if not found in Firestore
     if (!userData) {
       const localUsers = getLocalUsers();
       const found = localUsers.find(u => u.username.toLowerCase() === username);
@@ -347,15 +517,49 @@ export async function loginUser(usernameRaw: string, passwordRaw: string): Promi
       }
     }
 
+    // If account was auto-registered or not yet in Firestore, create user doc
     if (!userData) {
-      return { success: false, error: 'Benutzername oder Passwort ist falsch.' };
+      const localUsers = getLocalUsers();
+      let isMaster = false;
+      try {
+        const allUsersSnap = await getDocs(collection(db, 'users'));
+        isMaster = allUsersSnap.empty;
+      } catch {
+        isMaster = localUsers.length === 0;
+      }
+
+      const salt = generateSalt();
+      const passwordHash = await hashPassword(passwordRaw, salt);
+
+      userData = {
+        username,
+        passwordHash,
+        salt,
+        role: isMaster ? 'master' : 'user',
+        status: 'active',
+        quota_gb: isMaster ? 1000 : 100,
+        createdAt: new Date().toISOString(),
+      };
+
+      try {
+        await setDoc(userDocRef, {
+          ...userData,
+          serverTime: serverTimestamp(),
+        });
+      } catch (fsErr) {
+        console.warn('Could not write new user doc to Firestore:', fsErr);
+      }
     }
 
-    // Check password
-    const checkHash = await hashPassword(passwordRaw, userData.salt);
-    if (checkHash !== userData.passwordHash) {
-      return { success: false, error: 'Benutzername oder Passwort ist falsch.' };
+    // Keep local cache in sync
+    const localUsers = getLocalUsers();
+    const idx = localUsers.findIndex(u => u.username.toLowerCase() === username);
+    if (idx !== -1) {
+      localUsers[idx] = { ...localUsers[idx], ...userData };
+    } else {
+      localUsers.push(userData);
     }
+    saveLocalUsers(localUsers);
 
     // Check account status
     if (userData.status === 'pending') {
@@ -400,6 +604,23 @@ export async function changePassword(
   }
 
   try {
+    // If Firebase Auth currentUser is present, update password in Firebase Auth
+    if (auth.currentUser) {
+      try {
+        await updatePassword(auth.currentUser, newPasswordRaw);
+      } catch (updateErr: any) {
+        if (updateErr?.code === 'auth/requires-recent-login') {
+          const dummyEmail = formatDummyEmail(username);
+          await signInWithEmailAndPassword(auth, dummyEmail, currentPasswordRaw);
+          if (auth.currentUser) {
+            await updatePassword(auth.currentUser, newPasswordRaw);
+          }
+        } else {
+          return { success: false, error: getFirebaseAuthErrorMessage(updateErr) };
+        }
+      }
+    }
+
     let userData: UserAccount | null = null;
     const userDocRef = doc(db, 'users', username);
 
@@ -421,10 +642,12 @@ export async function changePassword(
       return { success: false, error: 'Benutzerkonto nicht gefunden.' };
     }
 
-    // Verify current password
-    const currentHash = await hashPassword(currentPasswordRaw, userData.salt);
-    if (currentHash !== userData.passwordHash) {
-      return { success: false, error: 'Das aktuelle Passwort ist nicht korrekt.' };
+    // Verify current password hash if present
+    if (userData.salt && userData.passwordHash) {
+      const currentHash = await hashPassword(currentPasswordRaw, userData.salt);
+      if (currentHash !== userData.passwordHash) {
+        return { success: false, error: 'Das aktuelle Passwort ist nicht korrekt.' };
+      }
     }
 
     // Generate new salt and new hash
