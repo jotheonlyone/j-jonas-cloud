@@ -395,9 +395,10 @@ export async function registerUser(usernameRaw: string, passwordRaw: string): Pr
       return { success: false, error: 'Nutzer konnte nicht registriert werden.' };
     }
 
-    // 2. Schreibe das Dokument in die bereits existierende Kollektion 'users':
-    await setDoc(doc(db, 'users', auth.currentUser.uid), {
-      username: username.trim().toLowerCase(),
+    const cleanUsername = username.trim().toLowerCase();
+    await setDoc(doc(db, 'users', cleanUsername), {
+      uid: auth.currentUser.uid,
+      username: cleanUsername,
       email: dummyEmail,
       status: 'pending',
       role: 'user',
@@ -405,21 +406,10 @@ export async function registerUser(usernameRaw: string, passwordRaw: string): Pr
       createdAt: new Date().toISOString()
     });
 
-    // Zusätzlicher Schreibvorgang mit Username als Doc-ID für Rückwärtskompatibilität
-    try {
-      await setDoc(doc(db, 'users', username), {
-        username: username.trim().toLowerCase(),
-        email: dummyEmail,
-        status: 'pending',
-        role: 'user',
-        quota_gb: 100,
-        uid: auth.currentUser.uid,
-        createdAt: new Date().toISOString()
-      });
-    } catch {}
-
     const newUser: UserAccount = {
-      username,
+      username: cleanUsername,
+      email: dummyEmail,
+      uid: auth.currentUser.uid,
       role: 'user',
       status: 'pending',
       quota_gb: 100,
@@ -493,15 +483,43 @@ export async function loginUser(usernameRaw: string, passwordRaw: string): Promi
       setCachedAuthToken(token);
     }
 
-    // 2. Fetch user profile from Firestore: check by uid first, then by username, or query
+    // 2. Fetch user profile from Firestore: directly via doc(db, 'users', cleanUsername)
     let userData: UserAccount | null = null;
+    const cleanUsername = username.trim().toLowerCase();
     const currentUid = auth.currentUser?.uid;
 
-    if (currentUid) {
+    try {
+      const userDocRef = doc(db, 'users', cleanUsername);
+      const userSnap = await getDoc(userDocRef);
+      if (userSnap.exists()) {
+        const d = userSnap.data();
+        userData = {
+          ...d,
+          username: d.username || cleanUsername,
+          quota_gb: typeof d.quota_gb === 'number' ? d.quota_gb : 100,
+          status: d.status || 'pending',
+          role: d.role || 'user',
+          createdAt: d.createdAt || new Date().toISOString(),
+        } as UserAccount;
+      }
+    } catch (fsErr) {
+      console.warn('Firestore read error during login:', fsErr);
+    }
+
+    // Fallback if user document was keyed by uid
+    if (!userData && currentUid) {
       try {
         const uidSnap = await getDoc(doc(db, 'users', currentUid));
         if (uidSnap.exists()) {
-          userData = uidSnap.data() as UserAccount;
+          const d = uidSnap.data();
+          userData = {
+            ...d,
+            username: d.username || cleanUsername,
+            quota_gb: typeof d.quota_gb === 'number' ? d.quota_gb : 100,
+            status: d.status || 'pending',
+            role: d.role || 'user',
+            createdAt: d.createdAt || new Date().toISOString(),
+          } as UserAccount;
         }
       } catch (fsErr) {
         console.warn('Firestore read error by uid:', fsErr);
@@ -509,20 +527,8 @@ export async function loginUser(usernameRaw: string, passwordRaw: string): Promi
     }
 
     if (!userData) {
-      const userDocRef = doc(db, 'users', username);
       try {
-        const userSnap = await getDoc(userDocRef);
-        if (userSnap.exists()) {
-          userData = userSnap.data() as UserAccount;
-        }
-      } catch (fsErr) {
-        console.warn('Firestore read error during login:', fsErr);
-      }
-    }
-
-    if (!userData) {
-      try {
-        const q = query(collection(db, 'users'), where('username', '==', username));
+        const q = query(collection(db, 'users'), where('username', '==', cleanUsername));
         const qSnap = await getDocs(q);
         if (!qSnap.empty) {
           userData = qSnap.docs[0].data() as UserAccount;
@@ -532,7 +538,7 @@ export async function loginUser(usernameRaw: string, passwordRaw: string): Promi
 
     if (!userData) {
       const localUsers = getLocalUsers();
-      const found = localUsers.find(u => u.username.toLowerCase() === username);
+      const found = localUsers.find(u => u.username.toLowerCase() === cleanUsername);
       if (found) {
         userData = found;
       }
@@ -550,26 +556,18 @@ export async function loginUser(usernameRaw: string, passwordRaw: string): Promi
       }
 
       userData = {
-        username,
+        username: cleanUsername,
         role: isMaster ? 'master' : 'user',
         status: isMaster ? 'active' : 'pending',
         quota_gb: isMaster ? 1000 : 100,
         createdAt: new Date().toISOString(),
       };
 
-      if (currentUid) {
-        try {
-          await setDoc(doc(db, 'users', currentUid), {
-            ...userData,
-            email: dummyEmail,
-            serverTime: serverTimestamp(),
-          });
-        } catch {}
-      }
       try {
-        await setDoc(doc(db, 'users', username), {
+        await setDoc(doc(db, 'users', cleanUsername), {
           ...userData,
           email: dummyEmail,
+          uid: currentUid || '',
           serverTime: serverTimestamp(),
         });
       } catch (fsErr) {
