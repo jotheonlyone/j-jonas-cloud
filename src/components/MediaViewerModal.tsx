@@ -7,12 +7,14 @@ import {
   Maximize2,
   FileText,
   Video as VideoIcon,
-  Image as ImageIcon
+  Image as ImageIcon,
+  FileCode
 } from 'lucide-react';
 import type { FileItemData } from '../types';
 import { getStreamUrl } from '../services/storageApi';
 import { isAudioFile } from '../utils/audioPlayerUtils';
 import { StandaloneAudioPlayer } from './AudioPlayer';
+import { TextViewer, isTextFile } from './TextViewer';
 
 interface MediaViewerModalProps {
   isOpen: boolean;
@@ -66,6 +68,7 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
   const isCurrentAVideo = currentItem ? isVideoFile(currentItem) : false;
   const isCurrentAPdf = currentItem ? isPdfFile(currentItem) : false;
   const isCurrentAnAudio = currentItem ? isAudioFile(currentItem) : false;
+  const isCurrentAText = currentItem ? isTextFile(currentItem.name, currentItem.mime_type) : false;
 
   const handlePrevImage = () => {
     if (currentImageIndex > 0) {
@@ -173,6 +176,7 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
             {isCurrentAnImage && <ImageIcon className="w-5 h-5 text-emerald-400 shrink-0" />}
             {isCurrentAVideo && <VideoIcon className="w-5 h-5 text-violet-400 shrink-0" />}
             {isCurrentAPdf && <FileText className="w-5 h-5 text-red-400 shrink-0" />}
+            {isCurrentAText && <FileCode className="w-5 h-5 text-blue-400 shrink-0" />}
             <span className="text-sm font-semibold truncate max-w-xs sm:max-w-md" title={currentItem.name}>
               {currentItem.name}
             </span>
@@ -308,8 +312,20 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
             </div>
           )}
 
+          {/* TEXT / CODE VIEWER MODAL */}
+          {isCurrentAText && (
+            <div className="w-full h-full max-h-[78vh] flex items-center justify-center p-2 sm:p-4 min-h-0 select-text">
+              <TextViewer
+                fileName={currentItem.name}
+                url={streamUrl}
+                isPublic={false}
+                maxHeightClass="max-h-[75vh]"
+              />
+            </div>
+          )}
+
           {/* Fallback for other file types */}
-          {!isCurrentAnImage && !isCurrentAVideo && !isCurrentAPdf && !isCurrentAnAudio && (
+          {!isCurrentAnImage && !isCurrentAVideo && !isCurrentAPdf && !isCurrentAnAudio && !isCurrentAText && (
             <div className="flex flex-col items-center justify-center p-8 text-center text-white select-none">
               <FileText className="w-16 h-16 text-gray-400 mb-4" />
               <h3 className="text-lg font-bold">{currentItem.name}</h3>

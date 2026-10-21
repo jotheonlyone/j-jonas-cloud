@@ -34,6 +34,7 @@ import {
   STORAGE_BASE_URL,
 } from '../services/storageApi';
 import { getPublicFileShare } from '../services/firebase';
+import { TextViewer, isTextFile } from './TextViewer';
 
 interface PublicShareViewProps {
   darkMode?: boolean;
@@ -245,7 +246,8 @@ export const PublicShareView: React.FC<PublicShareViewProps> = ({
   const isAudio = ['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac', 'weba', 'opus', 'mid'].includes(ext) || mimeType.startsWith('audio/');
   const isImage = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'svg', 'avif', 'bmp', 'ico'].includes(ext) || mimeType.startsWith('image/');
   const isPdf = ext === 'pdf' || mimeType.includes('pdf');
-  const isPreviewable = isVideo || isAudio || isImage || isPdf || Boolean(shareId);
+  const isText = isTextFile(fileName, mimeType);
+  const isPreviewable = isVideo || isAudio || isImage || isPdf || isText || Boolean(shareId);
 
   const handleDownload = () => {
     if (!downloadUrl) return;
@@ -501,7 +503,18 @@ export const PublicShareView: React.FC<PublicShareViewProps> = ({
                   />
                 )}
 
-                {!isVideo && !isAudio && !isImage && !isPdf && (
+                {isText && (
+                  <div className="w-full flex items-center justify-center min-h-0 select-text">
+                    <TextViewer
+                      fileName={fileName}
+                      url={publicMediaUrl}
+                      isPublic={true}
+                      maxHeightClass="max-h-[60vh]"
+                    />
+                  </div>
+                )}
+
+                {!isVideo && !isAudio && !isImage && !isPdf && !isText && (
                   <div className="p-4 bg-gray-900 rounded-2xl text-center">
                     <video
                       src={publicMediaUrl}

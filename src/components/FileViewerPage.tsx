@@ -21,15 +21,8 @@ import { isImageFile, isVideoFile, isPdfFile } from './MediaViewerModal';
 import { getSmallFileIcon } from './FileItem';
 import { isAudioFile } from '../utils/audioPlayerUtils';
 import { StandaloneAudioPlayer } from './AudioPlayer';
-
-export function isTextFile(fileName: string): boolean {
-  const ext = fileName.split('.').pop()?.toLowerCase() || '';
-  return [
-    'txt', 'md', 'json', 'js', 'ts', 'tsx', 'jsx', 'html', 'css',
-    'py', 'sh', 'log', 'csv', 'xml', 'yaml', 'yml', 'env', 'ini',
-    'sql', 'conf', 'rtf'
-  ].includes(ext);
-}
+import { TextViewer, isTextFile } from './TextViewer';
+export { isTextFile };
 
 interface FileViewerPageProps {
   darkMode?: boolean;
@@ -397,26 +390,13 @@ export const FileViewerPage: React.FC<FileViewerPageProps> = ({
 
         {/* 4. TEXT / CODE VIEWER */}
         {isTxt && (
-          <div className="w-full h-full max-w-5xl max-h-[88vh] flex flex-col rounded-2xl overflow-hidden shadow-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
-            <div className="px-4 py-2.5 bg-gray-50 dark:bg-gray-800/80 border-b border-gray-200 dark:border-gray-700/80 flex items-center justify-between text-xs text-gray-500">
-              <span className="font-mono">{name}</span>
-              <span>{textContent ? `${textContent.split('\n').length} Zeilen` : 'Wird geladen...'}</span>
-            </div>
-            <div className="flex-1 overflow-auto p-4 sm:p-6 font-mono text-xs leading-relaxed">
-              {isTextLoading ? (
-                <div className="h-full flex items-center justify-center text-gray-400">
-                  <span>Inhalt wird geladen...</span>
-                </div>
-              ) : textError ? (
-                <div className="h-full flex items-center justify-center text-red-500">
-                  <span>{textError}</span>
-                </div>
-              ) : (
-                <pre className="whitespace-pre-wrap break-words text-gray-800 dark:text-gray-200">
-                  {textContent}
-                </pre>
-              )}
-            </div>
+          <div className="w-full h-full max-w-5xl max-h-[88vh] flex items-center justify-center">
+            <TextViewer
+              fileName={name}
+              url={streamUrl}
+              isPublic={false}
+              maxHeightClass="max-h-[88vh]"
+            />
           </div>
         )}
 
