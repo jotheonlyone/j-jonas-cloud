@@ -9,6 +9,7 @@ import {
   formatCleanTitle,
 } from '../services/storageApi';
 import { validateItemName, filterNameInput } from '../utils/nameSanitizer';
+import { createPublicFileShare } from '../services/firebase';
 
 // -------------------------------------------------------------
 // 1. RENAME MODAL
@@ -385,7 +386,7 @@ export const FileMetadataModal: React.FC<FileMetadataModalProps> = ({
 
 // -------------------------------------------------------------
 // 3. PUBLIC SHARE MODAL
-// Format: https://cloud.j-jonas.com/share/{current_username}/{encoded_relative_path}
+// Format: https://cloud.j-jonas.com/share/:shareId
 // -------------------------------------------------------------
 interface PublicShareModalProps {
   isOpen: boolean;
@@ -402,24 +403,56 @@ export const PublicShareModal: React.FC<PublicShareModalProps> = ({
   username,
   onClose,
 }) => {
+  const [shareId, setShareId] = useState<string>('');
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+
+  const rawPath = item ? (item.path || (currentPath ? `${currentPath}/${item.name}` : item.name)) : '';
+  const cleanPath = rawPath.trim().replace(/^\/+/, '');
+
+  useEffect(() => {
+    if (!isOpen || !item) {
+      setShareId('');
+      setIsLoading(true);
+      setError(null);
+      setCopied(false);
+      return;
+    }
+
+    let isMounted = true;
+    setIsLoading(true);
+    setError(null);
+
+    const initShare = async () => {
+      try {
+        const res = await createPublicFileShare(username, cleanPath);
+        if (isMounted) {
+          setShareId(res.shareId);
+          setIsLoading(false);
+        }
+      } catch (err: any) {
+        if (isMounted) {
+          setError(err?.message || 'Fehler beim Erstellen der Freigabe-ID.');
+          setIsLoading(false);
+        }
+      }
+    };
+
+    initShare();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isOpen, item, username, cleanPath]);
 
   if (!isOpen || !item) return null;
 
-  const rawPath = item.path || (currentPath ? `${currentPath}/${item.name}` : item.name);
-  const cleanPath = rawPath.trim().replace(/^\/+/, '');
-  
-  // URL Format: https://cloud.j-jonas.com/share/{current_username}/{encoded_relative_path}
-  // Pfad-Elemente sauber URI-encoden
-  const encodedPath = cleanPath
-    .split('/')
-    .map((seg) => encodeURIComponent(seg))
-    .join('/');
-
-  const shareUrl = `https://cloud.j-jonas.com/share/${encodeURIComponent(username)}/${encodedPath}`;
-  const localTestUrl = `/share/${encodeURIComponent(username)}/${encodedPath}`;
+  const shareUrl = shareId ? `https://cloud.j-jonas.com/share/${shareId}` : '';
+  const localTestUrl = shareId ? `/share/${shareId}` : '';
 
   const handleCopy = async () => {
+    if (!shareUrl) return;
     try {
       if (navigator.clipboard && navigator.clipboard.writeText) {
         await navigator.clipboard.writeText(shareUrl);
@@ -459,36 +492,50 @@ export const PublicShareModal: React.FC<PublicShareModalProps> = ({
 
         <div className="mt-4 space-y-4">
           <p className="text-xs text-gray-600 dark:text-gray-300 leading-relaxed">
-            Über diesen öffentlichen Link kann jede Person {item.type === 'folder' ? 'den Ordner' : 'die Datei'}{' '}
+            Über diesen öffentlichen Link kann jede Person die Datei{' '}
             <strong>"{item.name}"</strong> ohne Cloud-Login oder Passwort ansehen und herunterladen.
           </p>
 
           <div>
             <label className="block text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider mb-1.5">
-              Generierter Freigabelink
+              Generierter Freigabelink (unerratbare ID)
             </label>
             <div className="flex items-center gap-2">
               <input
                 type="text"
                 readOnly
-                value={shareUrl}
+                value={isLoading ? 'Freigabe-ID wird in Firestore generiert...' : shareUrl}
                 onFocus={(e) => e.target.select()}
                 className="flex-1 font-mono text-xs px-3.5 py-2.5 rounded-xl border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-800 dark:text-gray-200 select-all focus:outline-none focus:ring-2 focus:ring-emerald-500"
               />
               <button
                 type="button"
                 onClick={handleCopy}
-                className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-semibold text-white transition-all shadow-xs ${
+                disabled={isLoading || !shareUrl}
+                className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-semibold text-white transition-all shadow-xs disabled:opacity-50 ${
                   copied
                     ? 'bg-emerald-600 hover:bg-emerald-700 ring-2 ring-emerald-400'
                     : 'bg-blue-600 hover:bg-blue-700'
                 }`}
               >
-                {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                {isLoading ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : copied ? (
+                  <Check className="w-4 h-4" />
+                ) : (
+                  <Copy className="w-4 h-4" />
+                )}
                 <span>{copied ? 'Kopiert!' : 'Kopieren'}</span>
               </button>
             </div>
           </div>
+
+          {error && (
+            <div className="flex items-center gap-2 p-2.5 rounded-xl bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 text-xs font-medium border border-red-200 dark:border-red-800">
+              <AlertTriangle className="w-4 h-4 shrink-0 text-red-600 dark:text-red-400" />
+              <span>{error}</span>
+            </div>
+          )}
 
           {copied && (
             <div className="flex items-center gap-2 p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 text-xs font-medium border border-emerald-200 dark:border-emerald-800 animate-in fade-in">
@@ -498,19 +545,21 @@ export const PublicShareModal: React.FC<PublicShareModalProps> = ({
           )}
 
           <div className="p-3 rounded-xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200/70 dark:border-amber-800/40 text-amber-800 dark:text-amber-300 text-xs leading-relaxed">
-            <strong>Hinweis:</strong> Diese Datei ist nicht im internen geteilten Bereich für Cloud-Nutzer sichtbar, sondern wird über ein separates, öffentliches System bereitgestellt.
+            <strong>Hinweis:</strong> Externe Besucher benötigen kein Passwort oder Token. Der Zugriff erfolgt geschützt über die unerratbare ID.
           </div>
 
           <div className="flex items-center justify-between pt-3 border-t border-gray-100 dark:border-gray-800">
-            <a
-              href={localTestUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1.5 text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline"
-            >
-              <ExternalLink className="w-3.5 h-3.5" />
-              <span>Link im Browser testen</span>
-            </a>
+            {shareId ? (
+              <a
+                href={localTestUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1.5 text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                <span>Link im Browser testen</span>
+              </a>
+            ) : <span />}
 
             <button
               type="button"

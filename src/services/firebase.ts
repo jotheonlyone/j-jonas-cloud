@@ -24,7 +24,7 @@ import {
   onSnapshot,
   serverTimestamp,
 } from 'firebase/firestore';
-import type { UserAccount, FolderShare, SharedMember, SystemConfig, UserStatus } from '../types';
+import type { UserAccount, FolderShare, SharedMember, SystemConfig, UserStatus, PublicFileShare } from '../types';
 
 // Provided production configuration for J.Jonas Cloud
 const firebaseConfig = {
@@ -1955,5 +1955,142 @@ export async function getSharesByOwner(usernameRaw: string): Promise<FolderShare
   const local = getLocalShares().filter(s => s && s.owner && s.owner?.toLowerCase() === normalized);
   return consolidateFolderShares(local);
 }
+
+// ---------------------------------------------------------------------------
+// Öffentliche Einzelfreigaben (Public File Shares) in Kollektion 'shares'
+// ---------------------------------------------------------------------------
+
+const LOCAL_PUBLIC_SHARES_KEY = 'jjcloud_public_shares_cache';
+
+function getLocalPublicShare(shareId: string): PublicFileShare | null {
+  try {
+    if (typeof window === 'undefined') return null;
+    const raw = localStorage.getItem(LOCAL_PUBLIC_SHARES_KEY);
+    if (!raw) return null;
+    const map = JSON.parse(raw);
+    return map[shareId] || null;
+  } catch {
+    return null;
+  }
+}
+
+function saveLocalPublicShare(shareId: string, data: { owner: string; file_path: string; created_at: string }): void {
+  try {
+    if (typeof window === 'undefined') return;
+    const raw = localStorage.getItem(LOCAL_PUBLIC_SHARES_KEY);
+    const map = raw ? JSON.parse(raw) : {};
+    map[shareId] = { id: shareId, ...data };
+    localStorage.setItem(LOCAL_PUBLIC_SHARES_KEY, JSON.stringify(map));
+  } catch {}
+}
+
+function generateSecureShareId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let str = '';
+  for (let i = 0; i < 16; i++) {
+    str += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return str;
+}
+
+/**
+ * Erzeugt für eine Datei eine zufällige unerratbare ID und speichert das Dokument
+ * in Firestore in der Kollektion 'shares':
+ * {
+ *   "owner": currentUser,
+ *   "file_path": filePath,
+ *   "created_at": new Date().toISOString()
+ * }
+ */
+export async function createPublicFileShare(
+  ownerRaw: string,
+  filePathRaw: string
+): Promise<{ shareId: string; shareUrl: string }> {
+  const currentUser = cleanUsername(ownerRaw);
+  const filePath = filePathRaw.trim().replace(/^\/+/, '');
+
+  // 1. Prüfen, ob bereits eine Freigabe für dieselbe Datei existiert
+  try {
+    const q = query(
+      collection(db, 'shares'),
+      where('owner', '==', currentUser),
+      where('file_path', '==', filePath)
+    );
+    const snap = await getDocs(q);
+    if (!snap.empty) {
+      const existingDoc = snap.docs[0];
+      const existingId = existingDoc.id;
+      const data = existingDoc.data();
+      saveLocalPublicShare(existingId, {
+        owner: currentUser,
+        file_path: filePath,
+        created_at: data?.created_at || new Date().toISOString(),
+      });
+      return {
+        shareId: existingId,
+        shareUrl: `https://cloud.j-jonas.com/share/${existingId}`,
+      };
+    }
+  } catch (err) {
+    console.warn('Query existing public share in Firestore skipped/failed:', err);
+  }
+
+  // 2. Zufällige, unerratbare Freigabe-ID erzeugen
+  const shareId = generateSecureShareId();
+  const docData = {
+    owner: currentUser,
+    file_path: filePath,
+    created_at: new Date().toISOString(),
+  };
+
+  try {
+    await setDoc(doc(db, 'shares', shareId), docData);
+  } catch (err) {
+    console.error('Failed to save public share in Firestore:', err);
+  }
+
+  // Lokalen Cache aktualisieren
+  saveLocalPublicShare(shareId, docData);
+
+  return {
+    shareId,
+    shareUrl: `https://cloud.j-jonas.com/share/${shareId}`,
+  };
+}
+
+/**
+ * Lädt die öffentliche Dateifreigabe anhand ihrer unerratbaren shareId aus der Kollektion 'shares'.
+ */
+export async function getPublicFileShare(shareId: string): Promise<PublicFileShare | null> {
+  if (!shareId) return null;
+  const cleanId = shareId.trim();
+
+  try {
+    const snap = await getDoc(doc(db, 'shares', cleanId));
+    if (snap.exists()) {
+      const data = snap.data();
+      if (data && data.owner && data.file_path) {
+        return {
+          id: snap.id,
+          owner: cleanUsername(data.owner),
+          file_path: String(data.file_path).trim().replace(/^\/+/, ''),
+          created_at: data.created_at || new Date().toISOString(),
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('Firestore getPublicFileShare error:', err);
+  }
+
+  // Lokaler Cache-Fallback
+  const local = getLocalPublicShare(cleanId);
+  if (local) return local;
+
+  return null;
+}
+
 
 

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Shield,
   UserCheck,
@@ -12,10 +12,11 @@ import {
   Users,
   HardDrive,
   Check,
-  X
+  X,
+  Database
 } from 'lucide-react';
 import type { UserAccount } from '../types';
-import { deleteUserServerDirectory } from '../services/storageApi';
+import { deleteUserServerDirectory, fetchUserStorageUsage, formatBytes } from '../services/storageApi';
 import { useToast } from './Toast';
 
 const PRESET_QUOTAS = [25, 50, 100, 250, 500, 1000];
@@ -29,6 +30,14 @@ interface MasterDashboardProps {
   onUpdateUserQuota: (username: string, quota: number) => void;
   onDeleteUser: (username: string) => void;
   onRefreshUsers: () => void;
+}
+
+interface UserStorageState {
+  loading: boolean;
+  used_bytes: number;
+  used_gb: number;
+  limit_gb?: number;
+  error?: string;
 }
 
 export const MasterDashboard: React.FC<MasterDashboardProps> = ({
@@ -48,6 +57,10 @@ export const MasterDashboard: React.FC<MasterDashboardProps> = ({
   const [customQuotaMode, setCustomQuotaMode] = useState<Record<string, boolean>>({});
   const [customQuotaValue, setCustomQuotaValue] = useState<Record<string, number>>({});
 
+  // Storage usage states per user (fetched from /storage-usage?user=${username})
+  const [storageUsages, setStorageUsages] = useState<Record<string, UserStorageState>>({});
+  const [isRefreshingStorage, setIsRefreshingStorage] = useState(false);
+
   // Warning Modal state for server offline / failed physical delete
   const [deleteWarningModal, setDeleteWarningModal] = useState<{
     isOpen: boolean;
@@ -60,6 +73,166 @@ export const MasterDashboard: React.FC<MasterDashboardProps> = ({
 
   const pendingUsers = users.filter((u) => u.status === 'pending');
   const activeUsers = users.filter((u) => u.status === 'active');
+
+  /**
+   * Ruft für alle angezeigten Benutzer den Endpunkt /storage-usage?user=${username}
+   * mit dem im Header hinterlegten Admin-Token ab.
+   */
+  const loadAllStorageUsages = useCallback(async () => {
+    if (!users || users.length === 0) return;
+    setIsRefreshingStorage(true);
+
+    // Initialen Ladestatus setzen
+    setStorageUsages((prev) => {
+      const updated = { ...prev };
+      for (const u of users) {
+        updated[u.username] = {
+          loading: true,
+          used_bytes: prev[u.username]?.used_bytes ?? 0,
+          used_gb: prev[u.username]?.used_gb ?? 0,
+          limit_gb: prev[u.username]?.limit_gb ?? u.quota_gb,
+          error: undefined,
+        };
+      }
+      return updated;
+    });
+
+    try {
+      await Promise.allSettled(
+        users.map(async (u) => {
+          try {
+            const res = await fetchUserStorageUsage(u.username);
+            setStorageUsages((prev) => ({
+              ...prev,
+              [u.username]: {
+                loading: false,
+                used_bytes: res.used_bytes,
+                used_gb: res.used_gb,
+                limit_gb: res.limit_gb ?? u.quota_gb,
+                error: res.success ? undefined : res.error,
+              },
+            }));
+          } catch (err: any) {
+            setStorageUsages((prev) => ({
+              ...prev,
+              [u.username]: {
+                loading: false,
+                used_bytes: 0,
+                used_gb: 0,
+                error: err?.message || 'Server nicht erreichbar',
+              },
+            }));
+          }
+        })
+      );
+    } finally {
+      setIsRefreshingStorage(false);
+    }
+  }, [users]);
+
+  // Automatisch beim Mount und bei Änderung der Benutzerliste abrufen
+  useEffect(() => {
+    loadAllStorageUsages();
+  }, [loadAllStorageUsages]);
+
+  const handleRefreshAll = () => {
+    onRefreshUsers();
+    loadAllStorageUsages();
+  };
+
+  const handleUpdateQuotaWithUsage = (username: string, newQuota: number) => {
+    onUpdateUserQuota(username, newQuota);
+    setStorageUsages((prev) => {
+      if (!prev[username]) return prev;
+      return {
+        ...prev,
+        [username]: {
+          ...prev[username],
+          limit_gb: newQuota,
+        },
+      };
+    });
+  };
+
+  /**
+   * Rendert die Speicherplatzanzeige mit Text ('X GB von Y GB belegt') und kleinem Fortschrittsbalken.
+   */
+  const renderStorageUsageCell = (username: string, quotaGb: number) => {
+    const usage = storageUsages[username];
+    const quota = Math.max(1, quotaGb || 100);
+    const quotaBytes = quota * 1024 * 1024 * 1024;
+
+    if (usage?.loading && usage.used_bytes === 0) {
+      return (
+        <div className="flex items-center gap-1.5 text-gray-400 dark:text-gray-500">
+          <RefreshCw className="w-3 h-3 animate-spin text-blue-500 shrink-0" />
+          <span className="text-[11px] font-mono">Wird ermittelt...</span>
+        </div>
+      );
+    }
+
+    if (usage?.error) {
+      return (
+        <div
+          className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400"
+          title={`/storage-usage?user=${username} - ${usage.error}`}
+        >
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+          <span className="text-[11px] font-medium truncate max-w-[150px]">Nicht erreichbar</span>
+        </div>
+      );
+    }
+
+    const usedBytes = usage?.used_bytes ?? 0;
+    const usedGbNum =
+      usage?.used_gb !== undefined && usage.used_gb > 0
+        ? usage.used_gb
+        : Number((usedBytes / (1024 * 1024 * 1024)).toFixed(2));
+    const percent = Math.min(100, Math.max(0, Math.round((usedBytes / quotaBytes) * 100 * 10) / 10));
+    const isHigh = percent >= 90;
+    const isWarning = percent >= 75 && percent < 90;
+
+    // Formatierung gemäß Anforderung: 'X GB von Y GB belegt'
+    const formattedText =
+      usedBytes >= 1024 * 1024 * 1024 || usedGbNum >= 1
+        ? `${usedGbNum} GB von ${quota} GB belegt`
+        : `${formatBytes(usedBytes)} von ${quota} GB belegt`;
+
+    return (
+      <div className="space-y-1 min-w-[175px] max-w-[240px]">
+        <div className="flex items-center justify-between text-[11px]">
+          <span className="font-mono font-medium text-gray-700 dark:text-gray-200 tabular-nums">
+            {formattedText}
+          </span>
+          <span
+            className={`font-mono font-bold text-[10px] ml-1.5 tabular-nums ${
+              isHigh
+                ? 'text-red-600 dark:text-red-400'
+                : isWarning
+                ? 'text-amber-600 dark:text-amber-400'
+                : 'text-gray-500 dark:text-gray-400'
+            }`}
+          >
+            {percent}%
+          </span>
+        </div>
+
+        {/* Kleiner Fortschrittsbalken */}
+        <div className="w-full h-1.5 rounded-full bg-gray-100 dark:bg-gray-700/80 overflow-hidden">
+          <div
+            className={`h-full rounded-full transition-all duration-500 ${
+              isHigh
+                ? 'bg-red-500'
+                : isWarning
+                ? 'bg-amber-500'
+                : 'bg-blue-600 dark:bg-blue-500'
+            }`}
+            style={{ width: `${Math.max(percent > 0 ? 2 : 0, percent)}%` }}
+          />
+        </div>
+      </div>
+    );
+  };
 
   const handleApprove = (username: string) => {
     const quota = customQuotaMode[username]
@@ -153,10 +326,11 @@ export const MasterDashboard: React.FC<MasterDashboardProps> = ({
         </div>
 
         <button
-          onClick={onRefreshUsers}
-          className="flex items-center gap-2 px-3 py-1.5 text-xs font-semibold rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors"
+          onClick={handleRefreshAll}
+          disabled={isRefreshingStorage}
+          className="flex items-center gap-2 px-3 py-1.5 text-xs font-semibold rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors disabled:opacity-60"
         >
-          <RefreshCw className="w-3.5 h-3.5" />
+          <RefreshCw className={`w-3.5 h-3.5 ${isRefreshingStorage ? 'animate-spin text-blue-500' : ''}`} />
           <span>Aktualisieren</span>
         </button>
       </div>
@@ -228,6 +402,12 @@ export const MasterDashboard: React.FC<MasterDashboardProps> = ({
                   <th className="px-4 py-3">Benutzername</th>
                   <th className="px-4 py-3">Registriert am</th>
                   <th className="px-4 py-3">Initiale Quota</th>
+                  <th className="px-4 py-3">
+                    <span className="inline-flex items-center gap-1.5">
+                      <Database className="w-3.5 h-3.5 text-blue-500" />
+                      Speicherplatz belegt
+                    </span>
+                  </th>
                   <th className="px-4 py-3 text-right">Aktionen</th>
                 </tr>
               </thead>
@@ -308,6 +488,9 @@ export const MasterDashboard: React.FC<MasterDashboardProps> = ({
                           </select>
                         )}
                       </td>
+                      <td className="px-4 py-3">
+                        {renderStorageUsageCell(pUser.username, quotaVal)}
+                      </td>
                       <td className="px-4 py-3 text-right">
                         <div className="flex items-center justify-end gap-2">
                           <button
@@ -354,6 +537,12 @@ export const MasterDashboard: React.FC<MasterDashboardProps> = ({
                 <th className="px-4 py-3">Benutzername</th>
                 <th className="px-4 py-3">Rolle</th>
                 <th className="px-4 py-3">Speicher-Limit (Quota)</th>
+                <th className="px-4 py-3">
+                  <span className="inline-flex items-center gap-1.5">
+                    <Database className="w-3.5 h-3.5 text-blue-500" />
+                    Speicherplatz belegt
+                  </span>
+                </th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3 text-right">Aktionen</th>
               </tr>
@@ -389,7 +578,7 @@ export const MasterDashboard: React.FC<MasterDashboardProps> = ({
                               if (e.key === 'Enter') {
                                 const val = Number((e.target as HTMLInputElement).value);
                                 if (val > 0) {
-                                  onUpdateUserQuota(aUser.username, val);
+                                  handleUpdateQuotaWithUsage(aUser.username, val);
                                   setCustomQuotaMode({
                                     ...customQuotaMode,
                                     [aUser.username]: false,
@@ -406,7 +595,7 @@ export const MasterDashboard: React.FC<MasterDashboardProps> = ({
                               const input = e.currentTarget.previousElementSibling?.previousElementSibling as HTMLInputElement;
                               const val = Number(input?.value || aUser.quota_gb);
                               if (val > 0) {
-                                onUpdateUserQuota(aUser.username, val);
+                                handleUpdateQuotaWithUsage(aUser.username, val);
                                 setCustomQuotaMode({
                                   ...customQuotaMode,
                                   [aUser.username]: false,
@@ -443,7 +632,7 @@ export const MasterDashboard: React.FC<MasterDashboardProps> = ({
                                   [aUser.username]: true,
                                 });
                               } else {
-                                onUpdateUserQuota(aUser.username, Number(e.target.value));
+                                handleUpdateQuotaWithUsage(aUser.username, Number(e.target.value));
                               }
                             }}
                             className="px-2.5 py-1 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 font-mono text-gray-900 dark:text-gray-100 focus:outline-none focus:border-blue-500"
@@ -460,6 +649,9 @@ export const MasterDashboard: React.FC<MasterDashboardProps> = ({
                           </select>
                         </div>
                       )}
+                    </td>
+                    <td className="px-4 py-3">
+                      {renderStorageUsageCell(aUser.username, aUser.quota_gb)}
                     </td>
                     <td className="px-4 py-3">
                       <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-medium">

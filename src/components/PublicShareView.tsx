@@ -23,14 +23,17 @@ import {
 } from 'lucide-react';
 import type { FileItemData } from '../types';
 import {
+  getPublicShareStreamUrl,
+  getPublicShareDownloadUrl,
+  getPublicShareThumbnailUrl,
   getPublicDownloadUrl,
   getPublicStreamUrl,
   getPublicFolderFiles,
-  getFileMetadata,
   formatBytes,
   formatCleanTitle,
   STORAGE_BASE_URL,
 } from '../services/storageApi';
+import { getPublicFileShare } from '../services/firebase';
 
 interface PublicShareViewProps {
   darkMode?: boolean;
@@ -48,13 +51,13 @@ export function getPublicFileIcon(filename: string, isFolder = false) {
   if (['pdf'].includes(ext)) {
     return <FileText className="w-8 h-8 text-red-500 shrink-0" />;
   }
-  if (['mp4', 'mov', 'mkv', 'avi', 'webm'].includes(ext)) {
+  if (['mp4', 'mov', 'mkv', 'avi', 'webm', 'm4v', 'ts'].includes(ext)) {
     return <FileVideo className="w-8 h-8 text-violet-500 shrink-0" />;
   }
   if (['zip', 'rar', 'tar', 'gz', '7z'].includes(ext)) {
     return <FileArchive className="w-8 h-8 text-yellow-600 shrink-0" />;
   }
-  if (['mp3', 'wav', 'flac', 'ogg', 'm4a'].includes(ext)) {
+  if (['mp3', 'wav', 'flac', 'ogg', 'm4a', 'aac'].includes(ext)) {
     return <FileAudio className="w-8 h-8 text-pink-500 shrink-0" />;
   }
   if (['py', 'js', 'ts', 'tsx', 'jsx', 'json', 'html', 'css', 'md', 'sh'].includes(ext)) {
@@ -67,106 +70,142 @@ export const PublicShareView: React.FC<PublicShareViewProps> = ({
   darkMode = false,
   onGoToHome,
 }) => {
+  const [shareId, setShareId] = useState<string>('');
   const [username, setUsername] = useState<string>('');
   const [filePath, setFilePath] = useState<string>('');
+  const [createdAt, setCreatedAt] = useState<string>('');
   const [isLoading, setIsLoading] = useState(true);
   const [isFolder, setIsFolder] = useState(false);
   const [folderFiles, setFolderFiles] = useState<FileItemData[]>([]);
-  const [metadataDescription, setMetadataDescription] = useState<string>('');
   const [showPreview, setShowPreview] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [thumbError, setThumbError] = useState(false);
 
-  // Parse URL: /share/:username/:path*
+  // Parse URL: /share/:shareId bzw. /share/:username/:path*
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const pathname = window.location.pathname;
-    // Remove leading /share/
-    const match = pathname.match(/^\/share\/([^/]+)(?:\/(.*))?$/i);
-    if (match) {
-      const user = decodeURIComponent(match[1]);
-      const rawPath = match[2] ? decodeURIComponent(match[2]) : '';
-      setUsername(user);
-      setFilePath(rawPath.replace(/^\/+|\/+$/g, ''));
-    } else {
-      setErrorMessage('Ungültige Freigabe-URL.');
-      setIsLoading(false);
-    }
-  }, []);
-
-  // Fetch data from backend
-  useEffect(() => {
-    if (!username) return;
+    const pathname = window.location.pathname.replace(/\/+$/, '');
+    const segments = pathname.replace(/^\/+/, '').split('/').filter(Boolean);
 
     let isMounted = true;
     setIsLoading(true);
     setErrorMessage(null);
 
-    const loadShareData = async () => {
-      try {
-        // 1. Check if folder content is returned
-        const folderRes = await getPublicFolderFiles(username, filePath);
-        if (!isMounted) return;
+    const loadPublicShare = async () => {
+      // 1. Moderne Einzelfreigabe mit unerratbarer ID: /share/:shareId
+      if (segments[0]?.toLowerCase() === 'share' && segments.length === 2) {
+        const sId = decodeURIComponent(segments[1]);
+        setShareId(sId);
 
-        if (folderRes.isFolder) {
-          setIsFolder(true);
-          setFolderFiles(folderRes.items);
+        try {
+          // Aus Firestore 'shares' laden
+          const shareDoc = await getPublicFileShare(sId);
+          if (!isMounted) return;
+
+          if (shareDoc) {
+            setUsername(shareDoc.owner);
+            setFilePath(shareDoc.file_path);
+            setCreatedAt(shareDoc.created_at);
+            setIsLoading(false);
+            return;
+          }
+
+          // Fallback: Direkte HEAD-Prüfung gegen Backend https://storage.j-jonas.com/public-share/:shareId
+          const headUrl = getPublicShareStreamUrl(sId);
+          const headRes = await fetch(headUrl, { method: 'HEAD' });
+          if (!isMounted) return;
+
+          if (headRes.ok || headRes.status === 206 || headRes.status === 200) {
+            const cd = headRes.headers.get('Content-Disposition') || '';
+            const matchName = cd.match(/filename=["']?([^"']+)["']?/i);
+            const inferredName = matchName ? matchName[1] : `Datei_${sId.slice(0, 8)}`;
+            setFilePath(inferredName);
+            setIsLoading(false);
+            return;
+          }
+
+          setErrorMessage('Die Freigabe existiert nicht oder wurde entfernt.');
           setIsLoading(false);
-          return;
-        }
-
-        // 2. Otherwise treat as single file
-        setIsFolder(false);
-        // Load metadata description
-        if (filePath) {
-          try {
-            const meta = await getFileMetadata(filePath);
-            if (isMounted) {
-              setMetadataDescription(meta.description || '');
-            }
-          } catch {
-            // Optional description
+        } catch (err) {
+          if (isMounted) {
+            setErrorMessage('Freigabelink nicht gefunden oder Server offline.');
+            setIsLoading(false);
           }
         }
-        setIsLoading(false);
-      } catch (err) {
-        if (isMounted) {
-          setErrorMessage('Datei oder Ordner konnte nicht geladen werden.');
-          setIsLoading(false);
-        }
+        return;
       }
+
+      // 2. Legacy-URL / Ordnerfreigabe: /share/:username/:path*
+      if (segments[0]?.toLowerCase() === 'share' && segments.length > 2) {
+        const user = decodeURIComponent(segments[1]);
+        const rawPath = segments.slice(2).map(decodeURIComponent).join('/');
+        setUsername(user);
+        setFilePath(rawPath);
+
+        try {
+          const folderRes = await getPublicFolderFiles(user, rawPath);
+          if (!isMounted) return;
+
+          if (folderRes.isFolder) {
+            setIsFolder(true);
+            setFolderFiles(folderRes.items);
+            setIsLoading(false);
+            return;
+          }
+
+          setIsFolder(false);
+          setIsLoading(false);
+        } catch {
+          if (isMounted) {
+            setErrorMessage('Datei oder Ordner konnte nicht geladen werden.');
+            setIsLoading(false);
+          }
+        }
+        return;
+      }
+
+      setErrorMessage('Ungültige Freigabe-URL.');
+      setIsLoading(false);
     };
 
-    loadShareData();
+    loadPublicShare();
 
     return () => {
       isMounted = false;
     };
-  }, [username, filePath]);
+  }, []);
 
   const fileName = filePath.split('/').pop() || filePath || 'Freigegebene Datei';
   const cleanPath = filePath.trim().replace(/^\/+/, '');
-  const streamUrl = username && filePath ? getPublicStreamUrl(username, cleanPath) : '';
-  const downloadUrl = username && filePath ? getPublicDownloadUrl(username, cleanPath) : '';
-  const directPublicUrl = username && filePath
-    ? `${STORAGE_BASE_URL}/public/${encodeURIComponent(username)}/${encodeURIComponent(cleanPath)}`
+
+  // URLs gemäß Vorgaben für unerratbare shareId (ohne Auth-Header und ohne ?token=):
+  // Anzeigen / Streamen: https://storage.j-jonas.com/public-share/:shareId
+  // Download: https://storage.j-jonas.com/public-share/:shareId?download=true
+  // Vorschaubild (Thumbnail): https://storage.j-jonas.com/public-share/:shareId?thumb=true
+  const streamUrl = shareId
+    ? getPublicShareStreamUrl(shareId)
+    : (username && filePath ? getPublicStreamUrl(username, cleanPath) : '');
+
+  const downloadUrl = shareId
+    ? getPublicShareDownloadUrl(shareId)
+    : (username && filePath ? getPublicDownloadUrl(username, cleanPath) : '');
+
+  const thumbnailUrl = shareId
+    ? getPublicShareThumbnailUrl(shareId)
     : '';
 
   const ext = fileName.split('.').pop()?.toLowerCase() || '';
-  const isVideo = ['mp4', 'webm', 'ogg', 'mov', 'mkv'].includes(ext);
-  const isAudio = ['mp3', 'wav', 'ogg', 'm4a', 'flac'].includes(ext);
-  const isImage = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'svg', 'avif'].includes(ext);
+  const isVideo = ['mp4', 'webm', 'ogg', 'mov', 'mkv', 'm4v', 'ts'].includes(ext);
+  const isAudio = ['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac'].includes(ext);
+  const isImage = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'svg', 'avif', 'bmp'].includes(ext);
   const isPdf = ext === 'pdf';
   const isPreviewable = isVideo || isAudio || isImage || isPdf;
 
-  const handleDownload = (customPath?: string, customName?: string) => {
-    const targetPath = customPath !== undefined ? customPath : filePath;
-    const targetName = customName !== undefined ? customName : fileName;
-    const cleanPath = targetPath.trim().replace(/^\/+/, '');
-    const url = `${STORAGE_BASE_URL}/download?user=${encodeURIComponent(username)}&path=${encodeURIComponent(cleanPath)}&download=true`;
-
+  const handleDownload = () => {
+    if (!downloadUrl) return;
     const a = document.createElement('a');
-    a.href = url;
-    a.setAttribute('download', targetName);
+    a.href = downloadUrl;
+    a.setAttribute('download', fileName);
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -219,7 +258,7 @@ export const PublicShareView: React.FC<PublicShareViewProps> = ({
               Freigabelink nicht gefunden
             </h2>
             <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 mb-6 leading-relaxed">
-              {errorMessage} Bitte überprüfe den Link oder wende dich an den Besitzer.
+              {errorMessage} Bitte überprüfe den Link oder wende dich an die Person, die die Datei geteilt hat.
             </p>
             {onGoToHome && (
               <button
@@ -232,10 +271,9 @@ export const PublicShareView: React.FC<PublicShareViewProps> = ({
           </div>
         ) : isFolder ? (
           /* ========================================================================= */
-          /* FOLDER CONTENT VIEW                                                       */
+          /* FOLDER CONTENT VIEW (Legacy)                                              */
           /* ========================================================================= */
           <div className="w-full max-w-4xl bg-white dark:bg-gray-900 rounded-3xl border border-gray-200/80 dark:border-gray-800 shadow-xl overflow-hidden animate-in fade-in duration-200">
-            {/* Folder Header */}
             <div className="p-6 sm:p-8 bg-linear-to-b from-blue-50/50 to-transparent dark:from-blue-950/20 dark:to-transparent border-b border-gray-100 dark:border-gray-800">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div className="flex items-center gap-4">
@@ -254,7 +292,6 @@ export const PublicShareView: React.FC<PublicShareViewProps> = ({
               </div>
             </div>
 
-            {/* Files List */}
             <div className="p-4 sm:p-6">
               {folderFiles.length === 0 ? (
                 <div className="text-center py-12 text-gray-400 text-sm">
@@ -280,14 +317,15 @@ export const PublicShareView: React.FC<PublicShareViewProps> = ({
                       </div>
 
                       {file.type === 'file' && (
-                        <button
-                          onClick={() => handleDownload(file.path || (filePath ? `${filePath}/${file.name}` : file.name), file.name)}
+                        <a
+                          href={`${STORAGE_BASE_URL}/download?user=${encodeURIComponent(username)}&path=${encodeURIComponent(file.path || (filePath ? `${filePath}/${file.name}` : file.name))}&download=true`}
+                          download={file.name}
                           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-gray-100 dark:bg-gray-800 hover:bg-blue-600 hover:text-white dark:hover:bg-blue-600 text-gray-700 dark:text-gray-300 transition-colors shadow-2xs shrink-0"
                           title="Herunterladen"
                         >
                           <Download className="w-3.5 h-3.5" />
                           <span className="hidden sm:inline">Herunterladen</span>
-                        </button>
+                        </a>
                       )}
                     </div>
                   ))}
@@ -297,13 +335,22 @@ export const PublicShareView: React.FC<PublicShareViewProps> = ({
           </div>
         ) : (
           /* ========================================================================= */
-          /* SINGLE FILE DOWNLOAD & PREVIEW BOX                                        */
+          /* SINGLE FILE DOWNLOAD & PREVIEW (Öffentliche Freigabe mit unerratbarer ID) */
           /* ========================================================================= */
           <div className="w-full max-w-lg bg-white dark:bg-gray-900 rounded-3xl border border-gray-200/80 dark:border-gray-800 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-            {/* Top decorative badge */}
+            {/* Top decorative badge with thumbnail or icon */}
             <div className="p-6 sm:p-8 flex flex-col items-center text-center">
-              <div className="w-20 h-20 rounded-3xl bg-gray-50 dark:bg-gray-800/80 border border-gray-200/60 dark:border-gray-700/60 flex items-center justify-center mb-5 shadow-xs">
-                {getPublicFileIcon(fileName)}
+              <div className="w-24 h-24 rounded-3xl bg-gray-50 dark:bg-gray-800/80 border border-gray-200/60 dark:border-gray-700/60 flex items-center justify-center mb-5 shadow-xs overflow-hidden relative">
+                {thumbnailUrl && !thumbError && (isImage || isVideo) ? (
+                  <img
+                    src={thumbnailUrl}
+                    alt={fileName}
+                    className="w-full h-full object-cover"
+                    onError={() => setThumbError(true)}
+                  />
+                ) : (
+                  getPublicFileIcon(fileName)
+                )}
               </div>
 
               <h1 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-white break-all leading-snug">
@@ -317,33 +364,33 @@ export const PublicShareView: React.FC<PublicShareViewProps> = ({
                 </p>
               )}
 
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-                Freigegeben von <span className="font-semibold text-gray-700 dark:text-gray-300">@{username}</span>
-              </p>
-
-              {/* Description Box if available */}
-              {metadataDescription ? (
-                <div className="w-full mt-5 p-4 rounded-2xl bg-blue-50/70 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900/60 text-left">
-                  <div className="flex items-center gap-1.5 text-xs font-semibold text-blue-700 dark:text-blue-400 mb-1">
-                    <Info className="w-3.5 h-3.5" />
-                    <span>Beschreibung</span>
-                  </div>
-                  <p className="text-xs sm:text-sm text-gray-700 dark:text-gray-200 whitespace-pre-wrap leading-relaxed">
-                    {metadataDescription}
-                  </p>
-                </div>
-              ) : null}
+              <div className="flex flex-wrap items-center justify-center gap-2 mt-2 text-xs text-gray-500 dark:text-gray-400">
+                {username && (
+                  <span>
+                    Freigegeben von <span className="font-semibold text-gray-700 dark:text-gray-300">@{username}</span>
+                  </span>
+                )}
+                {createdAt && (
+                  <>
+                    <span>•</span>
+                    <span className="flex items-center gap-1 font-mono text-[11px]">
+                      <Calendar className="w-3 h-3 text-gray-400" />
+                      {new Date(createdAt).toLocaleDateString('de-DE')}
+                    </span>
+                  </>
+                )}
+              </div>
 
               {/* Action Buttons */}
               <div className="w-full mt-6 flex flex-col sm:flex-row items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => handleDownload()}
+                <a
+                  href={downloadUrl}
+                  download={fileName}
                   className="w-full flex-1 flex items-center justify-center gap-2 px-5 py-3.5 rounded-2xl bg-blue-600 hover:bg-blue-700 active:scale-98 text-white font-semibold text-sm transition-all shadow-md shadow-blue-500/20"
                 >
                   <Download className="w-4 h-4" />
                   <span>Jetzt Herunterladen</span>
-                </button>
+                </a>
 
                 {isPreviewable && (
                   <button
@@ -360,21 +407,16 @@ export const PublicShareView: React.FC<PublicShareViewProps> = ({
 
             {/* Embedded Live Preview */}
             {showPreview && isPreviewable && (
-              <div className="border-t border-gray-100 dark:border-gray-800 bg-black/90 p-4 sm:p-6 animate-in fade-in duration-150">
+              <div className="border-t border-gray-100 dark:border-gray-800 bg-black/95 p-4 sm:p-6 animate-in fade-in duration-150">
                 {isVideo && (
                   <div className="aspect-video w-full rounded-2xl overflow-hidden bg-black flex items-center justify-center shadow-lg">
                     <video
                       src={streamUrl}
+                      poster={thumbnailUrl || undefined}
                       controls
                       playsInline
                       autoPlay
                       className="w-full h-full object-contain"
-                      onError={(e) => {
-                        const target = e.currentTarget;
-                        if (directPublicUrl && target.src !== directPublicUrl) {
-                          target.src = directPublicUrl;
-                        }
-                      }}
                     />
                   </div>
                 )}
@@ -386,28 +428,16 @@ export const PublicShareView: React.FC<PublicShareViewProps> = ({
                       controls
                       autoPlay
                       className="w-full"
-                      onError={(e) => {
-                        const target = e.currentTarget;
-                        if (directPublicUrl && target.src !== directPublicUrl) {
-                          target.src = directPublicUrl;
-                        }
-                      }}
                     />
                   </div>
                 )}
 
                 {isImage && (
-                  <div className="max-h-[460px] rounded-2xl overflow-hidden flex items-center justify-center bg-black">
+                  <div className="max-h-[480px] rounded-2xl overflow-hidden flex items-center justify-center bg-black">
                     <img
                       src={streamUrl}
                       alt={fileName}
-                      className="max-h-[460px] w-full object-contain rounded-2xl"
-                      onError={(e) => {
-                        const target = e.currentTarget;
-                        if (directPublicUrl && target.src !== directPublicUrl) {
-                          target.src = directPublicUrl;
-                        }
-                      }}
+                      className="max-h-[480px] w-full object-contain rounded-2xl"
                     />
                   </div>
                 )}

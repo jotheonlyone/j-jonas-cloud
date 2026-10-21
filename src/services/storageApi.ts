@@ -125,11 +125,15 @@ export async function checkServerStatus(): Promise<ServerStatus> {
   }
 }
 
+export interface UserStorageUsageResult extends StorageUsage {
+  success: boolean;
+  error?: string;
+}
+
 /**
- * GET /storage-usage?user=<username>
- * Liefert { status, user, usedBytes, usedGB, limitBytes, limitGB } direkt vom Mini-PC Server.
+ * Ruft den Endpunkt /storage-usage?user=${username} mit dem authentifizierten Admin-/User-Token ab.
  */
-export async function getStorageUsage(username: string): Promise<StorageUsage> {
+export async function fetchUserStorageUsage(username: string): Promise<UserStorageUsageResult> {
   const safeU = cleanUsername(username || getActiveUser()?.username || '');
   try {
     const res = await storageFetch(`${STORAGE_BASE_URL}/storage-usage?user=${encodeURIComponent(safeU)}`, {
@@ -147,12 +151,38 @@ export async function getStorageUsage(username: string): Promise<StorageUsage> {
           : (used_bytes / (1024 * 1024 * 1024)).toFixed(2)
       );
       const limit_gb = Number(data.limitGB ?? data.limit_gb ?? 1000);
-      return { used_bytes, used_gb, limit_gb };
+      return { success: true, used_bytes, used_gb, limit_gb };
+    } else {
+      return {
+        success: false,
+        used_bytes: 0,
+        used_gb: 0,
+        limit_gb: 1000,
+        error: `HTTP ${res.status}: ${res.statusText || 'Fehler beim Laden'}`,
+      };
     }
-  } catch (err) {
-    // Kein Fallback-Mock: Server nicht erreichbar
+  } catch (err: any) {
+    return {
+      success: false,
+      used_bytes: 0,
+      used_gb: 0,
+      limit_gb: 1000,
+      error: err?.message || 'Server nicht erreichbar',
+    };
   }
-  return { used_bytes: 0, used_gb: 0, limit_gb: 1000 };
+}
+
+/**
+ * GET /storage-usage?user=<username>
+ * Liefert { status, user, usedBytes, usedGB, limitBytes, limitGB } direkt vom Mini-PC Server.
+ */
+export async function getStorageUsage(username: string): Promise<StorageUsage> {
+  const result = await fetchUserStorageUsage(username);
+  return {
+    used_bytes: result.used_bytes,
+    used_gb: result.used_gb,
+    limit_gb: result.limit_gb,
+  };
 }
 
 /**
@@ -1059,6 +1089,36 @@ export async function setFileMetadata(
       error: 'Verbindungsfehler: Metadaten konnten nicht an den Server übertragen werden.',
     };
   }
+}
+
+/**
+ * Anzeigen / Streamen über Backend-Domain:
+ * https://storage.j-jonas.com/public-share/:shareId
+ * Externe Besucher haben kein Auth-Token. Kein Authorization-Header und kein ?token= mitsenden.
+ */
+export function getPublicShareStreamUrl(shareId: string): string {
+  const cleanId = (shareId || '').trim();
+  return `${STORAGE_BASE_URL}/public-share/${encodeURIComponent(cleanId)}`;
+}
+
+/**
+ * Download über Backend-Domain:
+ * https://storage.j-jonas.com/public-share/:shareId?download=true
+ * Externe Besucher haben kein Auth-Token. Kein Authorization-Header und kein ?token= mitsenden.
+ */
+export function getPublicShareDownloadUrl(shareId: string): string {
+  const cleanId = (shareId || '').trim();
+  return `${STORAGE_BASE_URL}/public-share/${encodeURIComponent(cleanId)}?download=true`;
+}
+
+/**
+ * Vorschaubild (Thumbnail) über Backend-Domain:
+ * https://storage.j-jonas.com/public-share/:shareId?thumb=true
+ * Externe Besucher haben kein Auth-Token. Kein Authorization-Header und kein ?token= mitsenden.
+ */
+export function getPublicShareThumbnailUrl(shareId: string): string {
+  const cleanId = (shareId || '').trim();
+  return `${STORAGE_BASE_URL}/public-share/${encodeURIComponent(cleanId)}?thumb=true`;
 }
 
 /**

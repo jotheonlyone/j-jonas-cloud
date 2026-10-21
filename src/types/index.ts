@@ -65,6 +65,13 @@ export interface FolderShare {
   can_manage_members?: boolean;
 }
 
+export interface PublicFileShare {
+  id: string;
+  owner: string;
+  file_path: string;
+  created_at: string;
+}
+
 
 export interface SystemConfig {
   maintenance: boolean;
