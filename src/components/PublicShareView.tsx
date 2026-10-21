@@ -74,6 +74,8 @@ export const PublicShareView: React.FC<PublicShareViewProps> = ({
   const [username, setUsername] = useState<string>('');
   const [filePath, setFilePath] = useState<string>('');
   const [createdAt, setCreatedAt] = useState<string>('');
+  const [mimeType, setMimeType] = useState<string>('');
+  const [fileSize, setFileSize] = useState<number | undefined>(undefined);
   const [isLoading, setIsLoading] = useState(true);
   const [isFolder, setIsFolder] = useState(false);
   const [folderFiles, setFolderFiles] = useState<FileItemData[]>([]);
@@ -97,40 +99,89 @@ export const PublicShareView: React.FC<PublicShareViewProps> = ({
         const sId = decodeURIComponent(segments[1]);
         setShareId(sId);
 
+        let resolvedName = '';
+        let resolvedMime = '';
+
+        // A. Optional: Aus separater Firestore-Sammlung 'public_shares' Metadaten laden (falls zugänglich / eingeloggt)
         try {
-          // Aus separater Firestore-Sammlung 'public_shares' laden
-          const shareDoc = await getPublicFileShare(sId);
-          if (!isMounted) return;
-
-          if (shareDoc) {
-            setUsername(shareDoc.owner);
-            setFilePath(shareDoc.file_path);
-            setCreatedAt(shareDoc.created_at);
-            setIsLoading(false);
-            return;
+          const shareDoc = await getPublicFileShare(sId).catch(() => null);
+          if (shareDoc && isMounted) {
+            if (shareDoc.owner) setUsername(shareDoc.owner);
+            if (shareDoc.file_path) {
+              setFilePath(shareDoc.file_path);
+              resolvedName = shareDoc.file_path;
+            }
+            if (shareDoc.created_at) setCreatedAt(shareDoc.created_at);
           }
+        } catch {
+          // Firestore permissions may deny guest access; proceed gracefully to public probe
+        }
 
-          // Fallback: Direkte HEAD-Prüfung gegen Backend https://storage.j-jonas.com/public-share/:shareId
-          const headUrl = getPublicShareStreamUrl(sId);
+        // B. Metadaten (Dateiname, Content-Type, Größe) über lokalen Backend-Proxy /api/public-share/:shareId abfragen
+        try {
+          const localInfoRes = await fetch(`/api/public-share/${encodeURIComponent(sId)}`);
+          if (localInfoRes.ok) {
+            const infoData = await localInfoRes.json().catch(() => null);
+            if (infoData && isMounted) {
+              if (infoData.fileName && !resolvedName) {
+                resolvedName = infoData.fileName;
+                setFilePath(infoData.fileName);
+              }
+              if (infoData.contentType) {
+                resolvedMime = infoData.contentType;
+                setMimeType(infoData.contentType);
+              }
+              if (infoData.size) {
+                setFileSize(infoData.size);
+              }
+              setIsLoading(false);
+              return;
+            }
+          }
+        } catch {
+          // Local probe failed, fall back to direct HEAD probe
+        }
+
+        // C. Fallback: Direkte HEAD-Prüfung gegen Backend https://storage.j-jonas.com/public-share/:shareId
+        try {
+          const headUrl = `https://storage.j-jonas.com/public-share/${encodeURIComponent(sId)}`;
           const headRes = await fetch(headUrl, { method: 'HEAD' });
           if (!isMounted) return;
 
           if (headRes.ok || headRes.status === 206 || headRes.status === 200) {
-            const cd = headRes.headers.get('Content-Disposition') || '';
-            const matchName = cd.match(/filename=["']?([^"']+)["']?/i);
-            const inferredName = matchName ? matchName[1] : `Datei_${sId.slice(0, 8)}`;
-            setFilePath(inferredName);
+            const ct = headRes.headers.get('content-type') || '';
+            if (ct) {
+              resolvedMime = ct;
+              setMimeType(ct);
+            }
+            const cd = headRes.headers.get('content-disposition') || '';
+            const matchName = cd.match(/filename\*?=(?:UTF-8'')?["']?([^"';]+)["']?/i);
+            if (matchName && matchName[1] && !resolvedName) {
+              try {
+                resolvedName = decodeURIComponent(matchName[1].trim());
+              } catch {
+                resolvedName = matchName[1].trim();
+              }
+              setFilePath(resolvedName);
+            }
+            if (!resolvedName) {
+              setFilePath(`Datei_${sId.slice(0, 8)}`);
+            }
             setIsLoading(false);
             return;
           }
+        } catch {
+          // Direct probe failed
+        }
 
+        if (resolvedName || resolvedMime) {
+          if (isMounted) setIsLoading(false);
+          return;
+        }
+
+        if (isMounted) {
           setErrorMessage('Die Freigabe existiert nicht oder wurde entfernt.');
           setIsLoading(false);
-        } catch (err) {
-          if (isMounted) {
-            setErrorMessage('Freigabelink nicht gefunden oder Server offline.');
-            setIsLoading(false);
-          }
         }
         return;
       }
@@ -178,28 +229,23 @@ export const PublicShareView: React.FC<PublicShareViewProps> = ({
   const fileName = filePath.split('/').pop() || filePath || 'Freigegebene Datei';
   const cleanPath = filePath.trim().replace(/^\/+/, '');
 
-  // URLs gemäß Vorgaben für unerratbare shareId (ohne Auth-Header und ohne ?token=):
-  // Anzeigen / Streamen: https://storage.j-jonas.com/public-share/:shareId
-  // Download: https://storage.j-jonas.com/public-share/:shareId?download=true
-  // Vorschaubild (Thumbnail): https://storage.j-jonas.com/public-share/:shareId?thumb=true
-  const streamUrl = shareId
-    ? getPublicShareStreamUrl(shareId)
+  // Direkte öffentliche Medienquelle (src) ohne Authentifizierung:
+  // https://storage.j-jonas.com/public-share/${shareId}
+  const publicMediaUrl = shareId
+    ? `https://storage.j-jonas.com/public-share/${encodeURIComponent(shareId)}`
     : (username && filePath ? getPublicStreamUrl(username, cleanPath) : '');
 
+  // Download-URL:
   const downloadUrl = shareId
-    ? getPublicShareDownloadUrl(shareId)
+    ? `https://storage.j-jonas.com/public-share/${encodeURIComponent(shareId)}?download=true`
     : (username && filePath ? getPublicDownloadUrl(username, cleanPath) : '');
 
-  const thumbnailUrl = shareId
-    ? getPublicShareThumbnailUrl(shareId)
-    : '';
-
   const ext = fileName.split('.').pop()?.toLowerCase() || '';
-  const isVideo = ['mp4', 'webm', 'ogg', 'mov', 'mkv', 'm4v', 'ts'].includes(ext);
-  const isAudio = ['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac'].includes(ext);
-  const isImage = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'svg', 'avif', 'bmp'].includes(ext);
-  const isPdf = ext === 'pdf';
-  const isPreviewable = isVideo || isAudio || isImage || isPdf;
+  const isVideo = ['mp4', 'webm', 'ogg', 'mov', 'mkv', 'm4v', 'ts', 'ogv'].includes(ext) || mimeType.startsWith('video/');
+  const isAudio = ['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac', 'weba', 'opus', 'mid'].includes(ext) || mimeType.startsWith('audio/');
+  const isImage = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'svg', 'avif', 'bmp', 'ico'].includes(ext) || mimeType.startsWith('image/');
+  const isPdf = ext === 'pdf' || mimeType.includes('pdf');
+  const isPreviewable = isVideo || isAudio || isImage || isPdf || Boolean(shareId);
 
   const handleDownload = () => {
     if (!downloadUrl) return;
@@ -341,9 +387,9 @@ export const PublicShareView: React.FC<PublicShareViewProps> = ({
             {/* Top decorative badge with thumbnail or icon */}
             <div className="p-6 sm:p-8 flex flex-col items-center text-center">
               <div className="w-24 h-24 rounded-3xl bg-gray-50 dark:bg-gray-800/80 border border-gray-200/60 dark:border-gray-700/60 flex items-center justify-center mb-5 shadow-xs overflow-hidden relative">
-                {thumbnailUrl && !thumbError && (isImage || isVideo) ? (
+                {isImage && !thumbError ? (
                   <img
-                    src={thumbnailUrl}
+                    src={publicMediaUrl}
                     alt={fileName}
                     className="w-full h-full object-cover"
                     onError={() => setThumbError(true)}
@@ -369,6 +415,12 @@ export const PublicShareView: React.FC<PublicShareViewProps> = ({
                   <span>
                     Freigegeben von <span className="font-semibold text-gray-700 dark:text-gray-300">@{username}</span>
                   </span>
+                )}
+                {fileSize !== undefined && fileSize > 0 && (
+                  <>
+                    <span>•</span>
+                    <span className="font-mono text-[11px]">{formatBytes(fileSize)}</span>
+                  </>
                 )}
                 {createdAt && (
                   <>
@@ -411,22 +463,21 @@ export const PublicShareView: React.FC<PublicShareViewProps> = ({
                 {isVideo && (
                   <div className="aspect-video w-full rounded-2xl overflow-hidden bg-black flex items-center justify-center shadow-lg">
                     <video
-                      src={streamUrl}
-                      poster={thumbnailUrl || undefined}
+                      src={publicMediaUrl}
                       controls
                       playsInline
-                      autoPlay
+                      preload="metadata"
                       className="w-full h-full object-contain"
                     />
                   </div>
                 )}
 
                 {isAudio && (
-                  <div className="p-4 bg-gray-900 rounded-2xl">
+                  <div className="p-4 bg-gray-900 rounded-2xl flex flex-col gap-2">
                     <audio
-                      src={streamUrl}
+                      src={publicMediaUrl}
                       controls
-                      autoPlay
+                      preload="metadata"
                       className="w-full"
                     />
                   </div>
@@ -435,7 +486,7 @@ export const PublicShareView: React.FC<PublicShareViewProps> = ({
                 {isImage && (
                   <div className="max-h-[480px] rounded-2xl overflow-hidden flex items-center justify-center bg-black">
                     <img
-                      src={streamUrl}
+                      src={publicMediaUrl}
                       alt={fileName}
                       className="max-h-[480px] w-full object-contain rounded-2xl"
                     />
@@ -444,10 +495,22 @@ export const PublicShareView: React.FC<PublicShareViewProps> = ({
 
                 {isPdf && (
                   <iframe
-                    src={streamUrl}
+                    src={publicMediaUrl}
                     title={fileName}
                     className="w-full h-96 rounded-2xl border-0 bg-white"
                   />
+                )}
+
+                {!isVideo && !isAudio && !isImage && !isPdf && (
+                  <div className="p-4 bg-gray-900 rounded-2xl text-center">
+                    <video
+                      src={publicMediaUrl}
+                      controls
+                      playsInline
+                      preload="metadata"
+                      className="w-full max-h-[400px] object-contain rounded-xl"
+                    />
+                  </div>
                 )}
               </div>
             )}

@@ -60,6 +60,52 @@ app.use('/api/stream', (req, res) => {
   res.redirect(targetUrl);
 });
 
+/**
+ * GET /api/public-share/:shareId
+ * Öffentlicher Info-Endpunkt für freigegebene Einzellinks.
+ * Prüft den Share auf https://storage.j-jonas.com/public-share/:shareId per HEAD-Request
+ * und liest Content-Disposition (Dateiname), Content-Type (MIME) und Content-Length aus (ohne CORS-Einschränkungen).
+ */
+app.get('/api/public-share/:shareId', async (req, res) => {
+  try {
+    const { shareId } = req.params;
+    if (!shareId) return res.status(400).json({ success: false, error: 'Keine shareId übergeben.' });
+
+    const backendUrl = `https://storage.j-jonas.com/public-share/${encodeURIComponent(shareId)}`;
+    const headRes = await fetch(backendUrl, { method: 'HEAD' });
+
+    if (!headRes.ok && headRes.status !== 206) {
+      return res.status(headRes.status).json({ success: false, error: 'Freigabe nicht gefunden.' });
+    }
+
+    const cd = headRes.headers.get('content-disposition') || '';
+    let fileName = '';
+    const matchName = cd.match(/filename\*?=(?:UTF-8'')?["']?([^"';]+)["']?/i);
+    if (matchName && matchName[1]) {
+      try {
+        fileName = decodeURIComponent(matchName[1].trim());
+      } catch {
+        fileName = matchName[1].trim();
+      }
+    }
+
+    const contentType = headRes.headers.get('content-type') || '';
+    const contentLength = headRes.headers.get('content-length')
+      ? parseInt(headRes.headers.get('content-length')!, 10)
+      : undefined;
+
+    res.json({
+      success: true,
+      shareId,
+      fileName: fileName || undefined,
+      contentType,
+      size: contentLength,
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message || 'Serverfehler beim Laden der Freigabe.' });
+  }
+});
+
 
 /**
  * PATCH /api/shares/permissions
