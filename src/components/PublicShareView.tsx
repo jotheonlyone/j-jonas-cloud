@@ -98,7 +98,7 @@ export const PublicShareView: React.FC<PublicShareViewProps> = ({
         setShareId(sId);
 
         try {
-          // Aus Firestore 'shares' laden
+          // Aus separater Firestore-Sammlung 'public_shares' laden
           const shareDoc = await getPublicFileShare(sId);
           if (!isMounted) return;
 

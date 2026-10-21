@@ -2048,7 +2048,7 @@ function generateSecureShareId(): string {
 
 /**
  * Erzeugt für eine Datei eine zufällige unerratbare ID und speichert das Dokument
- * in Firestore in der separaten Kollektion 'public_shares' (Dokument-ID = shareId):
+ * zwingend in der separaten Firestore-Sammlung 'public_shares' (Dokument-ID = shareId):
  * {
  *   "owner": currentUser,
  *   "file_path": filePath,
@@ -2096,11 +2096,8 @@ export async function createPublicFileShare(
     created_at: new Date().toISOString(),
   };
 
-  try {
-    await setDoc(doc(db, 'public_shares', shareId), docData);
-  } catch (err) {
-    console.error('Failed to save public share in Firestore collection public_shares:', err);
-  }
+  // Zwingend in die Sammlung 'public_shares' schreiben
+  await setDoc(doc(db, 'public_shares', shareId), docData);
 
   // Lokalen Cache aktualisieren
   saveLocalPublicShare(shareId, docData);
@@ -2112,13 +2109,13 @@ export async function createPublicFileShare(
 }
 
 /**
- * Lädt die öffentliche Dateifreigabe anhand ihrer unerratbaren shareId primär aus der Kollektion 'public_shares'.
+ * Lädt die öffentliche Dateifreigabe anhand ihrer unerratbaren shareId ausschließlich aus der Kollektion 'public_shares'.
  */
 export async function getPublicFileShare(shareId: string): Promise<PublicFileShare | null> {
   if (!shareId) return null;
   const cleanId = shareId.trim();
 
-  // 1. Primär aus separater Sammlung 'public_shares' laden
+  // Ausschließlich aus der separaten Sammlung 'public_shares' laden (Dokument-ID = shareId)
   try {
     const snap = await getDoc(doc(db, 'public_shares', cleanId));
     if (snap.exists()) {
@@ -2136,25 +2133,7 @@ export async function getPublicFileShare(shareId: string): Promise<PublicFileSha
     console.warn('Firestore getPublicFileShare from public_shares error:', err);
   }
 
-  // 2. Fallback: Alte Freigaben aus 'shares' für Abwärtskompatibilität prüfen
-  try {
-    const legacySnap = await getDoc(doc(db, 'shares', cleanId));
-    if (legacySnap.exists()) {
-      const data = legacySnap.data();
-      if (data && data.owner && data.file_path) {
-        return {
-          id: legacySnap.id,
-          owner: cleanUsername(data.owner),
-          file_path: String(data.file_path).trim().replace(/^\/+/, ''),
-          created_at: data.created_at || new Date().toISOString(),
-        };
-      }
-    }
-  } catch (err) {
-    console.warn('Firestore getPublicFileShare fallback from shares error:', err);
-  }
-
-  // 3. Lokaler Cache-Fallback
+  // Lokaler Cache-Fallback
   const local = getLocalPublicShare(cleanId);
   if (local) return local;
 
