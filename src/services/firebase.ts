@@ -200,21 +200,42 @@ function saveLocalUsers(users: UserAccount[]) {
   }
 }
 
-export function normalizeShareDoc(data: any): FolderShare {
+export function isValidFolderShareDoc(data: any): boolean {
+  if (!data || typeof data !== 'object') return false;
+  const folder_name = typeof data.folder_name === 'string' ? data.folder_name.trim() : '';
+  if (!folder_name) return false;
+  const hasSharedUsers = Array.isArray(data.shared_users) && data.shared_users.length > 0;
+  const hasSharedWith = Array.isArray(data.shared_with) && data.shared_with.length > 0;
+  if (!hasSharedUsers && !hasSharedWith) return false;
+  // Dokumente mit file_path und ohne folder_path sind Dateifreigaben und dürfen nicht in 'shares' als Ordner interpretiert werden
+  if (data.file_path && !data.folder_path) return false;
+  return true;
+}
+
+export function normalizeShareDoc(data: any): FolderShare | null {
   if (!data || typeof data !== 'object') {
-    return {
-      id: `invalid_${Math.random().toString(36).slice(2)}`,
-      folder_path: '',
-      folder_name: 'Unbekannter Ordner',
-      owner: '',
-      shared_with: [],
-      created_at: new Date().toISOString()
-    };
+    return null;
+  }
+
+  // Streng isolieren: Dokumente ohne gültigen folder_name oder ohne shared_users ignorieren
+  const rawFolderName = typeof data.folder_name === 'string' ? data.folder_name.trim() : '';
+  if (!rawFolderName) {
+    return null;
+  }
+
+  const hasSharedUsersArray = Array.isArray(data.shared_users) && data.shared_users.length > 0;
+  const hasSharedWithArray = Array.isArray(data.shared_with) && data.shared_with.length > 0;
+  if (!hasSharedUsersArray && !hasSharedWithArray) {
+    return null;
+  }
+
+  if (data.file_path && !data.folder_path) {
+    return null;
   }
 
   const owner = (data.owner ? String(data.owner) : '').trim().toLowerCase();
   const folder_path = data.folder_path ? String(data.folder_path) : '';
-  const folder_name = data.folder_name || (folder_path ? folder_path.split('/').pop() : '') || 'Ordner';
+  const folder_name = rawFolderName;
   const id = data.id || `${owner || 'unknown'}__${encodeURIComponent(folder_path || 'unknown')}`;
 
   let shared_with: SharedMember[] = Array.isArray(data.shared_with) ? [...data.shared_with] : [];
@@ -262,6 +283,10 @@ export function normalizeShareDoc(data: any): FolderShare {
   }
 
   const finalMembers = Array.from(memberMap.values());
+  if (finalMembers.length === 0) {
+    return null;
+  }
+
   const rootStatus = data.status === 'active' || data.status === 'accepted'
     ? 'accepted'
     : (data.status === 'declined' ? 'declined' : (finalMembers.some(m => m.status === 'accepted') ? 'accepted' : 'pending'));
@@ -285,7 +310,7 @@ export function consolidateFolderShares(shares: any[]): FolderShare[] {
     if (!raw) continue;
     try {
       const normalized = normalizeShareDoc(raw);
-      if (!normalized || !normalized.id) continue;
+      if (!normalized || !normalized.id || !normalized.folder_name) continue;
       const normalizePath = (p: string) => (p || '').trim().replace(/^\/+|\/+$/g, '').toLowerCase();
       const key = `${(normalized.owner || '').toLowerCase()}::${normalizePath(normalized.folder_path || '')}`;
       if (!map.has(key)) {
@@ -328,7 +353,8 @@ function getLocalShares(): FolderShare[] {
   try {
     const raw = localStorage.getItem(LOCAL_SHARES_KEY);
     const parsed = raw ? JSON.parse(raw) : [];
-    return consolidateFolderShares(Array.isArray(parsed) ? parsed : []);
+    const valid = (Array.isArray(parsed) ? parsed : []).filter(s => isValidFolderShareDoc(s));
+    return consolidateFolderShares(valid);
   } catch {
     return [];
   }
@@ -1805,8 +1831,10 @@ export async function getSharedFolder(folder_path: string, ownerRaw: string): Pr
     const snap = await getDoc(doc(db, 'shared', shareDocId));
     if (snap.exists()) {
       const fresh = normalizeShareDoc({ ...snap.data(), id: snap.id });
-      updateLocalShare(fresh);
-      return fresh;
+      if (fresh) {
+        updateLocalShare(fresh);
+        return fresh;
+      }
     }
   } catch {}
 
@@ -1815,8 +1843,10 @@ export async function getSharedFolder(folder_path: string, ownerRaw: string): Pr
     const snap = await getDoc(doc(db, 'shares', shareDocId));
     if (snap.exists()) {
       const fresh = normalizeShareDoc({ ...snap.data(), id: snap.id });
-      updateLocalShare(fresh);
-      return fresh;
+      if (fresh) {
+        updateLocalShare(fresh);
+        return fresh;
+      }
     }
 
     const q = query(collection(db, 'shares'), where('owner', '==', owner));
@@ -1825,8 +1855,10 @@ export async function getSharedFolder(folder_path: string, ownerRaw: string): Pr
       const data = d.data();
       if (normalizePath(data.folder_path || '') === normalizedFolderPath) {
         const fresh = normalizeShareDoc({ ...data, id: d.id });
-        updateLocalShare(fresh);
-        return fresh;
+        if (fresh) {
+          updateLocalShare(fresh);
+          return fresh;
+        }
       }
     }
   } catch (err) {
@@ -1857,7 +1889,10 @@ export async function getSharesForInvitedUser(usernameRaw: string): Promise<Fold
     const snapShared1 = await getDocs(qShared1);
     snapShared1.docs.forEach(d => {
       const docData = d.data();
-      if (docData) serverResults.push(normalizeShareDoc({ ...docData, id: d.id }));
+      if (isValidFolderShareDoc(docData)) {
+        const norm = normalizeShareDoc({ ...docData, id: d.id });
+        if (norm) serverResults.push(norm);
+      }
     });
     if (!snapShared1.empty) firestoreSuccess = true;
   } catch {}
@@ -1867,7 +1902,10 @@ export async function getSharesForInvitedUser(usernameRaw: string): Promise<Fold
     const snapShared2 = await getDocs(qShared2);
     snapShared2.docs.forEach(d => {
       const docData = d.data();
-      if (docData) serverResults.push(normalizeShareDoc({ ...docData, id: d.id }));
+      if (isValidFolderShareDoc(docData)) {
+        const norm = normalizeShareDoc({ ...docData, id: d.id });
+        if (norm) serverResults.push(norm);
+      }
     });
     if (!snapShared2.empty) firestoreSuccess = true;
   } catch {}
@@ -1878,7 +1916,10 @@ export async function getSharesForInvitedUser(usernameRaw: string): Promise<Fold
     const snap1 = await getDocs(q1);
     snap1.docs.forEach(d => {
       const docData = d.data();
-      if (docData) serverResults.push(normalizeShareDoc({ ...docData, id: d.id }));
+      if (isValidFolderShareDoc(docData)) {
+        const norm = normalizeShareDoc({ ...docData, id: d.id });
+        if (norm) serverResults.push(norm);
+      }
     });
     firestoreSuccess = true;
   } catch (err) {
@@ -1890,7 +1931,10 @@ export async function getSharesForInvitedUser(usernameRaw: string): Promise<Fold
     const snap2 = await getDocs(q2);
     snap2.docs.forEach(d => {
       const docData = d.data();
-      if (docData) serverResults.push(normalizeShareDoc({ ...docData, id: d.id }));
+      if (isValidFolderShareDoc(docData)) {
+        const norm = normalizeShareDoc({ ...docData, id: d.id });
+        if (norm) serverResults.push(norm);
+      }
     });
     firestoreSuccess = true;
   } catch {}
@@ -1906,7 +1950,7 @@ export async function getSharesForInvitedUser(usernameRaw: string): Promise<Fold
 
   // Local store fallback
   const local = getLocalShares().filter(s =>
-    s && (
+    s && isValidFolderShareDoc(s) && (
       (s.invited_user && s.invited_user?.toLowerCase() === normalized) ||
       (Array.isArray(s.shared_with) && s.shared_with.some(m => m?.username && m.username?.toLowerCase() === normalized))
     )
@@ -1926,7 +1970,10 @@ export async function getSharesByOwner(usernameRaw: string): Promise<FolderShare
     const snapShared = await getDocs(qShared);
     snapShared.docs.forEach(d => {
       const docData = d.data();
-      if (docData) serverResults.push(normalizeShareDoc({ ...docData, id: d.id }));
+      if (isValidFolderShareDoc(docData)) {
+        const norm = normalizeShareDoc({ ...docData, id: d.id });
+        if (norm) serverResults.push(norm);
+      }
     });
     if (!snapShared.empty) firestoreSuccess = true;
   } catch {}
@@ -1937,7 +1984,10 @@ export async function getSharesByOwner(usernameRaw: string): Promise<FolderShare
     const snap = await getDocs(q);
     snap.docs.forEach(d => {
       const docData = d.data();
-      if (docData) serverResults.push(normalizeShareDoc({ ...docData, id: d.id }));
+      if (isValidFolderShareDoc(docData)) {
+        const norm = normalizeShareDoc({ ...docData, id: d.id });
+        if (norm) serverResults.push(norm);
+      }
     });
     firestoreSuccess = true;
   } catch (err) {
@@ -1952,12 +2002,12 @@ export async function getSharesByOwner(usernameRaw: string): Promise<FolderShare
   }
 
   // Local store fallback
-  const local = getLocalShares().filter(s => s && s.owner && s.owner?.toLowerCase() === normalized);
+  const local = getLocalShares().filter(s => s && isValidFolderShareDoc(s) && s.owner && s.owner?.toLowerCase() === normalized);
   return consolidateFolderShares(local);
 }
 
 // ---------------------------------------------------------------------------
-// Öffentliche Einzelfreigaben (Public File Shares) in Kollektion 'shares'
+// Öffentliche Einzelfreigaben (Public File Shares) in separater Kollektion 'public_shares'
 // ---------------------------------------------------------------------------
 
 const LOCAL_PUBLIC_SHARES_KEY = 'jjcloud_public_shares_cache';
@@ -1998,7 +2048,7 @@ function generateSecureShareId(): string {
 
 /**
  * Erzeugt für eine Datei eine zufällige unerratbare ID und speichert das Dokument
- * in Firestore in der Kollektion 'shares':
+ * in Firestore in der separaten Kollektion 'public_shares' (Dokument-ID = shareId):
  * {
  *   "owner": currentUser,
  *   "file_path": filePath,
@@ -2012,10 +2062,10 @@ export async function createPublicFileShare(
   const currentUser = cleanUsername(ownerRaw);
   const filePath = filePathRaw.trim().replace(/^\/+/, '');
 
-  // 1. Prüfen, ob bereits eine Freigabe für dieselbe Datei existiert
+  // 1. Prüfen, ob in 'public_shares' bereits eine Freigabe für dieselbe Datei existiert
   try {
     const q = query(
-      collection(db, 'shares'),
+      collection(db, 'public_shares'),
       where('owner', '==', currentUser),
       where('file_path', '==', filePath)
     );
@@ -2035,7 +2085,7 @@ export async function createPublicFileShare(
       };
     }
   } catch (err) {
-    console.warn('Query existing public share in Firestore skipped/failed:', err);
+    console.warn('Query existing public share in Firestore collection public_shares skipped/failed:', err);
   }
 
   // 2. Zufällige, unerratbare Freigabe-ID erzeugen
@@ -2047,9 +2097,9 @@ export async function createPublicFileShare(
   };
 
   try {
-    await setDoc(doc(db, 'shares', shareId), docData);
+    await setDoc(doc(db, 'public_shares', shareId), docData);
   } catch (err) {
-    console.error('Failed to save public share in Firestore:', err);
+    console.error('Failed to save public share in Firestore collection public_shares:', err);
   }
 
   // Lokalen Cache aktualisieren
@@ -2062,14 +2112,15 @@ export async function createPublicFileShare(
 }
 
 /**
- * Lädt die öffentliche Dateifreigabe anhand ihrer unerratbaren shareId aus der Kollektion 'shares'.
+ * Lädt die öffentliche Dateifreigabe anhand ihrer unerratbaren shareId primär aus der Kollektion 'public_shares'.
  */
 export async function getPublicFileShare(shareId: string): Promise<PublicFileShare | null> {
   if (!shareId) return null;
   const cleanId = shareId.trim();
 
+  // 1. Primär aus separater Sammlung 'public_shares' laden
   try {
-    const snap = await getDoc(doc(db, 'shares', cleanId));
+    const snap = await getDoc(doc(db, 'public_shares', cleanId));
     if (snap.exists()) {
       const data = snap.data();
       if (data && data.owner && data.file_path) {
@@ -2082,10 +2133,28 @@ export async function getPublicFileShare(shareId: string): Promise<PublicFileSha
       }
     }
   } catch (err) {
-    console.warn('Firestore getPublicFileShare error:', err);
+    console.warn('Firestore getPublicFileShare from public_shares error:', err);
   }
 
-  // Lokaler Cache-Fallback
+  // 2. Fallback: Alte Freigaben aus 'shares' für Abwärtskompatibilität prüfen
+  try {
+    const legacySnap = await getDoc(doc(db, 'shares', cleanId));
+    if (legacySnap.exists()) {
+      const data = legacySnap.data();
+      if (data && data.owner && data.file_path) {
+        return {
+          id: legacySnap.id,
+          owner: cleanUsername(data.owner),
+          file_path: String(data.file_path).trim().replace(/^\/+/, ''),
+          created_at: data.created_at || new Date().toISOString(),
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('Firestore getPublicFileShare fallback from shares error:', err);
+  }
+
+  // 3. Lokaler Cache-Fallback
   const local = getLocalPublicShare(cleanId);
   if (local) return local;
 

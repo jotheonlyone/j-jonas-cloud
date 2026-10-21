@@ -18,6 +18,7 @@ import {
   getSharesByOwner,
   respondToShare,
   logoutFirebaseAuth,
+  isValidFolderShareDoc,
 } from './services/firebase';
 import {
   listFiles,
@@ -584,10 +585,10 @@ function MainApp() {
       ]);
       const map = new Map<string, FolderShare>();
       (invited || []).filter(Boolean).forEach((s) => {
-        if (s && s.id) map.set(s.id, s);
+        if (s && s.id && isValidFolderShareDoc(s)) map.set(s.id, s);
       });
       (owned || []).filter(Boolean).forEach((s) => {
-        if (s && s.id) map.set(s.id, s);
+        if (s && s.id && isValidFolderShareDoc(s)) map.set(s.id, s);
       });
       setShares(Array.from(map.values()));
     } catch (err) {

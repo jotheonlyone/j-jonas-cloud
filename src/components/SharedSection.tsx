@@ -36,7 +36,8 @@ import {
   deleteFolderShare,
   deleteFolderShareMember,
   renameSharedFolder,
-  getSharedFolder
+  getSharedFolder,
+  isValidFolderShareDoc
 } from '../services/firebase';
 import { useToast } from './Toast';
 import { hasFolderWritePermission } from '../utils/permissions';
@@ -88,10 +89,11 @@ export const SharedSection: React.FC<SharedSectionProps> = ({
   const [serverError, setServerError] = useState<string | undefined>();
 
   // 1. Ausstehende Einladungen: Ordner, bei denen der Nutzer in shared_with auf 'pending' steht
+  // Bereich isolieren: Ignoriere Dokumente, die keinen gültigen folder_name oder keine shared_users besitzen
   const pendingInvitations = useMemo(() => {
     const userNorm = (user?.username || '').toLowerCase();
     return shares.filter((s) => {
-      if (!s) return false;
+      if (!s || !isValidFolderShareDoc(s)) return false;
       if (s.invited_user && s.invited_user?.toLowerCase() === userNorm && s.status === 'pending') {
         return true;
       }
@@ -102,13 +104,14 @@ export const SharedSection: React.FC<SharedSectionProps> = ({
   }, [shares, user?.username]);
 
   // 2. Aktive geteilte Ordner:
+  // - Bereich isolieren: Ignoriere Dokumente, die keinen gültigen folder_name oder keine shared_users besitzen
   // - Jeder Ordner existiert GENAU EINMAL (keine doppelten Ordner mehr für verschiedene Personen)
   // - Besitzer sieht alle seine geteilten Ordner
   // - Eingeladene Personen sehen den Ordner, sobald ihr Status 'accepted' oder 'active' ist
   const acceptedShares = useMemo(() => {
     const userNorm = (user?.username || '').toLowerCase();
     const list = shares.filter((s) => {
-      if (!s) return false;
+      if (!s || !isValidFolderShareDoc(s)) return false;
       const isOwner = (s.owner?.toLowerCase() || '') === userNorm;
       const isAcceptedLegacy = s.invited_user && s.invited_user?.toLowerCase() === userNorm && (s.status === 'accepted' || s.status === 'active');
       const isAcceptedMember = Array.isArray(s.shared_with) && s.shared_with.some(
