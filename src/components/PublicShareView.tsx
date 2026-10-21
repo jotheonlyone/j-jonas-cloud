@@ -18,7 +18,6 @@ import {
   Info,
   Check,
   AlertCircle,
-  Loader2,
   ExternalLink
 } from 'lucide-react';
 import type { FileItemData } from '../types';
@@ -272,7 +271,7 @@ export const PublicShareView: React.FC<PublicShareViewProps> = ({
                 filter: 'drop-shadow(0 4px 12px rgba(37, 99, 235, 0.25))',
               }}
             >
-              <CloudLogo className="w-7 h-7 sm:w-8 sm:h-8 shrink-0" />
+              <CloudLogo className="w-[3.75rem] h-[3rem] -my-3 -ml-3 -mr-3 sm:w-[4.5rem] sm:h-[3.75rem] sm:-my-4 sm:-ml-4 sm:-mr-4 shrink-0" />
               <span>J.Jonas Cloud</span>
             </span>
             <span className="ml-1 text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 border border-blue-200/60 dark:border-blue-800">
@@ -296,7 +295,9 @@ export const PublicShareView: React.FC<PublicShareViewProps> = ({
       <main className="flex-1 flex items-center justify-center p-4 sm:p-8">
         {isLoading ? (
           <div className="flex flex-col items-center justify-center text-center p-8">
-            <Loader2 className="w-10 h-10 animate-spin text-blue-600 dark:text-blue-400 mb-3" />
+            <div className="relative mb-3 flex items-center justify-center">
+              <CloudLogo className="w-20 h-16 text-blue-600 dark:text-blue-400 animate-pulse" />
+            </div>
             <p className="text-sm text-gray-500 dark:text-gray-400 font-medium">
               Freigabe wird geladen...
             </p>
@@ -534,7 +535,7 @@ export const PublicShareView: React.FC<PublicShareViewProps> = ({
 
             {/* Bottom minimal footer */}
             <div className="px-6 py-3.5 bg-gray-50/70 dark:bg-gray-800/40 border-t border-gray-100 dark:border-gray-800 text-center flex items-center justify-center gap-1.5">
-              <CloudLogo className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
+              <CloudLogo className="w-5 h-4.5 -my-1 text-blue-600 dark:text-blue-400 shrink-0" />
               <span className="text-[11px] text-gray-400">
                 Sicher bereitgestellt von <span className="font-semibold text-gray-600 dark:text-gray-300">J.Jonas Cloud</span>
               </span>

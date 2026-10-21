@@ -132,7 +132,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 filter: 'drop-shadow(0 4px 12px rgba(37, 99, 235, 0.25))',
               }}
             >
-              <CloudLogo className="w-8 h-8 sm:w-9 sm:h-9 shrink-0" />
+              <CloudLogo className="w-20 h-16 -my-4 -mx-4 sm:w-24 sm:h-20 sm:-my-5 sm:-mx-5 shrink-0" />
               <span>J.Jonas Cloud</span>
             </h1>
           </div>

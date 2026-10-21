@@ -8,15 +8,15 @@ export interface CloudLogoProps extends React.SVGProps<SVGSVGElement> {
 
 
 /**
- * Minimalistisches, organisches Wolken-Logo (Outline/Stroke) exakt nach Vorlage:
- * - Breitere, flache Basislinie unten
- * - Flacher und weiter außen ansetzende linke Ausbuchtung
- * - Sanft nach links versetzte, weich geschwungene Hauptkuppe oben (asymmetrisch)
- * - Kompaktere, harmonisch zur Bodenlinie abgerundete rechte Ausbuchtung
- * - Dynamisches currentColor mit ererbtem Glow-/Schatteneffekt
+ * Organisches Wolken-Logo (Outline/Stroke) exakt nach Vorgabe:
+ * - Neuer SVG-Pfad & Geometrie mit viewBox="-15.2 -12.5 64 52"
+ * - Reiner Pfad ohne Verschiebung (kein transform-Wrapper)
+ * - Breitere, flache Basislinie unten, asymmetrisch-organische Kontur
+ * - Dynamische Farbvererbung (currentColor) & Glow-/Schatteneffekt
+ * - Runde Ecken (stroke-linecap="round", stroke-linejoin="round") und fill="none"
  */
 export const CloudLogo: React.FC<CloudLogoProps> = ({
-  className = 'w-8 h-8 md:w-9 md:h-9',
+  className = 'w-[4.5rem] h-[3.75rem] -my-4 -ml-4 -mr-4 md:w-24 md:h-20 md:-my-5 md:-ml-5 md:-mr-5',
   size,
   strokeWidth = 2.4,
   style,
@@ -24,7 +24,7 @@ export const CloudLogo: React.FC<CloudLogoProps> = ({
 }) => {
   return (
     <svg
-      viewBox="0 0 32 24"
+      viewBox="-15.2 -12.5 64 52"
       fill="none"
       stroke="currentColor"
       strokeWidth={strokeWidth}
@@ -37,7 +37,7 @@ export const CloudLogo: React.FC<CloudLogoProps> = ({
       aria-hidden="true"
       {...props}
     >
-      <path d="M 7.8 20.8 L 25.0 20.8 C 27.6 20.8 29.2 18.2 29.2 15.2 C 29.2 12.0 26.6 9.8 23.5 10.1 C 23.0 5.6 19.8 3.0 15.4 3.0 C 11.0 3.0 8.5 5.4 8.8 9.2 C 5.0 9.2 2.8 11.6 2.8 14.6 C 2.8 18.0 5.0 20.8 7.8 20.8 Z" />
+      <path d="M 5.5 21.0 L 26.5 21.0 C 29.5 21.0 31.8 18.5 31.8 15.2 C 31.8 12.2 29.2 10.2 26.2 10.6 C 25.0 5.4 20.0 3.2 15.0 3.6 C 10.2 4.0 7.4 7.2 7.8 11.2 C 4.2 11.5 1.8 14.0 1.8 17.2 C 1.8 19.8 3.4 21.0 5.5 21.0 Z" />
     </svg>
   );
 };

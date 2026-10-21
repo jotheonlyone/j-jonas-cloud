@@ -205,7 +205,7 @@ export const FileViewerPage: React.FC<FileViewerPageProps> = ({
             title="Zurück zur Ablage"
           >
             <ArrowLeft className="w-3.5 h-3.5" />
-            <CloudLogo className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
+            <CloudLogo className="w-7 h-6 -my-1 -mx-0.5 text-blue-600 dark:text-blue-400 shrink-0" />
             <span className="hidden sm:inline">J.Jonas Cloud</span>
           </a>
 

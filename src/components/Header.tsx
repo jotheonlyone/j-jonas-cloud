@@ -102,7 +102,7 @@ export const Header: React.FC<HeaderProps> = ({
               filter: 'drop-shadow(0 4px 12px rgba(37, 99, 235, 0.25))',
             }}
           >
-            <CloudLogo className="w-8 h-8 md:w-9 md:h-9 shrink-0 transition-transform group-hover:scale-105" />
+            <CloudLogo className="w-[4.5rem] h-[3.75rem] -my-4 -ml-4 -mr-4 md:w-24 md:h-20 md:-my-5 md:-ml-5 md:-mr-5 shrink-0 transition-transform group-hover:scale-105" />
             <span>J.Jonas Cloud</span>
           </span>
         </div>
