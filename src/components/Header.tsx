@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import type { UserAccount, ViewMode, NavigationTab } from '../types';
 import type { ServerStatus } from '../services/storageApi';
+import { CloudLogo } from './CloudLogo';
 
 interface HeaderProps {
   user: UserAccount | null;
@@ -89,19 +90,20 @@ export const Header: React.FC<HeaderProps> = ({
 
         <div
           onClick={onLogoClick}
-          className="flex items-center gap-2 select-none cursor-pointer"
+          className="flex items-center select-none cursor-pointer group"
           style={{
             fontFamily:
               'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
           }}
         >
           <span
-            className="font-black tracking-tight text-2xl md:text-3xl text-blue-600 hover:text-blue-700 dark:text-blue-500 dark:hover:text-blue-400 transition-colors"
+            className="flex items-center gap-2 sm:gap-2.5 font-black tracking-tight text-2xl md:text-3xl text-blue-600 group-hover:text-blue-700 dark:text-blue-500 dark:group-hover:text-blue-400 transition-colors"
             style={{
               filter: 'drop-shadow(0 4px 12px rgba(37, 99, 235, 0.25))',
             }}
           >
-            J.Jonas Cloud
+            <CloudLogo className="w-8 h-8 md:w-9 md:h-9 shrink-0 transition-transform group-hover:scale-105" />
+            <span>J.Jonas Cloud</span>
           </span>
         </div>
       </div>

@@ -3,6 +3,7 @@ import { User, Lock, ArrowRight, AlertCircle, CheckCircle2, Eye, EyeOff, X } fro
 import { registerUser, loginUser } from '../services/firebase';
 import type { UserAccount } from '../types';
 import { LegalLinks } from './LegalLinks';
+import { CloudLogo } from './CloudLogo';
 
 interface AuthModalProps {
   onSuccess: (user: UserAccount) => void;
@@ -126,12 +127,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             }}
           >
             <h1
-              className="font-black tracking-tight text-3xl sm:text-4xl text-blue-600 hover:text-blue-700 dark:text-blue-500 dark:hover:text-blue-400 transition-colors"
+              className="flex items-center justify-center gap-2.5 font-black tracking-tight text-3xl sm:text-4xl text-blue-600 hover:text-blue-700 dark:text-blue-500 dark:hover:text-blue-400 transition-colors"
               style={{
                 filter: 'drop-shadow(0 4px 12px rgba(37, 99, 235, 0.25))',
               }}
             >
-              J.Jonas Cloud
+              <CloudLogo className="w-8 h-8 sm:w-9 sm:h-9 shrink-0" />
+              <span>J.Jonas Cloud</span>
             </h1>
           </div>
           <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 mt-1.5 font-medium">

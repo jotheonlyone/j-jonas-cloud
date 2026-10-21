@@ -35,6 +35,7 @@ import {
 } from '../services/storageApi';
 import { getPublicFileShare } from '../services/firebase';
 import { TextViewer, isTextFile } from './TextViewer';
+import { CloudLogo } from './CloudLogo';
 
 interface PublicShareViewProps {
   darkMode?: boolean;
@@ -264,14 +265,17 @@ export const PublicShareView: React.FC<PublicShareViewProps> = ({
       {/* Top Header */}
       <header className="h-16 border-b border-gray-200/80 dark:border-gray-800 bg-white/80 dark:bg-gray-900/80 backdrop-blur-md px-4 sm:px-8 flex items-center justify-between sticky top-0 z-30 shadow-xs">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-blue-600 flex items-center justify-center text-white shadow-xs">
-            <Cloud className="w-5 h-5" />
-          </div>
-          <div>
-            <span className="font-bold text-base sm:text-lg tracking-tight text-gray-900 dark:text-white">
-              J.Jonas Cloud
+          <div className="flex items-center gap-2 select-none">
+            <span
+              className="flex items-center gap-2 font-black tracking-tight text-xl sm:text-2xl text-blue-600 dark:text-blue-500"
+              style={{
+                filter: 'drop-shadow(0 4px 12px rgba(37, 99, 235, 0.25))',
+              }}
+            >
+              <CloudLogo className="w-7 h-7 sm:w-8 sm:h-8 shrink-0" />
+              <span>J.Jonas Cloud</span>
             </span>
-            <span className="ml-2 text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 border border-blue-200/60 dark:border-blue-800">
+            <span className="ml-1 text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 border border-blue-200/60 dark:border-blue-800">
               Öffentliche Freigabe
             </span>
           </div>
@@ -529,7 +533,8 @@ export const PublicShareView: React.FC<PublicShareViewProps> = ({
             )}
 
             {/* Bottom minimal footer */}
-            <div className="px-6 py-3.5 bg-gray-50/70 dark:bg-gray-800/40 border-t border-gray-100 dark:border-gray-800 text-center">
+            <div className="px-6 py-3.5 bg-gray-50/70 dark:bg-gray-800/40 border-t border-gray-100 dark:border-gray-800 text-center flex items-center justify-center gap-1.5">
+              <CloudLogo className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
               <span className="text-[11px] text-gray-400">
                 Sicher bereitgestellt von <span className="font-semibold text-gray-600 dark:text-gray-300">J.Jonas Cloud</span>
               </span>

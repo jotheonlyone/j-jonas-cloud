@@ -22,6 +22,7 @@ import { getSmallFileIcon } from './FileItem';
 import { isAudioFile } from '../utils/audioPlayerUtils';
 import { StandaloneAudioPlayer } from './AudioPlayer';
 import { TextViewer, isTextFile } from './TextViewer';
+import { CloudLogo } from './CloudLogo';
 export { isTextFile };
 
 interface FileViewerPageProps {
@@ -204,6 +205,7 @@ export const FileViewerPage: React.FC<FileViewerPageProps> = ({
             title="Zurück zur Ablage"
           >
             <ArrowLeft className="w-3.5 h-3.5" />
+            <CloudLogo className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
             <span className="hidden sm:inline">J.Jonas Cloud</span>
           </a>
 
