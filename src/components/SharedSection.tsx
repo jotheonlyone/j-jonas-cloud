@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
-import { resolveFolderPath } from '../utils/pathResolver';
+import { getConcreteSharedFolderPath, resolveSharedSubPath } from '../utils/pathResolver';
 import {
   Users,
   Check,
@@ -149,7 +149,12 @@ export const SharedSection: React.FC<SharedSectionProps> = ({
     setIsLoadingItems(true);
     setServerError(undefined);
     try {
-      const fullPath = subPath ? `${share.folder_path}/${subPath}` : share.folder_path;
+      const fullPath = getConcreteSharedFolderPath(share.folder_path, share.folder_name, subPath);
+      if (!fullPath || fullPath === '.') {
+        setServerError('Ungültiger Ordnerpfad für geteilten Ordner.');
+        setFolderItems([]);
+        return;
+      }
       const res = await listFiles(share.owner, fullPath);
       const itemsWithOwner = (res.items || []).map((it) => ({
         ...it,
@@ -201,9 +206,11 @@ export const SharedSection: React.FC<SharedSectionProps> = ({
       const ownerUsage = await getStorageUsage(activeFolderShare.owner);
       const ownerQuotaGb = 1000;
 
-      const currentDir = sharedSubPath
-        ? `${activeFolderShare.folder_path}/${sharedSubPath}`
-        : activeFolderShare.folder_path;
+      const currentDir = getConcreteSharedFolderPath(
+        activeFolderShare.folder_path,
+        activeFolderShare.folder_name,
+        sharedSubPath
+      );
 
       let count = 0;
       const totalFiles = files.length;
@@ -286,9 +293,11 @@ export const SharedSection: React.FC<SharedSectionProps> = ({
     if (!activeFolderShare) return;
     const name = window.prompt('Neuer Unterordner-Name:');
     if (!name || !name.trim()) return;
-    const currentDir = sharedSubPath
-      ? `${activeFolderShare.folder_path}/${sharedSubPath}`
-      : activeFolderShare.folder_path;
+    const currentDir = getConcreteSharedFolderPath(
+      activeFolderShare.folder_path,
+      activeFolderShare.folder_name,
+      sharedSubPath
+    );
     const res = await createFolder(activeFolderShare.owner, currentDir, name.trim());
     if (res.success) {
       addToast('success', 'Ordner erstellt');
@@ -301,9 +310,11 @@ export const SharedSection: React.FC<SharedSectionProps> = ({
   const handleDeleteItem = async (item: FileItemData) => {
     if (!activeFolderShare) return;
     if (!window.confirm(`Möchtest du "${item.name}" wirklich löschen?`)) return;
-    const currentDir = sharedSubPath
-      ? `${activeFolderShare.folder_path}/${sharedSubPath}`
-      : activeFolderShare.folder_path;
+    const currentDir = getConcreteSharedFolderPath(
+      activeFolderShare.folder_path,
+      activeFolderShare.folder_name,
+      sharedSubPath
+    );
     const res = await deleteItem(activeFolderShare.owner, currentDir, item.name);
     if (res.success) {
       addToast('success', 'Gelöscht', `"${item.name}" wurde entfernt.`);
@@ -315,9 +326,11 @@ export const SharedSection: React.FC<SharedSectionProps> = ({
 
   const handleDownloadItem = async (item: FileItemData) => {
     if (!activeFolderShare) return;
-    const currentDir = sharedSubPath
-      ? `${activeFolderShare.folder_path}/${sharedSubPath}`
-      : activeFolderShare.folder_path;
+    const currentDir = getConcreteSharedFolderPath(
+      activeFolderShare.folder_path,
+      activeFolderShare.folder_name,
+      sharedSubPath
+    );
     const fullItemPath = currentDir ? `${currentDir}/${item.name}` : item.name;
     triggerDirectDownload(activeFolderShare.owner, fullItemPath, item.name);
   };
@@ -326,9 +339,11 @@ export const SharedSection: React.FC<SharedSectionProps> = ({
     if (!activeFolderShare) return;
     const newName = window.prompt(`Neuer Name für "${item.name}":`, item.name);
     if (!newName || newName.trim() === item.name) return;
-    const currentDir = sharedSubPath
-      ? `${activeFolderShare.folder_path}/${sharedSubPath}`
-      : activeFolderShare.folder_path;
+    const currentDir = getConcreteSharedFolderPath(
+      activeFolderShare.folder_path,
+      activeFolderShare.folder_name,
+      sharedSubPath
+    );
     const res = await renameItem(activeFolderShare.owner, currentDir, item.name, newName.trim());
     if (res.success) {
       addToast('success', 'Umbenannt', `"${item.name}" wurde zu "${newName.trim()}" umbenannt.`);
@@ -509,13 +524,17 @@ export const SharedSection: React.FC<SharedSectionProps> = ({
             {activeCanSeeMembers && onManageFolderShares && (
               <button
                 type="button"
-                onClick={() =>
-                  onManageFolderShares(
+                onClick={() => {
+                  const concretePath = getConcreteSharedFolderPath(
                     activeFolderShare.folder_path,
+                    activeFolderShare.folder_name
+                  );
+                  onManageFolderShares(
+                    concretePath,
                     activeFolderShare.folder_name,
                     activeFolderShare.owner
-                  )
-                }
+                  );
+                }}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-600 shadow-2xs transition-colors cursor-pointer"
                 title={
                   activeCanManageMembers
@@ -576,7 +595,12 @@ export const SharedSection: React.FC<SharedSectionProps> = ({
                   return;
                 }
 
-                const next = resolveFolderPath(sharedSubPath, item);
+                const next = resolveSharedSubPath(
+                  activeFolderShare.folder_path,
+                  activeFolderShare.folder_name,
+                  sharedSubPath,
+                  item
+                );
                 if (next === sharedSubPath) {
                   return;
                 }
@@ -589,9 +613,11 @@ export const SharedSection: React.FC<SharedSectionProps> = ({
 
                 handleNavigateSubPath(next);
               } else if (onOpenFilePreview) {
-                const currentDir = sharedSubPath
-                  ? `${activeFolderShare.folder_path}/${sharedSubPath}`
-                  : activeFolderShare.folder_path;
+                const currentDir = getConcreteSharedFolderPath(
+                  activeFolderShare.folder_path,
+                  activeFolderShare.folder_name,
+                  sharedSubPath
+                );
                 const fullItemPath = item.path || (currentDir ? `${currentDir}/${item.name}` : item.name);
                 const itemWithOwner: FileItemData = {
                   ...item,
@@ -611,9 +637,12 @@ export const SharedSection: React.FC<SharedSectionProps> = ({
               }
             }}
             onOpenInNewTab={(item) => {
-              const fullPath = sharedSubPath
-                ? `${activeFolderShare.folder_path}/${sharedSubPath}/${item.name}`
-                : `${activeFolderShare.folder_path}/${item.name}`;
+              const currentDir = getConcreteSharedFolderPath(
+                activeFolderShare.folder_path,
+                activeFolderShare.folder_name,
+                sharedSubPath
+              );
+              const fullPath = `${currentDir}/${item.name}`;
               const tempSessionId = `s_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
               const searchParams = new URLSearchParams({
                 path: fullPath,
@@ -629,9 +658,12 @@ export const SharedSection: React.FC<SharedSectionProps> = ({
             onManageShares={
               activeCanManageMembers && onManageFolderShares
                 ? (item) => {
-                    const itemFullPath = sharedSubPath
-                      ? `${activeFolderShare.folder_path}/${sharedSubPath}/${item.name}`
-                      : `${activeFolderShare.folder_path}/${item.name}`;
+                    const currentDir = getConcreteSharedFolderPath(
+                      activeFolderShare.folder_path,
+                      activeFolderShare.folder_name,
+                      sharedSubPath
+                    );
+                    const itemFullPath = `${currentDir}/${item.name}`;
                     onManageFolderShares(itemFullPath, item.name, activeFolderShare.owner);
                   }
                 : undefined

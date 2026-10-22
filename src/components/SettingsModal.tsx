@@ -20,7 +20,7 @@ import {
   ShieldCheck,
   Check
 } from 'lucide-react';
-import { changePassword, changeUsername } from '../services/firebase';
+import { changePassword } from '../services/firebase';
 import { useToast } from './Toast';
 import type { UserAccount, ViewMode, StorageUsage } from '../types';
 import type { ServerStatus } from '../services/storageApi';
@@ -72,11 +72,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [isPasswordSubmitting, setIsPasswordSubmitting] = useState(false);
   const [passwordError, setPasswordError] = useState('');
 
-  // Username state
-  const [newUsername, setNewUsername] = useState(user.username);
-  const [isUsernameSubmitting, setIsUsernameSubmitting] = useState(false);
-  const [usernameError, setUsernameError] = useState('');
-
   if (!isOpen) return null;
 
   const handlePasswordSubmit = async (e: React.FormEvent) => {
@@ -115,43 +110,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setPasswordError(msg);
     } finally {
       setIsPasswordSubmitting(false);
-    }
-  };
-
-  const handleUsernameSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setUsernameError('');
-
-    const trimmed = newUsername.trim().toLowerCase();
-    if (trimmed === user.username.toLowerCase()) {
-      setUsernameError('Der neue Benutzername ist identisch mit dem aktuellen.');
-      return;
-    }
-    if (trimmed.length < 3) {
-      setUsernameError('Der Benutzername muss mindestens 3 Zeichen lang sein.');
-      return;
-    }
-
-    setIsUsernameSubmitting(true);
-    try {
-      const res = await changeUsername(user.username, trimmed);
-      if (res.success && res.user) {
-        addToast(
-          'success',
-          'Benutzername geändert',
-          `Dein Benutzername wurde zu "@${res.user.username}" geändert.`
-        );
-        onUserUpdated(res.user);
-        onClose();
-      } else {
-        setUsernameError(res.error || 'Fehler beim Ändern des Benutzernamens.');
-        addToast('error', 'Fehler', res.error || 'Benutzername konnte nicht geändert werden.');
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Unerwarteter Fehler.';
-      setUsernameError(msg);
-    } finally {
-      setIsUsernameSubmitting(false);
     }
   };
 
@@ -559,9 +517,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <div className="p-3 rounded-xl bg-blue-50/80 dark:bg-blue-950/30 border border-blue-200/60 dark:border-blue-900/40 flex items-start gap-2.5 text-xs text-blue-700 dark:text-blue-300">
                     <ShieldCheck className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
                     <div className="space-y-0.5">
-                      <p className="font-semibold">Benutzername ist geschützt</p>
+                      <p className="font-semibold">Benutzername ist unveränderlich</p>
                       <p className="text-[11px] text-blue-600/90 dark:text-blue-400/90">
-                        System-Benutzername ist fest an das Speicherverzeichnis gebunden.
+                        Benutzernamen sind fest an die Domain (@cloud.j-jonas.com) und das Benutzerverzeichnis gebunden und können nicht geändert werden.
                       </p>
                     </div>
                   </div>

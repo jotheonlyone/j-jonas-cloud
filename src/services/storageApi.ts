@@ -194,6 +194,16 @@ export async function listFiles(owner: string, relativePath = ''): Promise<{ ite
   const safeOwner = cleanUsername(owner || getActiveUser()?.username || '');
   const cleanPath = relativePath.trim().replace(/^\/+|\/+$/g, '') || '.';
 
+  // Gast-Navigation absichern: Gäste dürfen niemals das Hauptverzeichnis (path=. oder leer) eines anderen Nutzers auflisten
+  const activeUser = getActiveUser();
+  const activeUsername = cleanUsername(activeUser?.username || '');
+  if (activeUsername && safeOwner && safeOwner !== activeUsername && activeUser?.role !== 'master') {
+    if (!cleanPath || cleanPath === '.' || cleanPath === '/') {
+      console.warn(`[Security] Blocked guest query to root directory of owner "${safeOwner}"`);
+      return { items: [], error: 'Zugriff auf das Hauptverzeichnis anderer Benutzer verweigert.' };
+    }
+  }
+
   try {
     const url = `${STORAGE_BASE_URL}/files?user=${encodeURIComponent(safeOwner)}&path=${encodeURIComponent(cleanPath)}`;
     const res = await storageFetch(url, {

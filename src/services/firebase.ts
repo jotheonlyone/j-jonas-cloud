@@ -5,6 +5,8 @@ import {
   createUserWithEmailAndPassword,
   updateProfile,
   updatePassword,
+  reauthenticateWithCredential,
+  EmailAuthProvider,
   signOut,
   onAuthStateChanged,
   onIdTokenChanged,
@@ -212,6 +214,25 @@ export function isValidFolderShareDoc(data: any): boolean {
   return true;
 }
 
+/**
+ * Bereinigt beliebige Objekte rekursiv von 'undefined' Werten,
+ * da Firestore setDoc/updateDoc mit 'undefined' fehlschlägt.
+ */
+export function removeUndefinedFields<T extends Record<string, any>>(obj: T): T {
+  if (!obj || typeof obj !== 'object') return obj;
+  const result: any = Array.isArray(obj) ? [] : {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value !== undefined) {
+      if (value && typeof value === 'object' && !(value instanceof Date)) {
+        result[key] = removeUndefinedFields(value);
+      } else {
+        result[key] = value;
+      }
+    }
+  }
+  return result;
+}
+
 export function normalizeShareDoc(data: any): FolderShare | null {
   if (!data || typeof data !== 'object') {
     return null;
@@ -299,18 +320,38 @@ export function normalizeShareDoc(data: any): FolderShare | null {
     ? 'accepted'
     : (data.status === 'declined' ? 'declined' : (finalMembers.some(m => m.status === 'accepted') ? 'accepted' : 'pending'));
 
-  return {
+  const shareDoc: FolderShare = {
     id,
     folder_path,
     folder_name,
     owner,
     shared_with: finalMembers,
     accepted_by,
-    invited_user: rawInvited || undefined,
     status: rootStatus,
     created_at: data.created_at || new Date().toISOString(),
     updated_at: data.updated_at || data.created_at || new Date().toISOString(),
   };
+
+  if (rawInvited) {
+    shareDoc.invited_user = rawInvited;
+  }
+  if (data.can_see_members !== undefined) {
+    shareDoc.can_see_members = data.can_see_members;
+  }
+  if (data.can_manage_members !== undefined) {
+    shareDoc.can_manage_members = data.can_manage_members;
+  }
+  if (data.role !== undefined) {
+    shareDoc.role = data.role;
+  }
+  if (data.can_write !== undefined) {
+    shareDoc.can_write = data.can_write;
+  }
+  if (data.canWrite !== undefined) {
+    shareDoc.canWrite = data.canWrite;
+  }
+
+  return removeUndefinedFields(shareDoc);
 }
 
 /**
@@ -548,115 +589,19 @@ export async function loginUser(usernameRaw: string, passwordRaw: string): Promi
   error?: string;
   pendingApproval?: boolean;
 }> {
-  const originalTrimmed = (usernameRaw || '').trim();
   const cleanU = cleanUsername(usernameRaw);
   if (!cleanU || !passwordRaw) {
     return { success: false, error: 'Bitte Benutzername und Passwort eingeben.' };
   }
 
   // 1. Die Firebase-Auth-E-Mail lautet IMMER: `${cleanUsername}@cloud.j-jonas.com`
-  const email = `${cleanU}@cloud.j-jonas.com`;
+  const email = getSafeEmail(cleanU);
 
   try {
-    // 2. Robuster Login mit automatischer Firestore-Migration:
-    // Führe zuerst signInWithEmailAndPassword(auth, email, password) aus.
-    let userCredential;
     try {
-      userCredential = await signInWithEmailAndPassword(auth, email, passwordRaw);
+      await signInWithEmailAndPassword(auth, email, passwordRaw);
     } catch (authErr: any) {
-      const code = authErr?.code;
-      if (code === 'auth/user-not-found' || code === 'auth/invalid-credential') {
-        // 1. Suche in Firestore ZUERST nach doc(db, 'users', cleanUsername).
-        let matchedDocSnap: any = null;
-        let matchedDocId = cleanU;
-
-        try {
-          const snap = await getDoc(doc(db, 'users', cleanU));
-          if (snap.exists()) {
-            matchedDocSnap = snap;
-          }
-        } catch (fsErr) {
-          console.warn('Firestore read error for cleanUsername:', fsErr);
-        }
-
-        // 2. Existiert das Dokument nicht, suche als Fallback nach dem Original-Namen: doc(db, 'users', username.trim()).
-        if (!matchedDocSnap && originalTrimmed && originalTrimmed !== cleanU) {
-          try {
-            const fallbackSnap = await getDoc(doc(db, 'users', originalTrimmed));
-            if (fallbackSnap.exists()) {
-              matchedDocSnap = fallbackSnap;
-              matchedDocId = originalTrimmed;
-            }
-          } catch (fsErr) {
-            console.warn('Firestore read error for fallback doc:', fsErr);
-          }
-        }
-
-        // 3. Wird KEIN Dokument gefunden oder fehlen passwordHash/salt: Fehlermeldung "Benutzername oder Passwort falsch." anzeigen und abbrechen.
-        if (!matchedDocSnap || !matchedDocSnap.exists()) {
-          return { success: false, error: 'Benutzername oder Passwort falsch.' };
-        }
-
-        const legacyData = matchedDocSnap.data();
-        if (!legacyData || !legacyData.passwordHash || !legacyData.salt) {
-          return { success: false, error: 'Benutzername oder Passwort falsch.' };
-        }
-
-        // 4. Wird ein Dokument gefunden: Prüfe das Passwort mit dem hinterlegten Salt/Hash.
-        const computedHash = await hashPassword(passwordRaw, legacyData.salt);
-
-        // 6. Wenn das Passwort FALSCH ist: Fehlermeldung anzeigen und abbrechen.
-        if (computedHash !== legacyData.passwordHash) {
-          return { success: false, error: 'Benutzername oder Passwort falsch.' };
-        }
-
-        // 5. Wenn das Passwort KORREKT ist:
-        // - Erstelle den Account in Firebase Auth: createUserWithEmailAndPassword(auth, email, password).
-        try {
-          userCredential = await createUserWithEmailAndPassword(auth, email, passwordRaw);
-          if (auth.currentUser) {
-            await updateProfile(auth.currentUser, { displayName: cleanU });
-          }
-        } catch (createErr: any) {
-          if (createErr?.code === 'auth/email-already-in-use') {
-            userCredential = await signInWithEmailAndPassword(auth, email, passwordRaw).catch(() => null);
-            if (!userCredential) {
-              return { success: false, error: 'Benutzername oder Passwort falsch.' };
-            }
-          } else {
-            return { success: false, error: getFirebaseAuthErrorMessage(createErr) };
-          }
-        }
-
-        if (!auth.currentUser) {
-          return { success: false, error: 'Benutzername oder Passwort falsch.' };
-        }
-
-        // - Speichere die Nutzerdaten unter der neuen ID doc(db, 'users', cleanUsername) mit { uid: auth.currentUser.uid, username: cleanUsername }.
-        const migratedData: any = {
-          ...legacyData,
-          uid: auth.currentUser.uid,
-          username: cleanU,
-          email,
-          quota_gb: typeof legacyData.quota_gb === 'number' ? legacyData.quota_gb : 100,
-          status: legacyData.status || 'approved',
-          role: legacyData.role || 'user',
-          updatedAt: new Date().toISOString(),
-        };
-
-        await setDoc(doc(db, 'users', cleanU), migratedData);
-
-        // - Falls das Dokument vorher unter dem alten Namen mit Leerzeichen (z. B. "Wolf 1") lag: Lösche das alte Dokument nach dem Kopieren.
-        if (matchedDocId !== cleanU) {
-          try {
-            await deleteDoc(doc(db, 'users', matchedDocId));
-          } catch (delErr) {
-            console.warn(`Altes Dokument ${matchedDocId} konnte nicht gelöscht werden:`, delErr);
-          }
-        }
-      } else {
-        return { success: false, error: getFirebaseAuthErrorMessage(authErr) };
-      }
+      return { success: false, error: getFirebaseAuthErrorMessage(authErr) };
     }
 
     if (auth.currentUser) {
@@ -762,14 +707,18 @@ export async function loginUser(usernameRaw: string, passwordRaw: string): Promi
 }
 
 /**
- * Ändert das Passwort eines Nutzers nach Validierung des aktuellen Passworts.
+ * Ändert das Passwort eines Nutzers rein über Firebase Auth nach Validierung des aktuellen Passworts.
+ * Schreibt KEINE passwordHash oder salt mehr in Firestore.
  */
 export async function changePassword(
   usernameRaw: string,
   currentPasswordRaw: string,
   newPasswordRaw: string
 ): Promise<{ success: boolean; error?: string; user?: UserAccount }> {
-  const username = usernameRaw.trim().toLowerCase();
+  const username = cleanUsername(usernameRaw);
+  if (!username) {
+    return { success: false, error: 'Benutzername fehlt.' };
+  }
   if (!currentPasswordRaw) {
     return { success: false, error: 'Bitte gib dein aktuelles Passwort ein.' };
   }
@@ -777,188 +726,55 @@ export async function changePassword(
     return { success: false, error: 'Das neue Passwort muss mindestens 6 Zeichen lang sein.' };
   }
 
+  const email = getSafeEmail(username);
+
   try {
-    // If Firebase Auth currentUser is present, update password in Firebase Auth
-    if (auth.currentUser) {
-      try {
-        await updatePassword(auth.currentUser, newPasswordRaw);
-      } catch (updateErr: any) {
-        if (updateErr?.code === 'auth/requires-recent-login') {
-          const safeEmail = getSafeEmail(username);
-          await signInWithEmailAndPassword(auth, safeEmail, currentPasswordRaw);
-          if (auth.currentUser) {
-            await updatePassword(auth.currentUser, newPasswordRaw);
-          }
-        } else {
-          return { success: false, error: getFirebaseAuthErrorMessage(updateErr) };
-        }
-      }
+    let currentUser = auth.currentUser;
+
+    if (!currentUser) {
+      const userCred = await signInWithEmailAndPassword(auth, email, currentPasswordRaw);
+      currentUser = userCred.user;
+    } else {
+      const credential = EmailAuthProvider.credential(email, currentPasswordRaw);
+      await reauthenticateWithCredential(currentUser, credential);
     }
 
+    if (!currentUser) {
+      return { success: false, error: 'Authentifizierung fehlgeschlagen.' };
+    }
+
+    // Passwortänderung rein über Firebase Auth
+    await updatePassword(currentUser, newPasswordRaw);
+
+    // Aktuelle Nutzerdaten laden
     let userData: UserAccount | null = null;
-    const userDocRef = doc(db, 'users', username);
-
     try {
-      const snap = await getDoc(userDocRef);
+      const snap = await getDoc(doc(db, 'users', username));
       if (snap.exists()) {
-        userData = snap.data() as UserAccount;
+        const d = snap.data();
+        userData = {
+          ...d,
+          username: d.username || username,
+          quota_gb: typeof d.quota_gb === 'number' ? d.quota_gb : 100,
+          status: d.status || 'active',
+          role: d.role || 'user',
+          createdAt: d.createdAt || new Date().toISOString(),
+        } as UserAccount;
       }
-    } catch (err) {
-      console.warn('Firestore read error during changePassword:', err);
-    }
+    } catch {}
 
     if (!userData) {
       const localUsers = getLocalUsers();
       userData = localUsers.find(u => u.username.toLowerCase() === username) || null;
     }
 
-    if (!userData) {
-      return { success: false, error: 'Benutzerkonto nicht gefunden.' };
+    return { success: true, user: userData || undefined };
+  } catch (err: any) {
+    console.warn('changePassword error:', err);
+    if (err?.code === 'auth/wrong-password' || err?.code === 'auth/invalid-credential') {
+      return { success: false, error: 'Das aktuelle Passwort ist nicht korrekt.' };
     }
-
-    // Verify current password hash if present
-    if (userData.salt && userData.passwordHash) {
-      const currentHash = await hashPassword(currentPasswordRaw, userData.salt);
-      if (currentHash !== userData.passwordHash) {
-        return { success: false, error: 'Das aktuelle Passwort ist nicht korrekt.' };
-      }
-    }
-
-    // Generate new salt and new hash
-    const newSalt = generateSalt();
-    const newHash = await hashPassword(newPasswordRaw, newSalt);
-
-    const updatedUser: UserAccount = {
-      ...userData,
-      salt: newSalt,
-      passwordHash: newHash,
-    };
-
-    try {
-      await updateDoc(userDocRef, {
-        salt: newSalt,
-        passwordHash: newHash,
-      });
-    } catch (err) {
-      console.warn('Firestore update password error, updating local:', err);
-    }
-
-    // Update local cache
-    const localUsers = getLocalUsers();
-    const idx = localUsers.findIndex(u => u.username.toLowerCase() === username);
-    if (idx !== -1) {
-      localUsers[idx] = updatedUser;
-      saveLocalUsers(localUsers);
-    }
-
-    return { success: true, user: updatedUser };
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : 'Passwortänderung fehlgeschlagen.';
-    return { success: false, error: msg };
-  }
-}
-
-/**
- * Ändert den Benutzernamen eines Nutzers, prüft ob frei und aktualisiert Firestore.
- */
-export async function changeUsername(
-  oldUsernameRaw: string,
-  newUsernameRaw: string
-): Promise<{ success: boolean; error?: string; user?: UserAccount }> {
-  const oldUsername = oldUsernameRaw.trim().toLowerCase();
-  const newUsername = newUsernameRaw.trim().toLowerCase();
-
-  if (oldUsername === newUsername) {
-    return { success: false, error: 'Der neue Benutzername ist identisch mit dem aktuellen.' };
-  }
-  if (!newUsername || newUsername.length < 3) {
-    return { success: false, error: 'Der neue Benutzername muss mindestens 3 Zeichen lang sein.' };
-  }
-  if (!/^[a-zA-Z0-9._-]+$/.test(newUsername)) {
-    return { success: false, error: 'Der Benutzername darf nur Buchstaben, Zahlen, Punkte, Binde- und Unterstriche enthalten.' };
-  }
-
-  try {
-    // Check if new username is taken in Firestore
-    const newDocRef = doc(db, 'users', newUsername);
-    let newDocSnap;
-    try {
-      newDocSnap = await getDoc(newDocRef);
-    } catch {}
-
-    if (newDocSnap && newDocSnap.exists()) {
-      return { success: false, error: `Der Benutzername "${newUsername}" ist bereits vergeben.` };
-    }
-
-    // Also check local cache
-    const localUsers = getLocalUsers();
-    if (localUsers.some(u => u.username.toLowerCase() === newUsername)) {
-      return { success: false, error: `Der Benutzername "${newUsername}" ist bereits vergeben.` };
-    }
-
-    // Get current user doc
-    const oldDocRef = doc(db, 'users', oldUsername);
-    let userData: UserAccount | null = null;
-    try {
-      const snap = await getDoc(oldDocRef);
-      if (snap.exists()) {
-        userData = snap.data() as UserAccount;
-      }
-    } catch {}
-
-    if (!userData) {
-      userData = localUsers.find(u => u.username.toLowerCase() === oldUsername) || null;
-    }
-
-    if (!userData) {
-      return { success: false, error: 'Benutzerkonto nicht gefunden.' };
-    }
-
-    const updatedUser: UserAccount = {
-      ...userData,
-      username: newUsername,
-    };
-
-    // Save under new doc ID and delete old doc ID
-    try {
-      await setDoc(newDocRef, updatedUser);
-      await deleteDoc(oldDocRef);
-    } catch (err) {
-      console.warn('Firestore changeUsername error, updating local:', err);
-    }
-
-    // Update in local store
-    const idx = localUsers.findIndex(u => u.username.toLowerCase() === oldUsername);
-    if (idx !== -1) {
-      localUsers[idx] = updatedUser;
-    } else {
-      localUsers.push(updatedUser);
-    }
-    saveLocalUsers(localUsers);
-
-    // Update any shares
-    try {
-      const localShares = getLocalShares();
-      let sharesChanged = false;
-      localShares.forEach(s => {
-        if (s.owner.toLowerCase() === oldUsername) {
-          s.owner = newUsername;
-          sharesChanged = true;
-        }
-        s.shared_with?.forEach(m => {
-          if (m.username.toLowerCase() === oldUsername) {
-            m.username = newUsername;
-            sharesChanged = true;
-          }
-        });
-      });
-      if (sharesChanged) saveLocalShares(localShares);
-    } catch {}
-
-    return { success: true, user: updatedUser };
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : 'Namensänderung fehlgeschlagen.';
-    return { success: false, error: msg };
+    return { success: false, error: getFirebaseAuthErrorMessage(err) };
   }
 }
 
@@ -1241,6 +1057,8 @@ export async function createFolderShare(
       };
     }
 
+    if (!existingShare.accepted_by) existingShare.accepted_by = {};
+    existingShare.accepted_by[invited_user] = 'pending';
     existingShare.shared_with.push(newMember);
     existingShare.folder_name = folder_name || existingShare.folder_name;
     existingShare.updated_at = new Date().toISOString();
@@ -1252,20 +1070,32 @@ export async function createFolderShare(
       folder_name,
       owner,
       shared_with: [newMember],
+      accepted_by: { [invited_user]: 'pending' },
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
   }
 
+  // Bereinigung von Freigabe-Objekten vor dem Speichern: Niemals undefined Werte an Firestore übergeben!
+  const cleanDoc = removeUndefinedFields({
+    ...finalShare,
+    accepted_by: finalShare.accepted_by || { [invited_user]: 'pending' },
+    shared_users: finalShare.shared_with.filter(m => m && m.username).map(m => m.username.toLowerCase()),
+  });
+
   // Save to Firestore with shared_users array for indexing
   try {
     const shareDocRef = doc(db, 'shares', shareDocId);
-    await setDoc(shareDocRef, {
-      ...finalShare,
-      shared_users: finalShare.shared_with.filter(m => m && m.username).map(m => m.username.toLowerCase()),
-    });
+    await setDoc(shareDocRef, cleanDoc, { merge: true });
   } catch (err) {
-    console.warn('Firestore share write failed, using local store:', err);
+    console.warn('Firestore share write failed ("shares"):', err);
+  }
+
+  try {
+    const sharedDocRef = doc(db, 'shared', shareDocId);
+    await setDoc(sharedDocRef, cleanDoc, { merge: true });
+  } catch (err) {
+    console.warn('Firestore share write failed ("shared"):', err);
   }
 
   // Update local store
@@ -1344,26 +1174,28 @@ export async function updateMemberPermissions(
   currentShare.updated_at = new Date().toISOString();
 
   // 2. Persist immediately to Firestore
+  const cleanPermissionsDoc = removeUndefinedFields({
+    ...currentShare,
+    shared_users: currentShare.shared_with.filter(m => m && m.username).map(m => m.username.toLowerCase()),
+    updated_at: currentShare.updated_at,
+  });
+
   try {
     const shareDocRef = doc(db, 'shares', targetDocId);
-    await setDoc(shareDocRef, {
-      ...currentShare,
-      shared_users: currentShare.shared_with.filter(m => m && m.username).map(m => m.username.toLowerCase()),
-      updated_at: currentShare.updated_at,
-    }, { merge: true });
+    await setDoc(shareDocRef, cleanPermissionsDoc, { merge: true });
 
     if (targetDocId !== calculatedDocId) {
       try {
-        await setDoc(doc(db, 'shares', calculatedDocId), {
-          ...currentShare,
-          shared_users: currentShare.shared_with.filter(m => m && m.username).map(m => m.username.toLowerCase()),
-          updated_at: currentShare.updated_at,
-        }, { merge: true });
+        await setDoc(doc(db, 'shares', calculatedDocId), cleanPermissionsDoc, { merge: true });
       } catch {}
     }
   } catch (err) {
-    console.warn('Firestore update member permissions error:', err);
+    console.warn('Firestore update member permissions error ("shares"):', err);
   }
+
+  try {
+    await setDoc(doc(db, 'shared', targetDocId), cleanPermissionsDoc, { merge: true });
+  } catch {}
 
   // 3. Persist to local store
   updateLocalShare(currentShare);

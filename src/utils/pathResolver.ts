@@ -43,3 +43,67 @@ export function resolveFolderPath(currentPath: string, folder: FileItemData): st
 
   return deduplicated.join('/');
 }
+
+/**
+ * Resolves the concrete base path for a shared folder.
+ * Ensures that guests never query '.' or an empty path, and handles subPaths without segment doubling.
+ */
+export function getConcreteSharedFolderPath(
+  folderPath?: string,
+  folderName?: string,
+  subPath = ''
+): string {
+  const base = (folderPath || folderName || '').trim().replace(/^\/+|\/+$/g, '');
+  const concreteBase = (!base || base === '.') ? (folderName || '').trim().replace(/^\/+|\/+$/g, '') : base;
+
+  const cleanSub = (subPath || '').trim().replace(/^\/+|\/+$/g, '');
+  if (!cleanSub || cleanSub === '.') {
+    return concreteBase;
+  }
+  if (!concreteBase) {
+    return cleanSub;
+  }
+  if (cleanSub === concreteBase) {
+    return concreteBase;
+  }
+  if (cleanSub.startsWith(concreteBase + '/')) {
+    return cleanSub;
+  }
+  return `${concreteBase}/${cleanSub}`;
+}
+
+/**
+ * Resolves the relative subpath when navigating inside a shared folder.
+ * Keeps breadcrumbs and currentPath relative to the shared folder root,
+ * and avoids duplicating the shared folder's base name.
+ */
+export function resolveSharedSubPath(
+  folderPath?: string,
+  folderName?: string,
+  currentSubPath = '',
+  clickedItem?: { name: string; path?: string }
+): string {
+  if (!clickedItem) return '';
+  const base = (folderPath || folderName || '').trim().replace(/^\/+|\/+$/g, '');
+  const concreteBase = (!base || base === '.') ? (folderName || '').trim().replace(/^\/+|\/+$/g, '') : base;
+  const itemName = (clickedItem.name || '').trim().replace(/^\/+|\/+$/g, '');
+
+  if (!itemName) return currentSubPath;
+
+  const itemPath = (clickedItem.path || '').trim().replace(/^\/+|\/+$/g, '');
+  if (itemPath && concreteBase) {
+    if (itemPath === concreteBase) {
+      return '';
+    }
+    if (itemPath.startsWith(concreteBase + '/')) {
+      return itemPath.slice(concreteBase.length + 1);
+    }
+  }
+
+  const cleanCurrent = (currentSubPath || '').trim().replace(/^\/+|\/+$/g, '');
+  const currentSegments = cleanCurrent ? cleanCurrent.split('/').filter(Boolean) : [];
+  if (currentSegments.length > 0 && currentSegments[currentSegments.length - 1] === itemName) {
+    return cleanCurrent;
+  }
+  return cleanCurrent ? `${cleanCurrent}/${itemName}` : itemName;
+}

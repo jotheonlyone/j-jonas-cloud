@@ -66,7 +66,7 @@ import {
   logoutAllAccounts,
   CURRENT_USER_KEY,
 } from './services/accountManager';
-import { resolveFolderPath } from './utils/pathResolver';
+import { resolveFolderPath, getConcreteSharedFolderPath } from './utils/pathResolver';
 import { AudioPlayerProvider, useAudioPlayer } from './context/AudioPlayerContext';
 import { AudioPlayerBar, AudioPlayerModal } from './components/AudioPlayer';
 import { isAudioFile } from './utils/audioPlayerUtils';
@@ -1499,9 +1499,11 @@ function MainApp() {
                   onCutItem={handleCutItem}
                   onPaste={async (targetShare, subPath) => {
                     if (targetShare) {
-                      const fullTargetDir = subPath
-                        ? `${targetShare.folder_path}/${subPath}`
-                        : targetShare.folder_path;
+                      const fullTargetDir = getConcreteSharedFolderPath(
+                        targetShare.folder_path,
+                        targetShare.folder_name,
+                        subPath
+                      );
                       await handlePasteItem(fullTargetDir, targetShare.owner, targetShare.id);
                     } else {
                       await handlePasteItem();
