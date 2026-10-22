@@ -674,14 +674,31 @@ function MainApp() {
   };
 
   // 4. Token-Refresh & Session: Redirect to login when 401 session expires
+  const userRef = useRef(user);
+  userRef.current = user;
+
   useEffect(() => {
+    let lastHandledTime = 0;
     const handleSessionExpired = () => {
+      const now = Date.now();
+      if (now - lastHandledTime < 8000) return;
+      lastHandledTime = now;
+
+      const wasLoggedIn = Boolean(userRef.current);
+
       logoutFirebaseAuth().catch(() => {});
       setUser(null);
       setSavedAccounts([]);
       setCurrentPath('');
       setItems([]);
-      addToast('error', 'Sitzung abgelaufen', 'Deine Sitzung ist abgelaufen. Bitte melde dich erneut an.');
+
+      if (wasLoggedIn) {
+        // Dezente Meldung mit minimalem Text, genau einmal, schließt bei Klick überall oder nach 3 Sekunden
+        addToast('info', 'Sitzung abgelaufen', undefined, {
+          durationMs: 3000,
+          dismissOnClickAnywhere: true,
+        });
+      }
     };
     window.addEventListener('jjcloud:session-expired', handleSessionExpired);
     return () => window.removeEventListener('jjcloud:session-expired', handleSessionExpired);

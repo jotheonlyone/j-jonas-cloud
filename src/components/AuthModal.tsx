@@ -4,7 +4,6 @@ import {
   Lock,
   ArrowRight,
   ArrowLeft,
-  UserPlus,
   AlertCircle,
   CheckCircle2,
   Eye,
@@ -135,85 +134,83 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
   };
 
-  // 1. Großzügige Willkommensansicht mit großem Wolken-Logo und zwei Knöpfen: "Anmelden" & "Registrieren"
-  const welcomeContent = (
-    <div className="w-full max-w-xl flex flex-col items-center text-center py-6 px-4 sm:px-6 animate-in fade-in zoom-in-95 duration-200">
-      {/* Wolken-Logo viel größer */}
-      <div
-        className="inline-block select-none cursor-pointer group mb-4"
-        style={{
-          fontFamily:
-            'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
-        }}
-      >
-        <CloudLogo
-          className="w-36 h-28 sm:w-48 sm:h-38 md:w-56 md:h-44 text-blue-600 dark:text-blue-500 shrink-0 transition-transform duration-300 group-hover:scale-105"
-          style={{
-            filter: 'drop-shadow(0 12px 30px rgba(37, 99, 235, 0.35))',
-          }}
-        />
+  // 1. Großzügige, cleane Willkommensansicht (Startseite)
+  if (currentView === 'welcome') {
+    return (
+      <div className="min-h-screen min-h-[100dvh] w-full flex flex-col justify-between items-center px-4 py-6 sm:py-8 bg-[#f8fafd] dark:bg-gray-950 select-none">
+        {/* Platzhalter oben für harmonische Zentrierung */}
+        <div className="w-full shrink-0 h-4" />
+
+        {/* Center: Auf Laptops einen Tick höher gesetzt via md:-translate-y-8 lg:-translate-y-12 */}
+        <div className="w-full max-w-xl flex flex-col items-center justify-center text-center animate-in fade-in zoom-in-95 duration-200 md:-translate-y-8 lg:-translate-y-12">
+          {/* Interaktive Brand-Einheit: Sowohl Wolken-Symbol ALS AUCH Schriftzug vergrößern sich gemeinsam beim Hover */}
+          <div
+            className="group flex flex-col items-center justify-center cursor-pointer transition-transform duration-300 ease-out hover:scale-[1.04]"
+            style={{
+              fontFamily:
+                'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+            }}
+          >
+            {/* Auf Mobilgeräten VIEL größer (w-64 h-50 xs:w-76 xs:h-60), auf Laptop w-64 h-52 md:w-80 md:h-64 */}
+            <CloudLogo
+              className="w-64 h-50 xs:w-76 xs:h-60 sm:w-64 sm:h-52 md:w-80 md:h-64 text-blue-600 dark:text-blue-500 shrink-0 -mb-12 xs:-mb-15 sm:-mb-12 md:-mb-16 pointer-events-none transition-transform duration-300"
+              style={{
+                filter: 'drop-shadow(0 14px 32px rgba(37, 99, 235, 0.35))',
+              }}
+            />
+            {/* Exakt derselbe Schriftzug wie oben links im Interface – auf Mobilgeräten ebenfalls viel größer */}
+            <span
+              className="font-black tracking-tight text-4xl xs:text-5xl sm:text-4xl md:text-5xl text-blue-600 group-hover:text-blue-700 dark:text-blue-500 dark:group-hover:text-blue-400 transition-colors whitespace-nowrap"
+              style={{
+                filter: 'drop-shadow(0 4px 12px rgba(37, 99, 235, 0.25))',
+              }}
+            >
+              J.Jonas Cloud
+            </span>
+          </div>
+
+          {/* Dezente Aktions-Knöpfe: Anmelden & Registrieren */}
+          <div className="flex items-center justify-center gap-3 mt-8 sm:mt-9">
+            <button
+              type="button"
+              onClick={() => {
+                setIsRegistering(false);
+                setCurrentView('form');
+                setErrorMsg('');
+                setInfoMsg('');
+              }}
+              className="px-6 py-2.5 rounded-xl font-semibold text-sm bg-blue-600 hover:bg-blue-700 text-white shadow-xs hover:shadow-sm transition-all active:scale-98 cursor-pointer"
+            >
+              Anmelden
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setIsRegistering(true);
+                setCurrentView('form');
+                setErrorMsg('');
+                setInfoMsg('');
+              }}
+              className="px-6 py-2.5 rounded-xl font-semibold text-sm bg-gray-100 hover:bg-gray-200/90 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 border border-gray-200/80 dark:border-gray-700/80 transition-all active:scale-98 cursor-pointer"
+            >
+              Registrieren
+            </button>
+          </div>
+        </div>
+
+        {/* Immer ganz unten an der Seite: Kontakt & Hilfe, Impressum und Datenschutz */}
+        <footer className="w-full shrink-0 text-center pt-4 pb-2">
+          <LegalLinks />
+        </footer>
       </div>
+    );
+  }
 
-      {/* Textplatz: Titel und Untertitel viel größer */}
-      <h1
-        className="font-black tracking-tight text-4xl sm:text-5xl md:text-6xl text-blue-600 hover:text-blue-700 dark:text-blue-500 transition-colors mb-2.5 whitespace-nowrap"
-        style={{
-          filter: 'drop-shadow(0 4px 16px rgba(37, 99, 235, 0.25))',
-        }}
-      >
-        J.Jonas Cloud
-      </h1>
-      <p className="text-lg sm:text-2xl text-gray-700 dark:text-gray-200 font-semibold mb-2">
-        Private Cloud-Speicherplattform
-      </p>
-      <p className="text-sm sm:text-base text-gray-500 dark:text-gray-400 max-w-md mb-8">
-        Sicherer und schneller Zugriff auf persönliche Dateien, Medien und freigegebene Ordner.
-      </p>
-
-      {/* Zwei prominente Buttons */}
-      <div className="w-full max-w-sm flex flex-col sm:flex-row items-center gap-3.5 mb-8">
-        <button
-          type="button"
-          onClick={() => {
-            setIsRegistering(false);
-            setCurrentView('form');
-            setErrorMsg('');
-            setInfoMsg('');
-          }}
-          className="w-full py-3.5 px-6 rounded-2xl font-bold text-base bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-500/25 flex items-center justify-center gap-2.5 transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
-        >
-          <User className="w-5 h-5 shrink-0" />
-          <span>Anmelden</span>
-          <ArrowRight className="w-4 h-4 shrink-0 ml-0.5" />
-        </button>
-
-        <button
-          type="button"
-          onClick={() => {
-            setIsRegistering(true);
-            setCurrentView('form');
-            setErrorMsg('');
-            setInfoMsg('');
-          }}
-          className="w-full py-3.5 px-6 rounded-2xl font-bold text-base bg-white dark:bg-gray-800 text-blue-600 dark:text-blue-400 border-2 border-blue-600/30 dark:border-blue-500/40 hover:bg-blue-50/60 dark:hover:bg-gray-700/60 shadow-sm flex items-center justify-center gap-2.5 transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
-        >
-          <UserPlus className="w-5 h-5 shrink-0" />
-          <span>Registrieren</span>
-          <ArrowRight className="w-4 h-4 shrink-0 ml-0.5" />
-        </button>
-      </div>
-
-      {/* Rechtliche Pflichtlinks */}
-      <div className="mt-4 text-center">
-        <LegalLinks />
-      </div>
-    </div>
-  );
-
-  // 2. Anmelde- bzw. Registrierungs-Formular
+  // 2. Anmelde- bzw. Registrierungs-Formular (Konto erstellen & Anmelden)
   const formContent = (
     <div className="w-full max-w-md animate-in fade-in zoom-in-95 duration-200">
-      {/* Zurück-Option zur Auswahl (nur wenn nicht als Modal geöffnet) */}
+      {/* Zurück-Option zur Auswahl (nur wenn nicht als modaler Account-Switcher geöffnet) */}
       {!isModal && (
         <div className="flex items-center justify-between mb-3 px-1">
           <button
@@ -243,18 +240,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             }}
           >
             <h1
-              className="flex items-center justify-center gap-2.5 font-black tracking-tight text-3xl sm:text-4xl text-blue-600 group-hover:text-blue-700 dark:text-blue-500 dark:group-hover:text-blue-400 transition-colors whitespace-nowrap"
+              className="flex items-center justify-center gap-2.5 font-black tracking-tight text-2xl sm:text-3xl text-blue-600 group-hover:text-blue-700 dark:text-blue-500 dark:group-hover:text-blue-400 transition-colors whitespace-nowrap"
               style={{
                 filter: 'drop-shadow(0 4px 12px rgba(37, 99, 235, 0.25))',
               }}
             >
-              <CloudLogo className="w-16 h-13 -my-3 -mx-3 sm:w-20 sm:h-16 sm:-my-4 sm:-mx-4 shrink-0 transition-transform group-hover:scale-105" />
-              <span>J.Jonas Cloud</span>
+              {/* Wolken-Symbol durch translate-y-[2.5px] optisch exakt auf Schrifthöhe zentriert */}
+              <CloudLogo className="w-14 h-11 -my-2.5 -mx-2.5 sm:w-16 sm:h-13 sm:-my-3 sm:-mx-3 shrink-0 translate-y-[2.5px] transition-transform group-hover:scale-105" />
+              <span className="leading-none pt-0.5">J.Jonas Cloud</span>
             </h1>
           </div>
-          <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 mt-1 font-medium">
-            Private Cloud-Speicherplattform
-          </p>
         </div>
       )}
 
@@ -448,11 +443,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           </div>
         )}
       </div>
-
-      {/* Rechtliche Pflichtlinks */}
-      <div className="mt-6 text-center">
-        <LegalLinks />
-      </div>
     </div>
   );
 
@@ -470,9 +460,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     );
   }
 
+  // Vollbild-Ansicht des Formulars (Anmelden oder Registrieren) mit Footer ganz unten
   return (
-    <div className="relative min-h-full flex flex-col justify-center items-center p-4 bg-[#f8fafd] dark:bg-gray-950 select-none">
-      {currentView === 'welcome' ? welcomeContent : formContent}
+    <div className="min-h-screen min-h-[100dvh] w-full flex flex-col justify-between items-center px-4 py-6 sm:py-8 bg-[#f8fafd] dark:bg-gray-950 select-none">
+      <div className="w-full shrink-0 h-2" />
+      <div className="w-full max-w-md my-auto flex flex-col items-center">
+        {formContent}
+      </div>
+      <footer className="w-full shrink-0 text-center pt-4 pb-2">
+        <LegalLinks />
+      </footer>
     </div>
   );
 };

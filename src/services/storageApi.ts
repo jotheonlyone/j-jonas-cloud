@@ -78,7 +78,15 @@ export async function storageFetch(
   return response;
 }
 
+let lastSessionExpiredDispatch = 0;
+
 export function handleAuthSessionExpired(): void {
+  const now = Date.now();
+  if (now - lastSessionExpiredDispatch < 8000) {
+    return; // Doppelte Aufrufe bei parallelen 401-Anfragen verhindern
+  }
+  lastSessionExpiredDispatch = now;
+
   if (typeof window !== 'undefined') {
     try {
       setCachedAuthToken('');
