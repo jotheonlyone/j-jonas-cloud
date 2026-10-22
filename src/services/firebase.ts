@@ -11,6 +11,7 @@ import {
   onAuthStateChanged,
   onIdTokenChanged,
   type User as FirebaseUser,
+  type UserCredential,
 } from 'firebase/auth';
 import {
   getFirestore,
@@ -526,11 +527,11 @@ export async function registerUser(usernameRaw: string, passwordRaw: string): Pr
 
   try {
     // 1. Erstellen des Nutzers in Firebase Auth
-    let userCredential;
+    let userCredential: UserCredential;
     try {
       userCredential = await createUserWithEmailAndPassword(auth, safeEmail, passwordRaw);
-      if (auth.currentUser) {
-        await updateProfile(auth.currentUser, { displayName: cleanU });
+      if (userCredential.user) {
+        await updateProfile(userCredential.user, { displayName: cleanU });
       }
     } catch (authErr: any) {
       if (authErr?.code === 'auth/email-already-in-use') {
@@ -539,12 +540,13 @@ export async function registerUser(usernameRaw: string, passwordRaw: string): Pr
       return { success: false, error: getFirebaseAuthErrorMessage(authErr) };
     }
 
-    if (!auth.currentUser) {
+    if (!userCredential?.user?.uid) {
       return { success: false, error: 'Nutzer konnte nicht registriert werden.' };
     }
 
+    // Profil-Dokument in Firestore unter users/{username} anlegen mit zwingendem Feld uid
     await setDoc(doc(db, 'users', cleanU), {
-      uid: auth.currentUser.uid,
+      uid: userCredential.user.uid,
       username: cleanU,
       email: safeEmail,
       status: 'pending',
@@ -556,7 +558,7 @@ export async function registerUser(usernameRaw: string, passwordRaw: string): Pr
     const newUser: UserAccount = {
       username: cleanU,
       email: safeEmail,
-      uid: auth.currentUser.uid,
+      uid: userCredential.user.uid,
       role: 'user',
       status: 'pending',
       quota_gb: 100,
