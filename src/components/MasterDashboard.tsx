@@ -159,7 +159,7 @@ export const MasterDashboard: React.FC<MasterDashboardProps> = ({
    */
   const renderStorageUsageCell = (username: string, quotaGb: number) => {
     const usage = storageUsages[username];
-    const quota = Math.max(1, quotaGb || 100);
+    const quota = Math.max(1, quotaGb || 25);
     const quotaBytes = quota * 1024 * 1024 * 1024;
 
     if (usage?.loading && usage.used_bytes === 0) {
@@ -236,8 +236,8 @@ export const MasterDashboard: React.FC<MasterDashboardProps> = ({
 
   const handleApprove = (username: string) => {
     const quota = customQuotaMode[username]
-      ? customQuotaValue[username] || 100
-      : pendingQuotas[username] || 100;
+      ? customQuotaValue[username] || 25
+      : pendingQuotas[username] || 25;
     onApproveUser(username, quota);
   };
 
@@ -415,8 +415,8 @@ export const MasterDashboard: React.FC<MasterDashboardProps> = ({
                 {pendingUsers.map((pUser) => {
                   const isCustom = customQuotaMode[pUser.username];
                   const quotaVal = isCustom
-                    ? customQuotaValue[pUser.username] || 100
-                    : pendingQuotas[pUser.username] || 100;
+                    ? customQuotaValue[pUser.username] || 25
+                    : pendingQuotas[pUser.username] || 25;
 
                   return (
                     <tr key={pUser.username} className="hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-colors">

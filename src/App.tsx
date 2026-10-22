@@ -1247,7 +1247,7 @@ function MainApp() {
               salt: 'demo_guest_salt',
               role: 'user',
               status: 'active',
-              quota_gb: 100,
+              quota_gb: 25,
               createdAt: new Date().toISOString(),
             };
             handleLoginSuccess(demoUser, 'cinema-tv');

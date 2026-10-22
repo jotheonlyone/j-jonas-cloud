@@ -551,7 +551,7 @@ export async function registerUser(usernameRaw: string, passwordRaw: string): Pr
       email: safeEmail,
       status: 'pending',
       role: 'user',
-      quota_gb: 100,
+      quota_gb: 25,
       createdAt: new Date().toISOString()
     });
 
@@ -561,7 +561,7 @@ export async function registerUser(usernameRaw: string, passwordRaw: string): Pr
       uid: userCredential.user.uid,
       role: 'user',
       status: 'pending',
-      quota_gb: 100,
+      quota_gb: 25,
       createdAt: new Date().toISOString(),
     };
 
@@ -623,7 +623,7 @@ export async function loginUser(usernameRaw: string, passwordRaw: string): Promi
         userData = {
           ...d,
           username: d.username || cleanU,
-          quota_gb: typeof d.quota_gb === 'number' ? d.quota_gb : 100,
+          quota_gb: typeof d.quota_gb === 'number' ? d.quota_gb : 25,
           status: d.status || 'pending',
           role: d.role || 'user',
           createdAt: d.createdAt || new Date().toISOString(),
@@ -642,7 +642,7 @@ export async function loginUser(usernameRaw: string, passwordRaw: string): Promi
           userData = {
             ...d,
             username: d.username || cleanU,
-            quota_gb: typeof d.quota_gb === 'number' ? d.quota_gb : 100,
+            quota_gb: typeof d.quota_gb === 'number' ? d.quota_gb : 25,
             status: d.status || 'pending',
             role: d.role || 'user',
             createdAt: d.createdAt || new Date().toISOString(),
@@ -757,7 +757,7 @@ export async function changePassword(
         userData = {
           ...d,
           username: d.username || username,
-          quota_gb: typeof d.quota_gb === 'number' ? d.quota_gb : 100,
+          quota_gb: typeof d.quota_gb === 'number' ? d.quota_gb : 25,
           status: d.status || 'active',
           role: d.role || 'user',
           createdAt: d.createdAt || new Date().toISOString(),
@@ -810,7 +810,7 @@ export async function getAllUsers(): Promise<UserAccount[]> {
   return getLocalUsers();
 }
 
-export async function updateUserStatus(username: string, status: UserStatus, quota_gb = 100): Promise<boolean> {
+export async function updateUserStatus(username: string, status: UserStatus, quota_gb = 25): Promise<boolean> {
   const normUser = username.toLowerCase();
   try {
     const userDocRef = doc(db, 'users', normUser);
@@ -1085,19 +1085,12 @@ export async function createFolderShare(
     shared_users: finalShare.shared_with.filter(m => m && m.username).map(m => m.username.toLowerCase()),
   });
 
-  // Save to Firestore with shared_users array for indexing
+  // Save to Firestore with shared_users array for indexing (ausschließlich in 'shares')
   try {
     const shareDocRef = doc(db, 'shares', shareDocId);
     await setDoc(shareDocRef, cleanDoc, { merge: true });
   } catch (err) {
     console.warn('Firestore share write failed ("shares"):', err);
-  }
-
-  try {
-    const sharedDocRef = doc(db, 'shared', shareDocId);
-    await setDoc(sharedDocRef, cleanDoc, { merge: true });
-  } catch (err) {
-    console.warn('Firestore share write failed ("shared"):', err);
   }
 
   // Update local store
@@ -1195,30 +1188,8 @@ export async function updateMemberPermissions(
     console.warn('Firestore update member permissions error ("shares"):', err);
   }
 
-  try {
-    await setDoc(doc(db, 'shared', targetDocId), cleanPermissionsDoc, { merge: true });
-  } catch {}
-
   // 3. Persist to local store
   updateLocalShare(currentShare);
-
-  // 4. Also notify backend API (PATCH /api/shares/permissions) if in browser
-  if (typeof window !== 'undefined') {
-    try {
-      fetch('/api/shares/permissions', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          folderPath: folder_path,
-          owner,
-          username: targetUsername,
-          permissions: { can_see_members, can_manage_members },
-        }),
-      }).catch((apiErr) => {
-        console.warn('Backend API permissions sync warning (non-fatal):', apiErr);
-      });
-    } catch {}
-  }
 
   return { success: true, share: currentShare };
 }
@@ -1502,32 +1473,16 @@ export async function respondToShare(
   const normalizePath = (p: string) => (p || '').trim().replace(/^\/+|\/+$/g, '').toLowerCase();
   let currentShare: FolderShare | null = null;
   let targetDocId = shareId;
-  let targetCollection = 'shared';
 
-  // 1. Geteilte Ordner: Lade das Dokument primär aus der Kollektion 'shared'
+  // 1. Geteilte Ordner: Lade das Dokument ausschließlich aus der Kollektion 'shares'
   try {
-    const sharedSnap = await getDoc(doc(db, 'shared', shareId));
-    if (sharedSnap.exists()) {
-      currentShare = normalizeShareDoc({ ...sharedSnap.data(), id: sharedSnap.id });
-      targetDocId = sharedSnap.id;
-      targetCollection = 'shared';
+    const snap = await getDoc(doc(db, 'shares', shareId));
+    if (snap.exists()) {
+      currentShare = normalizeShareDoc({ ...snap.data(), id: snap.id });
+      targetDocId = snap.id;
     }
   } catch (err) {
-    console.warn('Firestore get from collection "shared" error:', err);
-  }
-
-  // Fallback: Lade aus Kollektion 'shares'
-  if (!currentShare) {
-    try {
-      const snap = await getDoc(doc(db, 'shares', shareId));
-      if (snap.exists()) {
-        currentShare = normalizeShareDoc({ ...snap.data(), id: snap.id });
-        targetDocId = snap.id;
-        targetCollection = 'shares';
-      }
-    } catch (err) {
-      console.warn('Firestore get share to respond error:', err);
-    }
+    console.warn('Firestore get share to respond error ("shares"):', err);
   }
 
   // 2. If shareId has owner__path format, try fetching by normalized calculated doc id
@@ -1539,57 +1494,29 @@ export async function respondToShare(
     const calcId = getSharedFolderDocId(ownerPart, decodedPath);
     if (calcId !== shareId) {
       try {
-        const snapShared = await getDoc(doc(db, 'shared', calcId));
-        if (snapShared.exists()) {
-          currentShare = normalizeShareDoc({ ...snapShared.data(), id: snapShared.id });
-          targetDocId = snapShared.id;
-          targetCollection = 'shared';
+        const snap = await getDoc(doc(db, 'shares', calcId));
+        if (snap.exists()) {
+          currentShare = normalizeShareDoc({ ...snap.data(), id: snap.id });
+          targetDocId = snap.id;
         }
       } catch {}
-
-      if (!currentShare) {
-        try {
-          const snap = await getDoc(doc(db, 'shares', calcId));
-          if (snap.exists()) {
-            currentShare = normalizeShareDoc({ ...snap.data(), id: snap.id });
-            targetDocId = snap.id;
-            targetCollection = 'shares';
-          }
-        } catch {}
-      }
     }
   }
 
-  // 3. Search Firestore by query if needed
+  // 3. Search Firestore by query in 'shares' if needed
   if (!currentShare && currentUsername) {
     try {
-      const qShared = query(collection(db, 'shared'), where('shared_users', 'array-contains', currentUsername));
-      const qSnapShared = await getDocs(qShared);
-      for (const d of qSnapShared.docs) {
+      const q = query(collection(db, 'shares'), where('shared_users', 'array-contains', currentUsername));
+      const qSnap = await getDocs(q);
+      for (const d of qSnap.docs) {
+        const dData = d.data();
         if (d.id === shareId || (shareId.includes('__') && d.id.toLowerCase().includes(shareId.toLowerCase()))) {
-          currentShare = normalizeShareDoc({ ...d.data(), id: d.id });
+          currentShare = normalizeShareDoc({ ...dData, id: d.id });
           targetDocId = d.id;
-          targetCollection = 'shared';
           break;
         }
       }
     } catch {}
-
-    if (!currentShare) {
-      try {
-        const q = query(collection(db, 'shares'), where('shared_users', 'array-contains', currentUsername));
-        const qSnap = await getDocs(q);
-        for (const d of qSnap.docs) {
-          const dData = d.data();
-          if (d.id === shareId || (shareId.includes('__') && d.id.toLowerCase().includes(shareId.toLowerCase()))) {
-            currentShare = normalizeShareDoc({ ...dData, id: d.id });
-            targetDocId = d.id;
-            targetCollection = 'shares';
-            break;
-          }
-        }
-      } catch {}
-    }
   }
 
   // 4. Fallback to local shares if Firestore fetch failed or offline
@@ -1614,26 +1541,14 @@ export async function respondToShare(
   // im Map-Feld "accepted_by" via Dot-Notation und setzt updatedAt:
   let firestoreSuccess = false;
   try {
-    const docRef = doc(db, targetCollection, targetDocId);
+    const docRef = doc(db, 'shares', targetDocId);
     await updateDoc(docRef, {
       [`accepted_by.${currentUsername}`]: newStatus,
       updatedAt: serverTimestamp(),
     });
     firestoreSuccess = true;
   } catch (err) {
-    console.warn(`Firestore updateDoc (${targetCollection}/${targetDocId}) failed:`, err);
-    // Fallback: versuche die andere Kollektion
-    const alternateCollection = targetCollection === 'shared' ? 'shares' : 'shared';
-    try {
-      const altRef = doc(db, alternateCollection, targetDocId);
-      await updateDoc(altRef, {
-        [`accepted_by.${currentUsername}`]: newStatus,
-        updatedAt: serverTimestamp(),
-      });
-      firestoreSuccess = true;
-    } catch (altErr) {
-      console.warn(`Firestore updateDoc alternate collection (${alternateCollection}/${targetDocId}) failed:`, altErr);
-    }
+    console.warn(`Firestore updateDoc (shares/${targetDocId}) failed:`, err);
   }
 
   // Lokalen Cache aktualisieren
@@ -1658,17 +1573,6 @@ export async function respondToShare(
     updateLocalShare(currentShare);
   }
 
-  // Backend API benachrichtigen
-  if (typeof window !== 'undefined') {
-    try {
-      fetch('/api/shares/respond', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ shareId: targetDocId, status: newStatus, username: currentUsername }),
-      }).catch(() => {});
-    } catch {}
-  }
-
   return firestoreSuccess || !!currentShare;
 }
 
@@ -1678,19 +1582,7 @@ export async function getSharedFolder(folder_path: string, ownerRaw: string): Pr
   const normalizedFolderPath = normalizePath(folder_path);
   const shareDocId = getSharedFolderDocId(owner, folder_path);
 
-  // 1. Kollektion 'shared' prüfen
-  try {
-    const snap = await getDoc(doc(db, 'shared', shareDocId));
-    if (snap.exists()) {
-      const fresh = normalizeShareDoc({ ...snap.data(), id: snap.id });
-      if (fresh) {
-        updateLocalShare(fresh);
-        return fresh;
-      }
-    }
-  } catch {}
-
-  // 2. Kollektion 'shares' prüfen
+  // Ausschließlich Kollektion 'shares' prüfen
   try {
     const snap = await getDoc(doc(db, 'shares', shareDocId));
     if (snap.exists()) {
@@ -1735,34 +1627,7 @@ export async function getSharesForInvitedUser(usernameRaw: string): Promise<Fold
   const serverResults: FolderShare[] = [];
   let firestoreSuccess = false;
 
-  // Kollektion 'shared'
-  try {
-    const qShared1 = query(collection(db, 'shared'), where('shared_users', 'array-contains', normalized));
-    const snapShared1 = await getDocs(qShared1);
-    snapShared1.docs.forEach(d => {
-      const docData = d.data();
-      if (isValidFolderShareDoc(docData)) {
-        const norm = normalizeShareDoc({ ...docData, id: d.id });
-        if (norm) serverResults.push(norm);
-      }
-    });
-    if (!snapShared1.empty) firestoreSuccess = true;
-  } catch {}
-
-  try {
-    const qShared2 = query(collection(db, 'shared'), where('invited_user', '==', normalized));
-    const snapShared2 = await getDocs(qShared2);
-    snapShared2.docs.forEach(d => {
-      const docData = d.data();
-      if (isValidFolderShareDoc(docData)) {
-        const norm = normalizeShareDoc({ ...docData, id: d.id });
-        if (norm) serverResults.push(norm);
-      }
-    });
-    if (!snapShared2.empty) firestoreSuccess = true;
-  } catch {}
-
-  // Kollektion 'shares'
+  // Ausschließlich Kollektion 'shares'
   try {
     const q1 = query(collection(db, 'shares'), where('shared_users', 'array-contains', normalized));
     const snap1 = await getDocs(q1);
@@ -1816,21 +1681,7 @@ export async function getSharesByOwner(usernameRaw: string): Promise<FolderShare
   const serverResults: FolderShare[] = [];
   let firestoreSuccess = false;
 
-  // Kollektion 'shared'
-  try {
-    const qShared = query(collection(db, 'shared'), where('owner', '==', normalized));
-    const snapShared = await getDocs(qShared);
-    snapShared.docs.forEach(d => {
-      const docData = d.data();
-      if (isValidFolderShareDoc(docData)) {
-        const norm = normalizeShareDoc({ ...docData, id: d.id });
-        if (norm) serverResults.push(norm);
-      }
-    });
-    if (!snapShared.empty) firestoreSuccess = true;
-  } catch {}
-
-  // Kollektion 'shares'
+  // Ausschließlich Kollektion 'shares'
   try {
     const q = query(collection(db, 'shares'), where('owner', '==', normalized));
     const snap = await getDocs(q);

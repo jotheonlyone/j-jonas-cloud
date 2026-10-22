@@ -107,42 +107,7 @@ app.get('/api/public-share/:shareId', async (req, res) => {
 });
 
 
-/**
- * PATCH /api/shares/permissions
- * Aktualisiert die Berechtigungen (can_see_members, can_manage_members) für ein Ordner-Mitglied.
- * Überträgt geänderte Flags sofort an das Backend und speichert diese dauerhaft.
- */
-app.patch('/api/shares/permissions', async (req, res) => {
-  try {
-    const { folderPath, owner, username, permissions } = req.body;
-    if (!folderPath || !owner || !username || !permissions) {
-      return res.status(400).json({ success: false, error: 'Fehlende Pflichtparameter für Berechtigungs-Update.' });
-    }
-    const { updateMemberPermissions } = await import('./src/services/firebase');
-    const result = await updateMemberPermissions(folderPath, owner, username, permissions);
-    res.status(result.success ? 200 : 400).json(result);
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message || 'Serverfehler beim Aktualisieren der Berechtigungen.' });
-  }
-});
 
-/**
- * POST /api/shares/respond
- * Verarbeitet die Annahme oder Ablehnung einer Ordnereinladung und setzt den Status auf 'accepted' / 'declined'.
- */
-app.post('/api/shares/respond', async (req, res) => {
-  try {
-    const { shareId, status, username } = req.body;
-    if (!shareId || !status) {
-      return res.status(400).json({ success: false, error: 'Fehlende Pflichtparameter (shareId, status).' });
-    }
-    const { respondToShare } = await import('./src/services/firebase');
-    const success = await respondToShare(shareId, status, username);
-    res.status(success ? 200 : 400).json({ success });
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message || 'Serverfehler beim Verarbeiten der Ordnereinladung.' });
-  }
-});
 
 /**
  * GET /api/shares

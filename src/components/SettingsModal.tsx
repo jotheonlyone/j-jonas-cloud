@@ -114,7 +114,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   const usedGb = storageUsage?.used_gb ?? 0;
-  const totalQuotaGb = user.quota_gb || 100;
+  const totalQuotaGb = user.quota_gb || 25;
   const usagePercent = Math.min(Math.round((usedGb / totalQuotaGb) * 100), 100);
 
   return (
