@@ -7,6 +7,7 @@ import {
 import type { UserAccount } from '../types';
 import { useToast } from './Toast';
 import { LegalLinks } from './LegalLinks';
+import { CloudLogo } from './CloudLogo';
 
 export interface ContactPageProps {
   user: UserAccount | null;
@@ -114,10 +115,15 @@ export const ContactPage: React.FC<ContactPageProps> = ({
 
           <div
             onClick={onBack}
-            className="flex items-center gap-2 cursor-pointer select-none"
+            className="flex items-center gap-1.5 sm:gap-2 cursor-pointer select-none group"
+            style={{
+              fontFamily:
+                'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+            }}
           >
+            <CloudLogo className="w-12 h-10 -my-2.5 -mx-2.5 sm:w-14 sm:h-11 sm:-my-3 sm:-mx-3 text-blue-600 dark:text-blue-500 shrink-0 transition-transform group-hover:scale-105" />
             <span
-              className="font-black tracking-tight text-xl sm:text-2xl text-blue-600 dark:text-blue-500"
+              className="font-black tracking-tight text-xl sm:text-2xl text-blue-600 dark:text-blue-500 whitespace-nowrap"
               style={{ filter: 'drop-shadow(0 2px 8px rgba(37, 99, 235, 0.2))' }}
             >
               J.Jonas Cloud

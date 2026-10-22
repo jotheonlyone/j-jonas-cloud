@@ -77,11 +77,11 @@ export const Header: React.FC<HeaderProps> = ({
   return (
     <header className="sticky top-0 z-30 flex items-center justify-between gap-4 px-4 sm:px-6 py-2.5 bg-[#f8fafd] dark:bg-gray-950 border-b border-gray-200/70 dark:border-gray-800">
       {/* Left: Mobile Trigger & Required Brand Logo */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
         {onToggleMobileMenu && (
           <button
             onClick={onToggleMobileMenu}
-            className="md:hidden p-2 rounded-full text-gray-600 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-200/60 dark:hover:bg-gray-800 transition-colors"
+            className="md:hidden p-1.5 sm:p-2 rounded-full text-gray-600 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-200/60 dark:hover:bg-gray-800 transition-colors shrink-0"
             aria-label="Menü öffnen"
           >
             <Menu className="w-5 h-5" />
@@ -90,20 +90,20 @@ export const Header: React.FC<HeaderProps> = ({
 
         <div
           onClick={onLogoClick}
-          className="flex items-center select-none cursor-pointer group"
+          className="flex items-center select-none cursor-pointer group shrink-0"
           style={{
             fontFamily:
               'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
           }}
         >
           <span
-            className="flex items-center gap-2 sm:gap-2.5 font-black tracking-tight text-2xl md:text-3xl text-blue-600 group-hover:text-blue-700 dark:text-blue-500 dark:group-hover:text-blue-400 transition-colors"
+            className="flex items-center gap-1.5 sm:gap-2.5 font-black tracking-tight text-lg xs:text-xl sm:text-2xl md:text-3xl text-blue-600 group-hover:text-blue-700 dark:text-blue-500 dark:group-hover:text-blue-400 transition-colors whitespace-nowrap shrink-0"
             style={{
               filter: 'drop-shadow(0 4px 12px rgba(37, 99, 235, 0.25))',
             }}
           >
-            <CloudLogo className="w-[4.5rem] h-[3.75rem] -my-4 -ml-4 -mr-4 md:w-24 md:h-20 md:-my-5 md:-ml-5 md:-mr-5 shrink-0 transition-transform group-hover:scale-105" />
-            <span>J.Jonas Cloud</span>
+            <CloudLogo className="w-12 h-10 -my-2.5 -mx-2 sm:w-[4.5rem] sm:h-[3.75rem] sm:-my-4 sm:-ml-4 sm:-mr-4 md:w-24 md:h-20 md:-my-5 md:-ml-5 md:-mr-5 shrink-0 transition-transform group-hover:scale-105" />
+            <span className="whitespace-nowrap">J.Jonas Cloud</span>
           </span>
         </div>
       </div>
