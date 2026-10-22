@@ -21,7 +21,8 @@ import {
   getSharedFolder,
   createFolderShare,
   deleteFolderShareMember,
-  updateMemberPermissions
+  updateMemberPermissions,
+  getShareStatusForUser
 } from '../services/firebase';
 import { checkServerStatus } from '../services/storageApi';
 import { useToast } from './Toast';
@@ -466,21 +467,37 @@ export const ManageFolderSharesModal: React.FC<ManageFolderSharesModalProps> = (
                             <span className="text-xs sm:text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">
                               @{member.username}
                             </span>
-                            {member.status === 'accepted' || member.status === 'active' ? (
-                              <span className="flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border border-emerald-200/60 dark:border-emerald-800/60">
-                                <CheckCircle className="w-2.5 h-2.5" />
-                                <span>Aktiv</span>
-                              </span>
-                            ) : member.status === 'pending' ? (
-                              <span className="flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 border border-amber-200/60 dark:border-amber-800/60">
-                                <Clock className="w-2.5 h-2.5" />
-                                <span>Ausstehend</span>
-                              </span>
-                            ) : (
-                              <span className="text-[10px] text-gray-400">
-                                Abgelehnt
-                              </span>
-                            )}
+                            {(() => {
+                              const resolvedStatus = getShareStatusForUser(folderShare, member.username);
+                              if (resolvedStatus === 'accepted' || resolvedStatus === 'active') {
+                                return (
+                                  <span className="flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border border-emerald-200/60 dark:border-emerald-800/60">
+                                    <CheckCircle className="w-2.5 h-2.5" />
+                                    <span>Aktiv</span>
+                                  </span>
+                                );
+                              }
+                              if (resolvedStatus === 'pending') {
+                                return (
+                                  <span className="flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 border border-amber-200/60 dark:border-amber-800/60">
+                                    <Clock className="w-2.5 h-2.5" />
+                                    <span>Ausstehend</span>
+                                  </span>
+                                );
+                              }
+                              if (resolvedStatus === 'left') {
+                                return (
+                                  <span className="text-[10px] text-gray-400 font-medium px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700">
+                                    Verlassen
+                                  </span>
+                                );
+                              }
+                              return (
+                                <span className="text-[10px] text-gray-400">
+                                  Abgelehnt
+                                </span>
+                              );
+                            })()}
                           </div>
                           <span className="text-[10px] text-gray-400 font-mono">
                             Hinzugefügt am {new Date(member.added_at).toLocaleDateString('de-DE')}

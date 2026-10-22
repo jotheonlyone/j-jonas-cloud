@@ -35,9 +35,12 @@ import type { UploadTaskState } from './UploadProgressWidget';
 import {
   deleteFolderShare,
   deleteFolderShareMember,
+  leaveSharedFolder,
   renameSharedFolder,
   getSharedFolder,
-  isValidFolderShareDoc
+  isValidFolderShareDoc,
+  getShareStatusForUser,
+  cleanUsername
 } from '../services/firebase';
 import { useToast } from './Toast';
 import { hasFolderWritePermission } from '../utils/permissions';
@@ -88,18 +91,24 @@ export const SharedSection: React.FC<SharedSectionProps> = ({
   const [isLoadingItems, setIsLoadingItems] = useState(false);
   const [serverError, setServerError] = useState<string | undefined>();
 
-  // 1. Ausstehende Einladungen: Ordner, bei denen der Nutzer in shared_with auf 'pending' steht
+  // 1. Ausstehende Einladungen: Ordner, bei denen der Nutzer in accepted_by oder shared_with auf 'pending' steht
   // Bereich isolieren: Ignoriere Dokumente, die keinen gültigen folder_name oder keine shared_users besitzen
   const pendingInvitations = useMemo(() => {
-    const userNorm = (user?.username || '').toLowerCase();
+    const userNorm = cleanUsername(user?.username || '');
+    if (!userNorm) return [];
     return shares.filter((s) => {
       if (!s || !isValidFolderShareDoc(s)) return false;
-      if (s.invited_user && s.invited_user?.toLowerCase() === userNorm && s.status === 'pending') {
-        return true;
-      }
-      return Array.isArray(s.shared_with) && s.shared_with.some(
-        (m) => m?.username && m.username?.toLowerCase() === userNorm && m.status === 'pending'
-      );
+      // Besitzer sieht keine ausstehenden Einladungen für seine eigenen Ordner
+      if (cleanUsername(s.owner || '') === userNorm) return false;
+
+      // Wurde der Nutzer eingeladen?
+      const isInvited = (Array.isArray(s.shared_with) && s.shared_with.some(m => m?.username && cleanUsername(m.username) === userNorm))
+        || (s.invited_user && cleanUsername(s.invited_user) === userNorm);
+      if (!isInvited) return false;
+
+      // Status ermitteln: Zuerst accepted_by?.[user], dann Fallback shared_with / status
+      const userStatus = getShareStatusForUser(s, userNorm);
+      return userStatus === 'pending';
     });
   }, [shares, user?.username]);
 
@@ -109,20 +118,26 @@ export const SharedSection: React.FC<SharedSectionProps> = ({
   // - Besitzer sieht alle seine geteilten Ordner
   // - Eingeladene Personen sehen den Ordner, sobald ihr Status 'accepted' oder 'active' ist
   const acceptedShares = useMemo(() => {
-    const userNorm = (user?.username || '').toLowerCase();
+    const userNorm = cleanUsername(user?.username || '');
+    if (!userNorm) return [];
     const list = shares.filter((s) => {
       if (!s || !isValidFolderShareDoc(s)) return false;
-      const isOwner = (s.owner?.toLowerCase() || '') === userNorm;
-      const isAcceptedLegacy = s.invited_user && s.invited_user?.toLowerCase() === userNorm && (s.status === 'accepted' || s.status === 'active');
-      const isAcceptedMember = Array.isArray(s.shared_with) && s.shared_with.some(
-        (m) => m?.username && m.username?.toLowerCase() === userNorm && (m.status === 'accepted' || m.status === 'active')
-      );
-      return (isOwner && Array.isArray(s.shared_with)) || isAcceptedLegacy || isAcceptedMember;
+      const isOwner = cleanUsername(s.owner || '') === userNorm;
+      if (isOwner) return true;
+
+      // Eingeladener Nutzer prüfen:
+      const isInvited = (Array.isArray(s.shared_with) && s.shared_with.some(m => m?.username && cleanUsername(m.username) === userNorm))
+        || (s.invited_user && cleanUsername(s.invited_user) === userNorm);
+      if (!isInvited) return false;
+
+      // Status ermitteln: Zuerst accepted_by?.[user], dann Fallback shared_with / status
+      const userStatus = getShareStatusForUser(s, userNorm);
+      return userStatus === 'accepted' || userStatus === 'active';
     });
 
     const uniqueMap = new Map<string, FolderShare>();
     list.forEach((s) => {
-      const key = `${(s.owner?.toLowerCase() || '')}::${s.folder_path || ''}`;
+      const key = `${cleanUsername(s.owner || '')}::${s.folder_path || ''}`;
       if (!uniqueMap.has(key)) {
         uniqueMap.set(key, s);
       }
@@ -373,11 +388,11 @@ export const SharedSection: React.FC<SharedSectionProps> = ({
     const share = leaveConfirmShare;
     setIsLeavingShare(true);
     try {
-      const res = await deleteFolderShareMember(
+      const res = await leaveSharedFolder(
+        share.id,
         share.folder_path,
         share.owner,
-        user.username,
-        share.id
+        user.username
       );
 
       if (res) {

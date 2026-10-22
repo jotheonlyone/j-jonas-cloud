@@ -1,4 +1,5 @@
 import type { FolderShare, SharedMember } from '../types';
+import { getShareStatusForUser, cleanUsername } from '../services/firebase';
 
 /**
  * Checks whether a given user has write/editor permissions on a shared folder.
@@ -14,23 +15,25 @@ export function hasFolderWritePermission(
   username: string | null | undefined
 ): boolean {
   if (!share || !username) return false;
-  const userNorm = username.trim().toLowerCase();
+  const userNorm = cleanUsername(username);
 
   // 1. Owner check
-  if ((share.owner || '').trim().toLowerCase() === userNorm) {
+  if (cleanUsername(share.owner || '') === userNorm) {
     return true;
   }
 
-  // 2. Members array check
+  // 2. User status check (checks accepted_by first, fallback to shared_with / status)
+  const userStatus = getShareStatusForUser(share, userNorm);
+  if (userStatus !== 'accepted' && userStatus !== 'active') {
+    return false;
+  }
+
+  // 3. Members array check for permissions / role
   if (Array.isArray(share.shared_with)) {
     const member = share.shared_with.find(
-      (m: SharedMember) => m && m.username && m.username.trim().toLowerCase() === userNorm
+      (m: SharedMember) => m && m.username && cleanUsername(m.username) === userNorm
     );
     if (member) {
-      // Must not be pending or declined
-      if (member.status && member.status !== 'accepted') {
-        return false;
-      }
       // Check explicit viewer role
       if (member.role === 'viewer') {
         return false;
@@ -43,12 +46,9 @@ export function hasFolderWritePermission(
     }
   }
 
-  // 3. Legacy share compatibility
-  const rawInvited = (share.invited_user || '').trim().toLowerCase();
+  // 4. Legacy share compatibility
+  const rawInvited = cleanUsername(share.invited_user || '');
   if (rawInvited === userNorm) {
-    if (share.status && share.status !== 'accepted') {
-      return false;
-    }
     const sAny: any = share;
     if (sAny.role === 'viewer') {
       return false;

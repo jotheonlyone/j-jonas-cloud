@@ -19,6 +19,8 @@ import {
   respondToShare,
   logoutFirebaseAuth,
   isValidFolderShareDoc,
+  getShareStatusForUser,
+  cleanUsername,
 } from './services/firebase';
 import {
   listFiles,
@@ -1074,18 +1076,19 @@ function MainApp() {
   // Share handlers
   const handleAcceptShare = async (shareId: string) => {
     if (!user) return;
-    const normUser = user.username.toLowerCase();
+    const normUser = cleanUsername(user.username);
 
     // Sofortige UI-Aktualisierung: Ordner direkt unter den aktiven geteilten Ordnern listen
     setShares((prevShares) =>
       prevShares.map((s) => {
         if (s.id === shareId || s.folder_path === shareId || (s.id && s.id.includes(shareId))) {
+          const accepted_by = { ...(s.accepted_by || {}), [normUser]: 'accepted' as const };
           const updatedSharedWith = (s.shared_with || []).map((m) =>
-            m?.username && m.username.toLowerCase() === normUser
+            m?.username && cleanUsername(m.username) === normUser
               ? { ...m, status: 'accepted' as const }
               : m
           );
-          if (!updatedSharedWith.some((m) => m?.username && m.username.toLowerCase() === normUser)) {
+          if (!updatedSharedWith.some((m) => m?.username && cleanUsername(m.username) === normUser)) {
             updatedSharedWith.push({
               username: normUser,
               status: 'accepted',
@@ -1097,6 +1100,7 @@ function MainApp() {
           return {
             ...s,
             status: 'accepted' as const,
+            accepted_by,
             shared_with: updatedSharedWith,
           };
         }
@@ -1111,6 +1115,18 @@ function MainApp() {
 
   const handleDeclineShare = async (shareId: string) => {
     if (!user) return;
+    const normUser = cleanUsername(user.username);
+    setShares((prevShares) =>
+      prevShares.map((s) => {
+        if (s.id === shareId || s.folder_path === shareId || (s.id && s.id.includes(shareId))) {
+          return {
+            ...s,
+            accepted_by: { ...(s.accepted_by || {}), [normUser]: 'declined' as const },
+          };
+        }
+        return s;
+      })
+    );
     await respondToShare(shareId, 'declined', user.username);
     addToast('info', 'Einladung abgelehnt');
     await loadShares(user.username);
@@ -1165,14 +1181,13 @@ function MainApp() {
 
   const pendingSharesCount = user
     ? shares.filter((s) => {
-        if (!s) return false;
-        const userNorm = (user.username || '').toLowerCase();
-        if (s.invited_user && s.invited_user?.toLowerCase() === userNorm && s.status === 'pending') {
-          return true;
-        }
-        return Array.isArray(s.shared_with) && s.shared_with.some(
-          (m) => m?.username && m.username?.toLowerCase() === userNorm && m.status === 'pending'
-        );
+        if (!s || !isValidFolderShareDoc(s)) return false;
+        const userNorm = cleanUsername(user.username || '');
+        if (cleanUsername(s.owner || '') === userNorm) return false;
+        const isInvited = (Array.isArray(s.shared_with) && s.shared_with.some(m => m?.username && cleanUsername(m.username) === userNorm))
+          || (s.invited_user && cleanUsername(s.invited_user) === userNorm);
+        if (!isInvited) return false;
+        return getShareStatusForUser(s, userNorm) === 'pending';
       }).length
     : 0;
 

@@ -38,7 +38,7 @@ export interface StorageUsage {
 
 export interface SharedMember {
   username: string;
-  status: 'pending' | 'accepted' | 'declined' | 'active';
+  status: 'pending' | 'accepted' | 'declined' | 'left' | 'active';
   can_see_members: boolean;
   can_manage_members: boolean;
   can_write?: boolean;
@@ -53,6 +53,7 @@ export interface FolderShare {
   folder_name: string;
   owner: string;
   shared_with: SharedMember[];
+  accepted_by?: Record<string, 'pending' | 'accepted' | 'declined' | 'left' | string>;
   created_at: string;
   updated_at?: string;
   can_write?: boolean;
@@ -60,7 +61,7 @@ export interface FolderShare {
   role?: 'editor' | 'viewer' | string;
   // Optional legacy fields for backward compatibility during runtime migrations
   invited_user?: string;
-  status?: 'pending' | 'accepted' | 'declined' | 'active';
+  status?: 'pending' | 'accepted' | 'declined' | 'left' | 'active';
   can_see_members?: boolean;
   can_manage_members?: boolean;
 }

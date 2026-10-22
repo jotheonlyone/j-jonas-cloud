@@ -237,6 +237,7 @@ export function normalizeShareDoc(data: any): FolderShare | null {
   const folder_path = data.folder_path ? String(data.folder_path) : '';
   const folder_name = rawFolderName;
   const id = data.id || `${owner || 'unknown'}__${encodeURIComponent(folder_path || 'unknown')}`;
+  const accepted_by: Record<string, any> = (data.accepted_by && typeof data.accepted_by === 'object') ? { ...data.accepted_by } : {};
 
   let shared_with: SharedMember[] = Array.isArray(data.shared_with) ? [...data.shared_with] : [];
 
@@ -263,13 +264,20 @@ export function normalizeShareDoc(data: any): FolderShare | null {
     if (u && !memberMap.has(u)) {
       const can_see_members = m.can_see_members ?? true;
       const can_manage_members = can_see_members ? (m.can_manage_members ?? false) : false;
-      // Normalize 'active' or 'accepted' to 'accepted'
-      let memberStatus: 'pending' | 'accepted' | 'declined' = 'pending';
-      const rawStatus = m.status || (data.status && (data.invited_user?.toLowerCase() === u || shared_with.length === 1) ? data.status : 'pending');
+
+      // Status auflösen (Abwärtskompatibel):
+      // 1. Prüfe zuerst accepted_by?.[u]
+      // 2. Fallback für bestehende Dokumente: m.status oder data.status
+      let memberStatus: 'pending' | 'accepted' | 'declined' | 'left' = 'pending';
+      const statusFromAcceptedBy = accepted_by[u] || Object.entries(accepted_by).find(([k]) => cleanUsername(k) === u)?.[1];
+      const rawStatus = statusFromAcceptedBy || m.status || (data.status && (cleanUsername(data.invited_user) === u || shared_with.length === 1) ? data.status : 'pending');
+
       if (rawStatus === 'accepted' || rawStatus === 'active') {
         memberStatus = 'accepted';
       } else if (rawStatus === 'declined') {
         memberStatus = 'declined';
+      } else if (rawStatus === 'left') {
+        memberStatus = 'left';
       }
 
       memberMap.set(u, {
@@ -297,11 +305,66 @@ export function normalizeShareDoc(data: any): FolderShare | null {
     folder_name,
     owner,
     shared_with: finalMembers,
+    accepted_by,
     invited_user: rawInvited || undefined,
     status: rootStatus,
     created_at: data.created_at || new Date().toISOString(),
     updated_at: data.updated_at || data.created_at || new Date().toISOString(),
   };
+}
+
+/**
+ * Ermittelt den Status eines geteilten Ordners für den angegebenen Nutzer (abwärtskompatibel):
+ * 1. Prüfe zuerst: Gibt es shareData.accepted_by?.[currentUsername]? Falls ja, nimm diesen Status ('accepted', 'declined', 'left').
+ * 2. Fallback für bestehende Dokumente: Falls accepted_by oder der Eintrag für den Nutzer darin fehlt,
+ *    lies wie bisher den Status aus shareData.shared_with (oder dem globalen shareData.status).
+ */
+export function getShareStatusForUser(
+  shareData: FolderShare | any,
+  usernameRaw: string
+): 'pending' | 'accepted' | 'declined' | 'left' | string {
+  if (!shareData) return 'pending';
+  const currentUsername = cleanUsername(usernameRaw);
+  if (!currentUsername) return 'pending';
+
+  // 1. Prüfe zuerst Map-Feld accepted_by
+  if (shareData.accepted_by && typeof shareData.accepted_by === 'object') {
+    if (shareData.accepted_by[currentUsername] !== undefined) {
+      return shareData.accepted_by[currentUsername];
+    }
+    const matchedKey = Object.keys(shareData.accepted_by).find(k => cleanUsername(k) === currentUsername);
+    if (matchedKey && shareData.accepted_by[matchedKey] !== undefined) {
+      return shareData.accepted_by[matchedKey];
+    }
+  }
+
+  // 2. Fallback für bestehende Dokumente: shareData.shared_with
+  if (Array.isArray(shareData.shared_with)) {
+    const member = shareData.shared_with.find(
+      (m: any) => m && typeof m.username === 'string' && cleanUsername(m.username) === currentUsername
+    );
+    if (member && member.status) {
+      return member.status;
+    }
+  }
+
+  // Fallback für legacy invited_user
+  if (
+    shareData.invited_user &&
+    typeof shareData.invited_user === 'string' &&
+    cleanUsername(shareData.invited_user) === currentUsername
+  ) {
+    if (shareData.status) {
+      return shareData.status;
+    }
+  }
+
+  // Fallback für globales status-Feld
+  if (shareData.status) {
+    return shareData.status;
+  }
+
+  return 'pending';
 }
 
 export function consolidateFolderShares(shares: any[]): FolderShare[] {
@@ -323,6 +386,10 @@ export function consolidateFolderShares(shares: any[]): FolderShare[] {
 
         if (incomingIsNewer) {
           // Incoming from server or fresh update is newer: prioritize incoming
+          normalized.accepted_by = {
+            ...(existing.accepted_by || {}),
+            ...(normalized.accepted_by || {}),
+          };
           for (const oldM of existing.shared_with) {
             if (oldM?.username && !normalized.shared_with.some(nm => nm?.username?.toLowerCase() === oldM.username.toLowerCase())) {
               normalized.shared_with.push(oldM);
@@ -330,7 +397,11 @@ export function consolidateFolderShares(shares: any[]): FolderShare[] {
           }
           map.set(key, normalized);
         } else {
-          // Existing is newer, but merge any accepted statuses
+          // Existing is newer, merge incoming accepted_by & accepted statuses
+          existing.accepted_by = {
+            ...(normalized.accepted_by || {}),
+            ...(existing.accepted_by || {}),
+          };
           for (const m of normalized.shared_with) {
             if (!m || !m.username) continue;
             const found = existing.shared_with.find(em => em && em.username?.toLowerCase() === m.username.toLowerCase());
@@ -1500,7 +1571,7 @@ export async function leaveSharedFolder(
   owner: string,
   username: string
 ): Promise<boolean> {
-  return deleteFolderShareMember(folder_path, owner, username, shareId);
+  return respondToShare(shareId, 'left', username);
 }
 
 export async function deleteFolderShare(
@@ -1586,22 +1657,26 @@ export async function renameSharedFolder(
 
 export async function respondToShare(
   shareId: string,
-  status: 'accepted' | 'declined',
+  newStatus: 'accepted' | 'declined' | 'left',
   usernameRaw?: string
 ): Promise<boolean> {
-  const targetUser = (usernameRaw || '').trim().toLowerCase();
+  const currentUsername = cleanUsername(usernameRaw || auth.currentUser?.displayName || '');
+  if (!currentUsername) {
+    console.warn('respondToShare: Kein Benutzername angegeben.');
+    return false;
+  }
   const normalizePath = (p: string) => (p || '').trim().replace(/^\/+|\/+$/g, '').toLowerCase();
   let currentShare: FolderShare | null = null;
   let targetDocId = shareId;
+  let targetCollection = 'shared';
 
   // 1. Geteilte Ordner: Lade das Dokument primär aus der Kollektion 'shared'
-  let foundInSharedCollection = false;
   try {
     const sharedSnap = await getDoc(doc(db, 'shared', shareId));
     if (sharedSnap.exists()) {
       currentShare = normalizeShareDoc({ ...sharedSnap.data(), id: sharedSnap.id });
       targetDocId = sharedSnap.id;
-      foundInSharedCollection = true;
+      targetCollection = 'shared';
     }
   } catch (err) {
     console.warn('Firestore get from collection "shared" error:', err);
@@ -1614,6 +1689,7 @@ export async function respondToShare(
       if (snap.exists()) {
         currentShare = normalizeShareDoc({ ...snap.data(), id: snap.id });
         targetDocId = snap.id;
+        targetCollection = 'shares';
       }
     } catch (err) {
       console.warn('Firestore get share to respond error:', err);
@@ -1633,7 +1709,7 @@ export async function respondToShare(
         if (snapShared.exists()) {
           currentShare = normalizeShareDoc({ ...snapShared.data(), id: snapShared.id });
           targetDocId = snapShared.id;
-          foundInSharedCollection = true;
+          targetCollection = 'shared';
         }
       } catch {}
 
@@ -1643,6 +1719,7 @@ export async function respondToShare(
           if (snap.exists()) {
             currentShare = normalizeShareDoc({ ...snap.data(), id: snap.id });
             targetDocId = snap.id;
+            targetCollection = 'shares';
           }
         } catch {}
       }
@@ -1650,15 +1727,15 @@ export async function respondToShare(
   }
 
   // 3. Search Firestore by query if needed
-  if (!currentShare && targetUser) {
+  if (!currentShare && currentUsername) {
     try {
-      const qShared = query(collection(db, 'shared'), where('shared_users', 'array-contains', targetUser));
+      const qShared = query(collection(db, 'shared'), where('shared_users', 'array-contains', currentUsername));
       const qSnapShared = await getDocs(qShared);
       for (const d of qSnapShared.docs) {
         if (d.id === shareId || (shareId.includes('__') && d.id.toLowerCase().includes(shareId.toLowerCase()))) {
           currentShare = normalizeShareDoc({ ...d.data(), id: d.id });
           targetDocId = d.id;
-          foundInSharedCollection = true;
+          targetCollection = 'shared';
           break;
         }
       }
@@ -1666,13 +1743,14 @@ export async function respondToShare(
 
     if (!currentShare) {
       try {
-        const q = query(collection(db, 'shares'), where('shared_users', 'array-contains', targetUser));
+        const q = query(collection(db, 'shares'), where('shared_users', 'array-contains', currentUsername));
         const qSnap = await getDocs(q);
         for (const d of qSnap.docs) {
           const dData = d.data();
           if (d.id === shareId || (shareId.includes('__') && d.id.toLowerCase().includes(shareId.toLowerCase()))) {
             currentShare = normalizeShareDoc({ ...dData, id: d.id });
             targetDocId = d.id;
+            targetCollection = 'shares';
             break;
           }
         }
@@ -1696,128 +1774,68 @@ export async function respondToShare(
     }
   }
 
-  if (!currentShare) return false;
-
-  // 2. Setze im Array 'shared_with' beim Objekt des aktuellen Nutzers den status = "accepted"
-  const existingSharedWith = Array.isArray(currentShare.shared_with) ? [...currentShare.shared_with] : [];
-  let memberIdx = existingSharedWith.findIndex(m =>
-    m && m.username && (targetUser ? m.username.toLowerCase() === targetUser : m.status === 'pending')
-  );
-
-  if (memberIdx === -1 && targetUser && currentShare.invited_user && currentShare.invited_user.toLowerCase() === targetUser) {
-    existingSharedWith.push({
-      username: targetUser,
-      status: 'pending',
-      can_see_members: true,
-      can_manage_members: false,
-      added_at: currentShare.created_at || new Date().toISOString(),
+  // Firestore-Sicherheitsregeln einhalten:
+  // Gäste dürfen NICHT mehr "shared_users" oder "shared_with" im Dokument überschreiben.
+  // Stattdessen aktualisiert der eingeladene Nutzer ausschließlich seinen eigenen Eintrag
+  // im Map-Feld "accepted_by" via Dot-Notation und setzt updatedAt:
+  let firestoreSuccess = false;
+  try {
+    const docRef = doc(db, targetCollection, targetDocId);
+    await updateDoc(docRef, {
+      [`accepted_by.${currentUsername}`]: newStatus,
+      updatedAt: serverTimestamp(),
     });
-    memberIdx = existingSharedWith.length - 1;
-  }
-
-  let updatedArray: SharedMember[] = [...existingSharedWith];
-  if (status === 'accepted') {
-    if (memberIdx !== -1) {
-      updatedArray[memberIdx] = {
-        ...updatedArray[memberIdx],
-        status: 'accepted',
-      };
-    } else if (targetUser) {
-      updatedArray.push({
-        username: targetUser,
-        status: 'accepted',
-        can_see_members: true,
-        can_manage_members: false,
-        added_at: new Date().toISOString(),
-      });
-    }
-    currentShare.status = 'accepted';
-  } else {
-    // declined
-    updatedArray = updatedArray.filter(
-      m => m?.username && m.username.toLowerCase() !== targetUser
-    );
-    currentShare.status = 'declined';
-  }
-
-  currentShare.shared_with = updatedArray;
-  currentShare.updated_at = new Date().toISOString();
-
-  const calculatedDocId = getSharedFolderDocId(currentShare.owner, currentShare.folder_path);
-
-  // 3. Führe updateDoc(doc(db, 'shared', shareDocId), { shared_with: updatedArray }) aus
-  try {
-    const docRefShared = doc(db, 'shared', targetDocId);
-    if (updatedArray.length === 0 && status === 'declined') {
-      await deleteDoc(docRefShared);
-      if (targetDocId !== calculatedDocId) {
-        try { await deleteDoc(doc(db, 'shared', calculatedDocId)); } catch {}
-      }
-    } else {
-      await updateDoc(docRefShared, {
-        shared_with: updatedArray,
-        status: currentShare.status,
-        shared_users: updatedArray.map(m => m.username.toLowerCase()),
-        updated_at: currentShare.updated_at,
-      });
-    }
-  } catch (sharedErr) {
-    // Falls Dokument noch mit setDoc initialisiert werden muss
+    firestoreSuccess = true;
+  } catch (err) {
+    console.warn(`Firestore updateDoc (${targetCollection}/${targetDocId}) failed:`, err);
+    // Fallback: versuche die andere Kollektion
+    const alternateCollection = targetCollection === 'shared' ? 'shares' : 'shared';
     try {
-      await setDoc(doc(db, 'shared', targetDocId), {
-        ...currentShare,
-        shared_with: updatedArray,
-        shared_users: updatedArray.map(m => m.username.toLowerCase()),
-      }, { merge: true });
-    } catch {}
-  }
-
-  // Auch in 'shares' spiegeln für Abwärtskompatibilität
-  try {
-    const docRefShares = doc(db, 'shares', targetDocId);
-    if (updatedArray.length === 0 && status === 'declined') {
-      await deleteDoc(docRefShares);
-      if (targetDocId !== calculatedDocId) {
-        try { await deleteDoc(doc(db, 'shares', calculatedDocId)); } catch {}
-      }
-    } else {
-      await updateDoc(docRefShares, {
-        shared_with: updatedArray,
-        status: currentShare.status,
-        shared_users: updatedArray.map(m => m.username.toLowerCase()),
-        updated_at: currentShare.updated_at,
+      const altRef = doc(db, alternateCollection, targetDocId);
+      await updateDoc(altRef, {
+        [`accepted_by.${currentUsername}`]: newStatus,
+        updatedAt: serverTimestamp(),
       });
+      firestoreSuccess = true;
+    } catch (altErr) {
+      console.warn(`Firestore updateDoc alternate collection (${alternateCollection}/${targetDocId}) failed:`, altErr);
     }
-  } catch {
-    try {
-      await setDoc(doc(db, 'shares', targetDocId), {
-        ...currentShare,
-        shared_with: updatedArray,
-        shared_users: updatedArray.map(m => m.username.toLowerCase()),
-      }, { merge: true });
-    } catch {}
   }
 
   // Lokalen Cache aktualisieren
-  if (updatedArray.length === 0 && status === 'declined') {
-    const localShares = getLocalShares().filter(s => s.id !== shareId && s.id !== targetDocId && s.id !== calculatedDocId);
-    saveLocalShares(localShares);
-  } else {
+  if (currentShare) {
+    if (!currentShare.accepted_by) {
+      currentShare.accepted_by = {};
+    }
+    currentShare.accepted_by[currentUsername] = newStatus;
+
+    if (Array.isArray(currentShare.shared_with)) {
+      const mIdx = currentShare.shared_with.findIndex(
+        m => m && m.username && cleanUsername(m.username) === currentUsername
+      );
+      if (mIdx !== -1) {
+        currentShare.shared_with[mIdx] = {
+          ...currentShare.shared_with[mIdx],
+          status: newStatus as any,
+        };
+      }
+    }
+    currentShare.updated_at = new Date().toISOString();
     updateLocalShare(currentShare);
   }
 
-  // Notify backend API
+  // Backend API benachrichtigen
   if (typeof window !== 'undefined') {
     try {
       fetch('/api/shares/respond', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ shareId, status, username: targetUser }),
+        body: JSON.stringify({ shareId: targetDocId, status: newStatus, username: currentUsername }),
       }).catch(() => {});
     } catch {}
   }
 
-  return true;
+  return firestoreSuccess || !!currentShare;
 }
 
 export async function getSharedFolder(folder_path: string, ownerRaw: string): Promise<FolderShare | null> {
