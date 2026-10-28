@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Check, Copy, ExternalLink, FileText, Edit2, Share2, Info, Loader2, AlertTriangle } from 'lucide-react';
+import { X, Check, Copy, ExternalLink, FileText, Edit2, Share2, Info, Loader2, AlertTriangle, Trash2 } from 'lucide-react';
 import type { FileItemData } from '../types';
 import {
   renameItem,
@@ -9,7 +9,7 @@ import {
   formatCleanTitle,
 } from '../services/storageApi';
 import { validateItemName, filterNameInput } from '../utils/nameSanitizer';
-import { createPublicFileShare } from '../services/firebase';
+import { createPublicFileShare, deletePublicFileShare } from '../services/firebase';
 
 // -------------------------------------------------------------
 // 1. RENAME MODAL
@@ -405,7 +405,9 @@ export const PublicShareModal: React.FC<PublicShareModalProps> = ({
 }) => {
   const [shareId, setShareId] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isDeleting, setIsDeleting] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [copied, setCopied] = useState(false);
 
   const rawPath = item ? (item.path || (currentPath ? `${currentPath}/${item.name}` : item.name)) : '';
@@ -415,14 +417,19 @@ export const PublicShareModal: React.FC<PublicShareModalProps> = ({
     if (!isOpen || !item) {
       setShareId('');
       setIsLoading(true);
+      setIsDeleting(false);
       setError(null);
+      setStatusMessage(null);
       setCopied(false);
       return;
     }
 
     let isMounted = true;
     setIsLoading(true);
+    setIsDeleting(false);
     setError(null);
+    setStatusMessage(null);
+    setCopied(false);
 
     const initShare = async () => {
       try {
@@ -433,7 +440,7 @@ export const PublicShareModal: React.FC<PublicShareModalProps> = ({
         }
       } catch (err: any) {
         if (isMounted) {
-          setError(err?.message || 'Fehler beim Erstellen der Freigabe-ID.');
+          setError(err?.message || 'Fehler beim Laden/Erstellen der Freigabe-ID.');
           setIsLoading(false);
         }
       }
@@ -471,6 +478,52 @@ export const PublicShareModal: React.FC<PublicShareModalProps> = ({
     }
   };
 
+  const handleDeleteShare = async () => {
+    if (!shareId || isDeleting) return;
+
+    setIsDeleting(true);
+    setError(null);
+    setStatusMessage(null);
+
+    try {
+      // Dokument dieser Freigabe aus der Firestore-Kollektion public_shares per deleteDoc() löschen
+      await deletePublicFileShare(shareId);
+      // Link sofort aus der Ansicht entfernen & lokaler Zustand zurücksetzen
+      setShareId('');
+      setCopied(false);
+      setStatusMessage({
+        type: 'success',
+        text: 'Öffentliche Freigabe aufgehoben',
+      });
+    } catch (err: any) {
+      console.error('Fehler beim Löschen des Freigabelinks:', err);
+      setError(err?.message || 'Fehler beim Beenden der öffentlichen Freigabe.');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const handleCreateShare = async () => {
+    if (isLoading || isDeleting) return;
+
+    setIsLoading(true);
+    setError(null);
+    setStatusMessage(null);
+
+    try {
+      const res = await createPublicFileShare(username, cleanPath);
+      setShareId(res.shareId);
+      setStatusMessage({
+        type: 'success',
+        text: 'Neuer Freigabelink erfolgreich erstellt.',
+      });
+    } catch (err: any) {
+      setError(err?.message || 'Fehler beim Erstellen der Freigabe.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
       <div
@@ -500,35 +553,105 @@ export const PublicShareModal: React.FC<PublicShareModalProps> = ({
             <label className="block text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider mb-1.5">
               Generierter Freigabelink (unerratbare ID)
             </label>
-            <div className="flex items-center gap-2">
-              <input
-                type="text"
-                readOnly
-                value={isLoading ? 'Freigabe-ID wird in Firestore generiert...' : shareUrl}
-                onFocus={(e) => e.target.select()}
-                className="flex-1 font-mono text-xs px-3.5 py-2.5 rounded-xl border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-800 dark:text-gray-200 select-all focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              />
-              <button
-                type="button"
-                onClick={handleCopy}
-                disabled={isLoading || !shareUrl}
-                className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-semibold text-white transition-all shadow-xs disabled:opacity-50 ${
-                  copied
-                    ? 'bg-emerald-600 hover:bg-emerald-700 ring-2 ring-emerald-400'
-                    : 'bg-blue-600 hover:bg-blue-700'
-                }`}
-              >
-                {isLoading ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : copied ? (
-                  <Check className="w-4 h-4" />
-                ) : (
-                  <Copy className="w-4 h-4" />
-                )}
-                <span>{copied ? 'Kopiert!' : 'Kopieren'}</span>
-              </button>
-            </div>
+
+            {shareId ? (
+              <div className="space-y-2.5">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    readOnly
+                    value={isLoading ? 'Freigabe-ID wird in Firestore geladen...' : shareUrl}
+                    onFocus={(e) => e.target.select()}
+                    className="flex-1 font-mono text-xs px-3.5 py-2.5 rounded-xl border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-800 dark:text-gray-200 select-all focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleCopy}
+                    disabled={isLoading || !shareUrl}
+                    className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-semibold text-white transition-all shadow-xs disabled:opacity-50 shrink-0 ${
+                      copied
+                        ? 'bg-emerald-600 hover:bg-emerald-700 ring-2 ring-emerald-400'
+                        : 'bg-blue-600 hover:bg-blue-700'
+                    }`}
+                  >
+                    {isLoading ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : copied ? (
+                      <Check className="w-4 h-4" />
+                    ) : (
+                      <Copy className="w-4 h-4" />
+                    )}
+                    <span>{copied ? 'Kopiert!' : 'Kopieren'}</span>
+                  </button>
+                </div>
+
+                {/* Lösch-Button bei aktivem Link anzeigen: direkt unter dem Kopieren-Feld in dezentem Rot/Outline-Stil */}
+                <div className="flex items-center justify-between pt-0.5">
+                  <div className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 font-medium">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                    <span>Öffentlicher Link aktiv</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleDeleteShare}
+                    disabled={isDeleting}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 bg-red-50/60 hover:bg-red-100/70 dark:bg-red-950/20 dark:hover:bg-red-950/40 border border-red-200 dark:border-red-900/60 hover:border-red-300 dark:hover:border-red-800 transition-all shadow-2xs disabled:opacity-50 cursor-pointer"
+                    title="Diesen Freigabelink löschen und die Freigabe beenden"
+                  >
+                    {isDeleting ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Trash2 className="w-3.5 h-3.5" />
+                    )}
+                    <span>{isDeleting ? 'Wird beendet...' : 'Freigabe beenden'}</span>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    readOnly
+                    disabled
+                    value=""
+                    placeholder="Keine aktive Freigabe vorhanden"
+                    className="flex-1 font-mono text-xs px-3.5 py-2.5 rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-100/70 dark:bg-gray-800/40 text-gray-400 dark:text-gray-500 cursor-not-allowed"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleCreateShare}
+                    disabled={isLoading}
+                    className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white transition-all shadow-xs disabled:opacity-50 cursor-pointer shrink-0"
+                  >
+                    {isLoading ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Share2 className="w-4 h-4" />
+                    )}
+                    <span>{isLoading ? 'Wird erstellt...' : 'Link erstellen'}</span>
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
+
+          {statusMessage && (
+            <div
+              className={`flex items-center gap-2 p-2.5 rounded-xl text-xs font-medium border animate-in fade-in duration-150 ${
+                statusMessage.type === 'success'
+                  ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
+                  : 'bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 border-red-200 dark:border-red-800'
+              }`}
+            >
+              {statusMessage.type === 'success' ? (
+                <Check className="w-4 h-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+              ) : (
+                <AlertTriangle className="w-4 h-4 shrink-0 text-red-600 dark:text-red-400" />
+              )}
+              <span>{statusMessage.text}</span>
+            </div>
+          )}
 
           {error && (
             <div className="flex items-center gap-2 p-2.5 rounded-xl bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 text-xs font-medium border border-red-200 dark:border-red-800">
@@ -537,7 +660,7 @@ export const PublicShareModal: React.FC<PublicShareModalProps> = ({
             </div>
           )}
 
-          {copied && (
+          {copied && !statusMessage && (
             <div className="flex items-center gap-2 p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 text-xs font-medium border border-emerald-200 dark:border-emerald-800 animate-in fade-in">
               <Check className="w-4 h-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
               <span>Link wurde in die Zwischenablage kopiert!</span>
@@ -545,7 +668,7 @@ export const PublicShareModal: React.FC<PublicShareModalProps> = ({
           )}
 
           <div className="p-3 rounded-xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200/70 dark:border-amber-800/40 text-amber-800 dark:text-amber-300 text-xs leading-relaxed">
-            <strong>Hinweis:</strong> Externe Besucher benötigen kein Passwort oder Token. Der Zugriff erfolgt geschützt über die unerratbare ID.
+            <strong>Hinweis:</strong> Externe Besucher benötigen kein Passwort oder Token. Wird die Freigabe beendet, verliert dieser Link sofort seine Gültigkeit.
           </div>
 
           <div className="flex items-center justify-between pt-3 border-t border-gray-100 dark:border-gray-800">
@@ -574,3 +697,4 @@ export const PublicShareModal: React.FC<PublicShareModalProps> = ({
     </div>
   );
 };
+

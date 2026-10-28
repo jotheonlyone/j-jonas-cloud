@@ -1843,5 +1843,37 @@ export async function getPublicFileShare(shareId: string): Promise<PublicFileSha
   return null;
 }
 
+/**
+ * Entfernt eine Freigabe aus dem lokalen Cache
+ */
+export function removeLocalPublicShare(shareId: string): void {
+  try {
+    if (typeof window === 'undefined') return;
+    const raw = localStorage.getItem(LOCAL_PUBLIC_SHARES_KEY);
+    if (!raw) return;
+    const map = JSON.parse(raw);
+    if (map && map[shareId]) {
+      delete map[shareId];
+      localStorage.setItem(LOCAL_PUBLIC_SHARES_KEY, JSON.stringify(map));
+    }
+  } catch {}
+}
+
+/**
+ * Löscht die öffentliche Dateifreigabe anhand ihrer unerratbaren Dokument-ID (shareId)
+ * per deleteDoc() direkt aus der Firestore-Sammlung 'public_shares' und bereinigt den lokalen Cache.
+ */
+export async function deletePublicFileShare(shareId: string): Promise<void> {
+  if (!shareId) return;
+  const cleanId = shareId.trim();
+
+  // Zwingend per deleteDoc() aus der Firestore-Kollektion 'public_shares' löschen
+  const shareDocRef = doc(db, 'public_shares', cleanId);
+  await deleteDoc(shareDocRef);
+
+  // Lokalen Cache bereinigen
+  removeLocalPublicShare(cleanId);
+}
+
 
 
